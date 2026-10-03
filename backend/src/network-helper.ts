@@ -6,6 +6,10 @@ import { applySystemTimeSettings } from './system-time.ts';
 import { decodeNetworkHelperRequest, executeNetworkHelperRequest, networkHelperExitCode, networkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
 import { runElevatedSave } from './system-time-helper.ts';
 import { SAVE_BUDGET_MS } from './system-time-common.ts';
+import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
+import { executeRecordedHelper } from './native/helper-results-executor.ts';
+import { helperRequestHash } from './native/helper-results-store.ts';
+import { runTimeAccessProbeArgument } from './native/linux/time-access-probe.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
 
@@ -46,53 +50,44 @@ function reportsWithExitCode(args: string[]): boolean {
 	return args.length === 2 && args[0] === '--request-file';
 }
 
-async function readRequest(args: string[]): Promise<NetworkHelperRequest> {
-	if (args.length === 1 && args[0] === '--stdin') return decodeNetworkHelperRequest(Buffer.from(await readBoundedStdin()).toString('base64url'));
-	if (args.length === 2 && args[0] === '--request') return decodeNetworkHelperRequest(args[1]!);
+async function readRequest(args: string[]): Promise<{ request: NetworkHelperRequest; hash: string }> {
+	const decode = (encoded: string): { request: NetworkHelperRequest; hash: string } => ({ request: decodeNetworkHelperRequest(encoded), hash: helperRequestHash(encoded) });
+	if (args.length === 1 && args[0] === '--stdin') return decode(Buffer.from(await readBoundedStdin()).toString('base64url'));
+	if (args.length === 2 && args[0] === '--request') return decode(args[1]!);
 	if (reportsWithExitCode(args)) {
 		// Read first, then check the owner. The launcher holds the file open for one
 		// unbroken stretch that starts before this process exists, so a launcher
 		// still alive here proves nothing could have rewritten what was just read.
 		const content = await readBoundedFile(args[1]!);
 		if (process.platform === 'win32') await assertWindowsRequestOwner(args[1]!);
-		return decodeNetworkHelperRequest(Buffer.from(content).toString('base64url'));
+		return decode(Buffer.from(content).toString('base64url'));
 	}
 	throw new Error('network helper request is missing');
 }
 
 const args = process.argv.slice(2);
+if (args[0] === '--access-probe') process.exit(args.length === 2 ? await runTimeAccessProbeArgument(args[1]!).catch(() => 3) : 3);
 const reportWithExitCode = reportsWithExitCode(args);
 
-/**
- * The ceiling on this save, before the caller's deadline is taken into account.
- *
- * Under the Windows launcher it is what the launcher will wait for: the launcher enforces
- * that wait by terminating this process, so a save on its ordinary allowance would be killed
- * mid-sequence and its report lost. Elsewhere nothing terminates this process, so the
- * ordinary allowance stands.
- */
+/** Cooperative budget for new time steps; an active native call is never terminated. */
 function budgetCap(): number {
 	return reportWithExitCode && process.platform === 'win32' ? WINDOWS_ELEVATION_HELPER_BUDGET_MS : SAVE_BUDGET_MS;
 }
 
 let response: NetworkHelperResponse;
 try {
-	// The time save runs here exactly as it would unprivileged - same ordering, same
-	// staleness checks against a fresh read of this host - only with the rights the
-	// unelevated backend does not have.
-	//
-	// Two differences. Under the Windows launcher the save is bounded by what the launcher
-	// will wait for rather than by its own generous default: the launcher enforces its wait
-	// by terminating this process, so a save that took the full 200 s it normally may would
-	// be killed mid-sequence and its report lost. And on every platform it is bounded by the
-	// deadline the caller sent, so a request that spent the user's wait queueing does not get
-	// a fresh allowance here - and one whose wait is already over changes nothing at all.
-	const incoming = await readRequest(args);
+	const { request: incoming, hash } = await readRequest(args);
 	const deadline = incoming.operation === 'applySystemTime' ? incoming.deadlineUptime : undefined;
-	response = await executeNetworkHelperRequest(
+	response = await executeRecordedHelper(
 		incoming,
-		(interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected),
-		changes => runElevatedSave(changes, deadline, budgetCap(), uptime(), applySystemTimeSettings)
+		hash,
+		() =>
+			executeNetworkHelperRequest(
+				incoming,
+				(interfaceID, config, expected) => applyIPv4(interfaceID, config, '', false, expected),
+				changes => runElevatedSave(changes, deadline, budgetCap(), uptime(), applySystemTimeSettings)
+			),
+		incoming.operation === 'applySystemTime' ? budgetCap() : NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 + 15000
 	);
 } catch (error) {
 	response = networkHelperFailure(error);

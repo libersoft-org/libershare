@@ -10,6 +10,8 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 			const cp = { ...(await import('node:child_process')) };
 			const ffi = { ...(await import('bun:ffi')) };
 			const { PassThrough } = await import('node:stream');
+			const os = await import('node:os');
+			mock.module('node:os', () => ({ ...os, uptime: () => 1000 }));
 			const { join } = await import('node:path');
 			const { createHash } = await import('node:crypto');
 			const scenario = ${JSON.stringify(scenario)};
@@ -38,7 +40,21 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 				return { ...handle, symbols };
 			} }));
 			mock.module('node:child_process', () => ({ ...cp,
-				spawn: () => { prompts++; throw new Error('unexpected helper spawn'); },
+				spawn: (file, args) => {
+					const child = new (require('node:events').EventEmitter)();
+					child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+					launchers++;
+					const argv = process.argv, executable = process.execPath;
+					process.argv = [file, 'launcher', ...args]; process.execPath = file;
+					queueMicrotask(() => import('./src/network-helper-windows-launcher.ts').then(() => {
+						const code = Number(process.exitCode ?? 0);
+						process.argv = argv; process.execPath = executable; process.exitCode = 0;
+						child.stdout.end(); child.stderr.end(); child.emit('close', code);
+					}, error => {
+						child.stdout.end(); child.stderr.end(); child.emit('error', error);
+					}));
+					return child;
+				},
 				execFile: (file, args, options, callback) => {
 					const done = typeof options === 'function' ? options : callback;
 					if (file.toLowerCase().endsWith('powershell.exe')) { signatures++; done(null, { stdout: '', stderr: '' }); return; }
@@ -53,6 +69,19 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 					}, done);
 				},
 			}));
+			const ownership = await import('./src/native/mutation-context.ts');
+			const records = await import('./src/native/helper-results-store.ts');
+			const context = {
+				operationId: '00000000-0000-4000-8000-000000000001', dataDirectory: process.cwd(), remainingMs: () => 10000,
+				recordExecution: async () => {},
+				call: async (_rule, invoke) => {
+					const result = await invoke();
+					if (!result.known) throw new Error('unknown helper outcome');
+					return result.value;
+				},
+			};
+			mock.module('./src/native/mutation-context.ts', () => ({ ...ownership, requireNativeMutationContext: () => context }));
+			mock.module('./src/native/helper-results-store.ts', () => ({ ...records, HelperResultStore: class { async read() { return null; } }, createHelperCancellation: async () => {} }));
 			if (scenario !== 'linux') {
 				const { windowsProgramFilesPath } = await import('./src/network-helper-windows.ts');
 				process.execPath = join(windowsProgramFilesPath(), 'Example', 'lish-backend.exe');

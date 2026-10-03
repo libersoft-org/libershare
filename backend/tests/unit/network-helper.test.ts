@@ -1,3 +1,4 @@
+import { helperRequestIdentity } from './fixtures/helper-request-v2.ts';
 import { describe, expect, it } from 'bun:test';
 import { CodedError, ErrorCodes } from '@shared';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, executeNetworkHelperRequest, NETWORK_HELPER_EXIT, networkHelperExitCode, networkHelperFailure, parseNetworkHelperResponse } from '../../src/network-helper-protocol.ts';
@@ -17,15 +18,15 @@ const baseline = { mode: 'dhcp' as const, address: null, prefixLength: null, gat
 
 describe('network helper protocol', () => {
 	it('round-trips one validated IPv4 operation', () => {
-		const request = { version: 1 as const, operation: 'applyIPv4' as const, interfaceID: 'eth0', config: { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] }, expected: baseline };
+		const request = { ...helperRequestIdentity, operation: 'applyIPv4' as const, interfaceID: 'eth0', config: { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] }, expected: baseline };
 		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest(request))).toEqual(request);
 	});
 
 	it('rejects unknown operations, unsafe interfaces, and invalid network data', () => {
 		for (const request of [
-			{ version: 1, operation: 'shell', interfaceID: 'eth0', config: { mode: 'dhcp' } },
-			{ version: 1, operation: 'applyIPv4', interfaceID: 'bad\nname', config: { mode: 'dhcp' } },
-			{ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'static', address: '0.0.0.0', prefixLength: 24 } },
+			{ ...helperRequestIdentity, operation: 'shell', interfaceID: 'eth0', config: { mode: 'dhcp' } },
+			{ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'bad\nname', config: { mode: 'dhcp' } },
+			{ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'static', address: '0.0.0.0', prefixLength: 24 } },
 		]) {
 			const encoded = Buffer.from(JSON.stringify(request)).toString('base64url');
 			expect(() => decodeNetworkHelperRequest(encoded)).toThrow();
@@ -34,7 +35,7 @@ describe('network helper protocol', () => {
 
 	it('dispatches only the typed apply operation', async () => {
 		const calls: unknown[] = [];
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
 		const result = await executeNetworkHelperRequest(request, async (interfaceID, config, expected) => {
 			calls.push({ interfaceID, config, expected });
 			return { interfaces: [], primaryID: null, detail: 'full', known: true, capabilities: { ipv4: true, wifi: false, staticGatewayRequired: false } };
@@ -48,7 +49,7 @@ describe('network helper protocol', () => {
 		// The authorization prompt can stay open for a long time; the helper must
 		// re-check the baseline against its own fresh read, so it has to receive it.
 		const expected = { mode: 'static' as const, address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] };
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected }));
 		expect(request.operation === 'applyIPv4' && request.expected).toEqual(expected);
 		const seen: unknown[] = [];
 		await executeNetworkHelperRequest(request, async (_interfaceID, _config, baseline) => {
@@ -65,20 +66,20 @@ describe('network helper protocol', () => {
 	});
 
 	it('rejects a baseline that is not exactly the shape the backend builds', () => {
-		const base = { version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } };
+		const base = { ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' } };
 		for (const expected of [undefined, null, [], 'x', { mode: 'static' }, { mode: 'bogus', address: null, prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [], extra: 1 }, { mode: 'dhcp', address: 'x'.repeat(65), prefixLength: null, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: 33, gateway: null, dns: [] }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: 'nope' }, { mode: 'dhcp', address: null, prefixLength: null, gateway: null, dns: [1] }]) {
 			expect(() => decodeNetworkHelperRequest(Buffer.from(JSON.stringify({ ...base, expected })).toString('base64url'))).toThrow('baseline');
 		}
 	});
 
 	it('rejects extra request fields and malformed helper responses', () => {
-		const extra = Buffer.from(JSON.stringify({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline, command: 'whoami' })).toString('base64url');
+		const extra = Buffer.from(JSON.stringify({ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline, command: 'whoami' })).toString('base64url');
 		expect(() => decodeNetworkHelperRequest(extra)).toThrow();
 		for (const response of ['{"ok":true,"state":{}}', '{"ok":false,"error":"bad\\nline"}', '{"ok":true,"extra":1}', 'x'.repeat(4097)]) expect(() => parseNetworkHelperResponse(response)).toThrow();
 	});
 
 	it('returns a bounded error instead of leaking a stack trace', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
 		const result = await executeNetworkHelperRequest(request, async () => {
 			throw new Error('x'.repeat(2000));
 		});
@@ -91,7 +92,7 @@ describe('network helper protocol', () => {
 	it('carries the stale-form refusal back across the privilege boundary', async () => {
 		// The screen reloads the form only on this exact code; a generic failure
 		// would let the same stale values be saved on the next attempt.
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applyIPv4', interfaceID: 'eth0', config: { mode: 'dhcp' }, expected: baseline }));
 		const stale = await executeNetworkHelperRequest(request, async () => {
 			throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'interface configuration changed since the form was opened');
 		});
@@ -116,7 +117,7 @@ describe('network helper protocol', () => {
 		// on Linux the helper's stderr is what the UI shows as the reason.
 		let thrown: unknown;
 		try {
-			decodeNetworkHelperRequest(Buffer.from(JSON.stringify({ version: 1, operation: 'shell', interfaceID: 'eth0', config: { mode: 'dhcp' } })).toString('base64url'));
+			decodeNetworkHelperRequest(Buffer.from(JSON.stringify({ ...helperRequestIdentity, operation: 'shell', interfaceID: 'eth0', config: { mode: 'dhcp' } })).toString('base64url'));
 		} catch (error) {
 			thrown = error;
 		}
@@ -432,11 +433,11 @@ describe('the deadline an elevated save is handed', () => {
 
 	it('carries the deadline across the encoding and refuses a nonsense one', () => {
 		const changes: SystemTimeChanges = { ntpServer: 'ntp.example.org' };
-		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 }))).toEqual({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 });
+		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 }))).toEqual({ ...helperRequestIdentity, operation: 'applySystemTime', changes, deadlineUptime: 12_345.5 });
 		// Absent stays absent, so a caller without a deadline does not acquire one.
-		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes }))).toEqual({ version: 1, operation: 'applySystemTime', changes });
+		expect(decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes }))).toEqual({ ...helperRequestIdentity, operation: 'applySystemTime', changes });
 		for (const bad of ['soon', -1, Number.NaN, Number.POSITIVE_INFINITY, 1e20, null]) {
-			const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes, deadlineUptime: bad })).toString('base64url');
+			const encoded = Buffer.from(JSON.stringify({ ...helperRequestIdentity, operation: 'applySystemTime', changes, deadlineUptime: bad })).toString('base64url');
 			expect(() => decodeNetworkHelperRequest(encoded)).toThrow();
 		}
 	});

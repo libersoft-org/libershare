@@ -1,3 +1,4 @@
+import { helperRequestIdentity } from './fixtures/helper-request-v2.ts';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'bun:test';
 import { SYSTEM_TIME_OUTCOMES, type SystemTimeChanges, type SystemTimeResult } from '@shared';
@@ -172,23 +173,22 @@ describe('the exit code an elevated Windows helper answers with', () => {
 
 describe('the time request across the helper protocol', () => {
 	it('survives encode and decode unchanged', () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		expect(request.operation).toBe('applySystemTime');
 		expect(request.operation === 'applySystemTime' && request.changes).toEqual(CHANGES);
 	});
-
 	it('refuses a request whose changes are not the shape the backend builds', () => {
-		const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes: { timezone: 'Europe/London', rogue: true } })).toString('base64url');
+		const encoded = Buffer.from(JSON.stringify({ ...helperRequestIdentity, operation: 'applySystemTime', changes: { timezone: 'Europe/London', rogue: true } })).toString('base64url');
 		expect(() => decodeNetworkHelperRequest(encoded)).toThrow('invalid network helper time changes');
 	});
 
 	it('refuses a request carrying network fields alongside the time operation', () => {
-		const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes: CHANGES, interfaceID: 'eth0' })).toString('base64url');
+		const encoded = Buffer.from(JSON.stringify({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES, interfaceID: 'eth0' })).toString('base64url');
 		expect(() => decodeNetworkHelperRequest(encoded)).toThrow('invalid network helper request');
 	});
 
 	it('hands the change set to the privileged apply and answers with the host result', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		const seen: SystemTimeChanges[] = [];
 		const response = await executeNetworkHelperRequest(
 			request,
@@ -205,7 +205,7 @@ describe('the time request across the helper protocol', () => {
 	});
 
 	it('refuses the time operation on a helper build that cannot run it', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		const response = await executeNetworkHelperRequest(request, async () => null);
 		expect(response.ok).toBe(false);
 	});
@@ -939,7 +939,7 @@ describe('an exception out of the privileged save', () => {
 	 * conservative flag is the honest one.
 	 */
 	it('is answered as a state that may have changed', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		const response = await executeNetworkHelperRequest(
 			request,
 			async () => null,
@@ -961,7 +961,7 @@ describe('an exception out of the privileged save', () => {
 	 * answer says so - that is the one case `!response.ok` still means "before any write".
 	 */
 	it('is not claimed when the operation was refused before running', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		const response = await executeNetworkHelperRequest(request, async () => null);
 		expect(response.ok).toBe(false);
 		expect(response.ok === false && response.error).toContain('unsupported');
@@ -974,7 +974,7 @@ describe('an exception out of the privileged save', () => {
 	 * reading of it is "the host may have been touched".
 	 */
 	it('stays conservative where the exit code cannot tell the two apart', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		const response = await executeNetworkHelperRequest(request, async () => null);
 		expect(networkHelperExitCode(response)).toBe(NETWORK_HELPER_EXIT.rejected);
 		expect(windowsSystemTimeExit(NETWORK_HELPER_EXIT.rejected).stateMayHaveChanged).toBe(true);
@@ -982,7 +982,7 @@ describe('an exception out of the privileged save', () => {
 
 	/** A save that merely REFUSED still reports its own flags, untouched. */
 	it('leaves an ordinary refusal exactly as the save reported it', async () => {
-		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ version: 1, operation: 'applySystemTime', changes: CHANGES }));
+		const request = decodeNetworkHelperRequest(encodeNetworkHelperRequest({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CHANGES }));
 		const refusal: SystemTimeResult = { success: false, outcome: 'auto-sync-enabled', message: 'automatic time synchronisation is enabled' };
 		const response = await executeNetworkHelperRequest(
 			request,
@@ -1038,7 +1038,7 @@ describe('a value the host will never accept', () => {
 	 */
 	it('would have come back from the boundary as something else entirely', () => {
 		expect(isSystemTimeChanges(CLEARED_SERVER)).toBe(false);
-		const encoded = Buffer.from(JSON.stringify({ version: 1, operation: 'applySystemTime', changes: CLEARED_SERVER })).toString('base64url');
+		const encoded = Buffer.from(JSON.stringify({ ...helperRequestIdentity, operation: 'applySystemTime', changes: CLEARED_SERVER })).toString('base64url');
 		expect(() => decodeNetworkHelperRequest(encoded)).toThrow('invalid network helper time changes');
 	});
 

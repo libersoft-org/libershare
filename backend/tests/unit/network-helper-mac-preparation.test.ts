@@ -15,11 +15,24 @@ for (const failure of ['read', 'signature', 'launch']) {
 				queueMicrotask(() => failure === 'read' ? stream.destroy(new Error('helper read failed')) : stream.end('helper'));
 				return stream;
 			} }));
-			mock.module('node:child_process', () => ({ ...cp, execFile: (file, args, options, callback) => {
+			mock.module('node:child_process', () => ({ ...cp, spawn: () => { prompts++; throw new Error('launch failed'); }, execFile: (file, args, options, callback) => {
 				if (file.endsWith('osascript')) { prompts++; callback(new Error('launch failed')); return; }
 				if (failure === 'signature') { callback(new Error('signature unavailable')); return; }
 				callback(null, { stdout: '', stderr: 'TeamIdentifier=TEAMID\nIdentifier=app.example' });
 			} }));
+			const ownership = await import('./src/native/mutation-context.ts');
+			const records = await import('./src/native/helper-results-store.ts');
+			const context = {
+				operationId: '00000000-0000-4000-8000-000000000001', dataDirectory: process.cwd(), remainingMs: () => 10000,
+				recordExecution: async () => {},
+				call: async (_rule, invoke) => {
+					const result = await invoke();
+					if (!result.known) throw new Error('unknown helper outcome');
+					return result.value;
+				},
+			};
+			mock.module('./src/native/mutation-context.ts', () => ({ ...ownership, requireNativeMutationContext: () => context }));
+			mock.module('./src/native/helper-results-store.ts', () => ({ ...records, HelperResultStore: class { async read() { return failure === 'launch' ? { phase: 'started' } : null; } }, createHelperCancellation: async () => {} }));
 			const { runElevatedSystemTime } = await import('./src/network-helper-client.ts');
 			const result = await runElevatedSystemTime({ ntpEnabled: false }, 'darwin', () => 1000, async () => true);
 			console.log(JSON.stringify({ result, prompts }));

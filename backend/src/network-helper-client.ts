@@ -1,25 +1,24 @@
 import { execFile, spawn } from 'node:child_process';
 import { uptime as osUptime } from 'node:os';
 import { existsSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
-import { dirname, join, win32 } from 'node:path';
+import { realpath, stat, unlink } from 'node:fs/promises';
+import { dirname, join, resolve, win32 } from 'node:path';
 import { promisify } from 'node:util';
 import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
 import { remainingSaveBudget } from './system-time-common.ts';
 import { expectedNetworkHelperHash, HelperVerificationTimeoutError, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
-import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, parseNetworkHelperResponse, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperResponse } from './network-helper-protocol.ts';
+import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperOperation, type NetworkHelperResponse } from './network-helper-protocol.ts';
 import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
 
+import { requireNativeMutationContext } from './native/mutation-context.ts';
+import { HelperResultStore, createHelperCancellation, helperRequestHash, type HelperResultRecord } from './native/helper-results-store.ts';
+import { getNativeBootId, nativeProcessIdentity } from './native/process-identity.ts';
+import { readTrustedHelperResult, type HelperOperationRule } from './native/helper-results.ts';
+
 const execFileAsync = promisify(execFile);
-/**
- * Longer than the longest transaction a helper may run: the NetworkManager
- * checkpoint window (profile change, activation, explicit rollback and its
- * safety margin), plus room for the outcome to be reported. Killing the helper
- * earlier would abandon a rollback in progress, release the host lock, and let
- * the backend publish a state that is still changing.
- */
+/** Cooperative network budget, including checkpoint rollback and reporting. */
 export const HELPER_TIMEOUT_MS: number = NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 + 15_000;
 const MAX_HELPER_OUTPUT_BYTES = 4096;
 /**
@@ -34,19 +33,7 @@ const MAX_HELPER_OUTPUT_BYTES = 4096;
  */
 export const SIGNATURE_TIMEOUT_MS = 30_000;
 
-/**
- * How long the launcher may be left running for one system-time save.
- *
- * It has to outlast the launcher, because the launcher is what holds the elevated process's
- * handle and terminates it on its own timeout. Killed first, this call leaves an elevated
- * helper running with nothing watching it - and the save then reports a finished operation and
- * releases the lock while the host may still be being changed.
- *
- * So it covers BOTH parts, which the previous figure did not: the prompt, whose time is spent
- * inside `ShellExecuteExW` before the launcher's wait starts counting at all, and the work the
- * wait actually bounds. Deliberately NOT the network path's {@link HELPER_TIMEOUT_MS} either -
- * that is a NetworkManager checkpoint window and nothing in a time save creates one.
- */
+/** Legacy duration estimate; execution lifetime is governed by the mutation journal. */
 export const WINDOWS_TIME_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_ELEVATION_WAIT_MS + 20_000;
 export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
 
@@ -282,27 +269,12 @@ export function windowsLauncherFailure(exitCode: unknown): NetworkHelperFailure 
 	return { ok: false, error: message ?? 'the privileged network helper failed' };
 }
 
-/**
- * The network path's own limit, on the same reasoning as the time one.
- *
- * The prompt's time is spent inside `ShellExecuteExW` before the launcher's wait starts, so a
- * caller that allows only the wait can kill the launcher while it still believes it has time -
- * and the launcher is what holds the elevated process's handle. This was the case here as
- * well, from before the time work: 271 s against a prompt plus a 180 s wait.
- */
+/** Legacy duration estimate; it is not passed to the launcher as a timeout. */
 export const WINDOWS_NETWORK_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_NETWORK_ELEVATION_WAIT_MS + 20_000;
 
-async function runWindowsHelper(encoded: string): Promise<NetworkHelperResponse> {
-	try {
-		await execFileAsync(windowsNetworkLauncherPath(), ['--request', encoded], { timeout: WINDOWS_NETWORK_HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(windowsNetworkLauncherPath()) });
-		return { ok: true };
-	} catch (error) {
-		// A killed launcher is this timeout firing: the wait for the administrator
-		// prompt happens inside ShellExecuteExW, which the launcher cannot bound
-		// itself, so the caller's timeout is the one that ends it.
-		const failure = error as { code?: unknown; killed?: boolean } | null;
-		return windowsLauncherFailure(failure?.killed ? WINDOWS_LAUNCHER_EXIT.timeout : failure?.code);
-	}
+async function runWindowsHelper(request: NetworkHelperRequest): Promise<NetworkHelperResponse> {
+	const launcher = windowsNetworkLauncherPath();
+	return runTrackedHelper(request, launcher, ['--request', encodeNetworkHelperRequest(request)], { cwd: dirname(launcher) });
 }
 
 /** What the macOS helper launch needs, measured before anything is started. */
@@ -321,49 +293,90 @@ async function prepareMacHelper(helper: string): Promise<MacHelperLaunch> {
 	return { team: backend.team, expectedHash };
 }
 
-async function launchMacHelper(helper: string, encoded: string, launch: MacHelperLaunch): Promise<string> {
-	const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encoded, launch.team, launch.expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL], { timeout: HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES });
-	return stdout;
+async function launchMacHelper(helper: string, request: NetworkHelperRequest, launch: MacHelperLaunch): Promise<NetworkHelperResponse> {
+	return runTrackedHelper(request, '/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encodeNetworkHelperRequest(request), launch.team, launch.expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL]);
 }
 
-async function runMacHelper(helper: string, encoded: string): Promise<string> {
-	return launchMacHelper(helper, encoded, await prepareMacHelper(helper));
+async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Promise<NetworkHelperResponse> {
+	const pkexec = existsSync('/usr/bin/pkexec') ? '/usr/bin/pkexec' : '/bin/pkexec';
+	return runTrackedHelper(request, pkexec, linuxNetworkHelperArgs(helper), { stdin: JSON.stringify(request) });
+}
+
+function helperRequest(operation: NetworkHelperOperation, uptime: () => number = osUptime): NetworkHelperRequest {
+	const context = requireNativeMutationContext();
+	const deadlineUptime = Math.min(operation.deadlineUptime ?? Infinity, uptime() + context.remainingMs() / 1000);
+	return { ...operation, version: 2, operationId: context.operationId, cancelPath: resolve(context.dataDirectory, 'native-operations', 'helper-cancellations', `${context.operationId}.cancel`), deadlineUptime };
 }
 
 async function collectBounded(stream: NodeJS.ReadableStream): Promise<string> {
 	const chunks: Buffer[] = [];
-	let size = 0;
+	let size = 0,
+		oversized = false;
 	for await (const value of stream) {
-		const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+		const chunk = Buffer.from(value);
 		size += chunk.length;
-		if (size > MAX_HELPER_OUTPUT_BYTES) throw new Error('network helper returned an oversized response');
-		chunks.push(chunk);
+		if (size <= MAX_HELPER_OUTPUT_BYTES) chunks.push(chunk);
+		else oversized = true;
 	}
+	if (oversized) throw new Error('The privileged launcher returned too much output');
 	return Buffer.concat(chunks).toString('utf8');
 }
 
-async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Promise<string> {
-	const pkexec = existsSync('/usr/bin/pkexec') ? '/usr/bin/pkexec' : '/bin/pkexec';
-	const child = spawn(pkexec, linuxNetworkHelperArgs(helper), { stdio: ['pipe', 'pipe', 'pipe'] });
-	child.stdin.end(JSON.stringify(request));
-	const timeout = setTimeout(() => child.kill(), HELPER_TIMEOUT_MS);
-	const closed = new Promise<number | null>((resolve, reject) => {
-		child.once('error', reject);
-		child.once('close', resolve);
+function acceptedHelperResult(record: HelperResultRecord | null, rule: HelperOperationRule): NetworkHelperResponse | null {
+	const boot = getNativeBootId();
+	if (!record || !boot || record.bootId !== boot || record.operationId !== rule.operationId || record.requestHash !== rule.requestHash) return null;
+	if (record.phase === 'cancelled') return { ok: false, error: 'The privileged request was cancelled before applying changes' };
+	return record.phase === 'finished' && record.result?.outcome === 'known' ? record.result.response : null;
+}
+
+async function runTrackedHelper(request: NetworkHelperRequest, executable: string, args: string[], options: { stdin?: string; cwd?: string } = {}): Promise<NetworkHelperResponse> {
+	const context = requireNativeMutationContext(),
+		store = new HelperResultStore();
+	const rule: HelperOperationRule = { kind: 'helper', operationId: request.operationId, requestHash: helperRequestHash(request), cancelPath: request.cancelPath, launcher: null };
+	let activeRule = rule;
+	return context.call(rule, async () => {
+		const child = spawn(executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...(options.cwd ? { cwd: options.cwd } : {}) });
+		let inputError: string | undefined;
+		child.stdin.once('error', error => {
+			inputError = failureText(error);
+		});
+		const exited = new Promise<{ code: number | null; error?: string }>(resolve => {
+			child.once('error', error => resolve({ code: null, error: failureText(error) }));
+			child.once('close', code => resolve({ code }));
+		});
+		const outputs = Promise.allSettled([collectBounded(child.stdout), collectBounded(child.stderr)]);
+		try {
+			const launcher = child.pid ? nativeProcessIdentity(child.pid) : null;
+			activeRule = { ...rule, launcher };
+			await context.recordExecution(activeRule);
+			child.stdin.end(options.stdin);
+		} catch (error) {
+			child.stdin.end();
+			await createHelperCancellation(request.cancelPath);
+			throw error;
+		}
+		const completion = await exited;
+		const streams = await outputs;
+		// The launcher ended. Publish cancellation before looking for started to close the handoff race.
+		await createHelperCancellation(request.cancelPath);
+		let record: HelperResultRecord | null;
+		try {
+			record = await readTrustedHelperResult(rule, store);
+		} catch {
+			return { known: false };
+		}
+		if (record?.recoveryData) await context.recordExecution(activeRule, record.recoveryData);
+		const accepted = acceptedHelperResult(record, rule);
+		if (accepted) {
+			await unlink(request.cancelPath).catch(error => {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			});
+			return { known: true, value: accepted };
+		}
+		if (record !== null) return { known: false };
+		const stderr = streams[1].status === 'fulfilled' ? streams[1].value : '';
+		return { known: true, value: { ok: false, error: failureText(completion.error || inputError || stderr || `The privileged launcher exited with ${completion.code}`) } };
 	});
-	let stdout: string;
-	let stderr: string;
-	let code: number | null;
-	try {
-		[stdout, stderr, code] = await Promise.all([collectBounded(child.stdout), collectBounded(child.stderr), closed]);
-	} catch (error) {
-		child.kill();
-		throw error;
-	} finally {
-		clearTimeout(timeout);
-	}
-	if (code !== 0) throw new Error(stderr.trim() || `network helper exited with ${code}`);
-	return stdout;
 }
 
 /**
@@ -375,10 +388,8 @@ async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Pr
  * synchronisation off first" or "the host changed under your form" exactly as it
  * does for an unprivileged write.
  *
- * On Windows the exit code is the only channel out of an elevated process, so the
- * launcher's own codes have to be told apart from a packed outcome - and unlike the
- * network path, a non-zero status is the NORMAL case here (`ok` is 32, not 0), which
- * is why this does not reuse `runWindowsHelper`.
+ * The protected result record carries the outcome across the privilege boundary
+ * on every platform, including Windows where elevated stdout is unavailable.
  */
 export async function runElevatedSystemTime(changes: SystemTimeChanges, platform: NodeJS.Platform = process.platform, uptime: () => number = osUptime, available: (platform: NodeJS.Platform) => Promise<boolean> = networkHelperAvailable): Promise<SystemTimeResult> {
 	const helper = networkHelperPath(platform);
@@ -399,8 +410,6 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 	// is what this very operation changes.
 	const remaining = remainingSaveBudget();
 	if (remaining !== null && remaining <= 0) return notVerifiedInTime();
-	const request: NetworkHelperRequest = { version: 1, operation: 'applySystemTime', changes, ...(remaining === null ? {} : { deadlineUptime: uptime() + remaining / 1000 }) };
-	if (platform === 'win32') return runWindowsSystemTime(encodeNetworkHelperRequest(request));
 	let macLaunch: MacHelperLaunch | null = null;
 	if (platform === 'darwin') {
 		try {
@@ -413,9 +422,10 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 		const left = remainingSaveBudget();
 		if (left !== null && left <= 0) return notVerifiedInTime();
 	}
+	const request = helperRequest({ operation: 'applySystemTime', changes, ...(remaining === null ? {} : { deadlineUptime: uptime() + remaining / 1000 }) }, uptime);
 	let response: NetworkHelperResponse;
 	try {
-		response = parseNetworkHelperResponse(macLaunch ? await launchMacHelper(helper, encodeNetworkHelperRequest(request), macLaunch) : await runLinuxHelper(helper, request));
+		response = platform === 'win32' ? await runWindowsHelper(request) : macLaunch ? await launchMacHelper(helper, request, macLaunch) : await runLinuxHelper(helper, request);
 	} catch (error) {
 		// "We never got an answer" is not "nothing happened". A declined authorization is the
 		// one failure that proves the helper never ran; everything else here - a killed
@@ -495,9 +505,7 @@ export function helperTransportFailure(error: unknown): SystemTimeResult {
  * declined, or the account may not elevate at all. A DECLINED prompt gets its own outcome,
  * because the advice differs - press Save and confirm, rather than restart the application
  * with more rights; the other two are a bare `permission-denied`.
- * A timeout is the helper being KILLED part-way, so it carries `stateMayHaveChanged`:
- * the change may already be on the host, and without the flag the caller skips the
- * read-back that would show it.
+ * The legacy timeout code remains conservative if an older launcher reports it.
  */
 const WINDOWS_LAUNCHER_TIME_FAILURES: Readonly<Record<number, SystemTimeResult>> = {
 	[WINDOWS_LAUNCHER_EXIT.untrusted]: systemTimeHelperFailure('permission-denied', 'the privileged helper is missing or not trusted'),
@@ -514,25 +522,11 @@ export function windowsSystemTimeExit(exitCode: unknown, killed: boolean = false
 	return parseSystemTimeExitCode(code) ?? WINDOWS_LAUNCHER_TIME_FAILURES[code] ?? { ...systemTimeHelperFailure('error', 'the privileged helper failed'), stateMayHaveChanged: true };
 }
 
-async function runWindowsSystemTime(encoded: string): Promise<SystemTimeResult> {
-	const launcher = windowsNetworkLauncherPath();
-	try {
-		await execFileAsync(launcher, ['--request', encoded], { timeout: WINDOWS_TIME_HELPER_TIMEOUT_MS, maxBuffer: MAX_HELPER_OUTPUT_BYTES, windowsHide: true, cwd: dirname(launcher) });
-		// Exit 0 is the network path's "applied" and never a packed time outcome, so a
-		// helper that answered with it did not run the request this call made - but it DID
-		// run something, so the host is not known to be untouched.
-		return { ...systemTimeHelperFailure('error', 'the privileged helper answered the wrong request'), stateMayHaveChanged: true };
-	} catch (error) {
-		const failure = error as { code?: unknown; killed?: boolean } | null;
-		return windowsSystemTimeExit(failure?.code, failure?.killed === true);
-	}
-}
-
-export async function runElevatedNetworkHelper(request: NetworkHelperRequest, platform: NodeJS.Platform = process.platform): Promise<NetworkHelperResponse> {
+export async function runElevatedNetworkHelper(operation: NetworkHelperOperation, platform: NodeJS.Platform = process.platform): Promise<NetworkHelperResponse> {
 	const helper = networkHelperPath(platform);
 	if (!(await networkHelperAvailable(platform))) throw new Error('privileged network helper is not available or trusted');
-	const encoded = encodeNetworkHelperRequest(request);
-	if (platform === 'win32') return runWindowsHelper(encoded);
-	const output = platform === 'darwin' ? await runMacHelper(helper, encoded) : await runLinuxHelper(helper, request);
-	return parseNetworkHelperResponse(output);
+	const request = helperRequest(operation);
+	if (platform === 'win32') return runWindowsHelper(request);
+	if (platform === 'darwin') return launchMacHelper(helper, request, await prepareMacHelper(helper));
+	return runLinuxHelper(helper, request);
 }
