@@ -312,6 +312,7 @@ describe('network helper launch commands', () => {
 		expect(script).toContain('quoted form of shellProgram');
 		expect(script).not.toContain(request);
 		expect(MAC_HELPER_SHELL).toContain('/usr/bin/codesign --verify --strict');
+		expect(MAC_HELPER_SHELL).toContain('unset TZ;');
 		expect(MAC_HELPER_SHELL).toContain('TeamIdentifier=');
 		expect(MAC_HELPER_SHELL).toContain('Identifier=');
 		expect(MAC_HELPER_SHELL).toContain('/usr/bin/shasum -a 256');

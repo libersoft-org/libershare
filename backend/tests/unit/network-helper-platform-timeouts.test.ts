@@ -17,6 +17,12 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 			const scenario = ${JSON.stringify(scenario)};
 			let timeout = scenario !== 'win32-warm';
 			let hashes = 0, signatures = 0, launchers = 0, prompts = 0, writes = 0;
+			const { NativeWorkerChannel } = await import('./src/native/worker-host.ts');
+			const workerCall = NativeWorkerChannel.prototype.call;
+			NativeWorkerChannel.prototype.call = function(request, timeoutMs) {
+				if(request.method === 'win32.signatures.match') { signatures++; return Promise.resolve(true); }
+				return workerCall.call(this, request, timeoutMs);
+			};
 			const { HelperVerificationTimeoutError } = await import('./src/network-helper-integrity.ts');
 			globalThis.LISH_NETWORK_HELPER_SHA256 = createHash('sha256').update('test-helper').digest('hex');
 			mock.module('node:fs', () => ({ ...fs, existsSync: () => true,
@@ -54,19 +60,6 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 						child.stdout.end(); child.stderr.end(); child.emit('error', error);
 					}));
 					return child;
-				},
-				execFile: (file, args, options, callback) => {
-					const done = typeof options === 'function' ? options : callback;
-					if (file.toLowerCase().endsWith('powershell.exe')) { signatures++; done(null, { stdout: '', stderr: '' }); return; }
-					if (!file.endsWith('lish-network-launcher.exe')) { done(new Error('unexpected executable')); return; }
-					launchers++;
-					const argv = process.argv, executable = process.execPath;
-					process.argv = [file, 'launcher', ...args]; process.execPath = file;
-					import('./src/network-helper-windows-launcher.ts').then(() => {
-						const code = Number(process.exitCode ?? 0);
-						process.argv = argv; process.execPath = executable; process.exitCode = 0;
-						done(code ? Object.assign(new Error('launcher exit'), { code }) : null, { stdout: '', stderr: '' });
-					}, done);
 				},
 			}));
 			const ownership = await import('./src/native/mutation-context.ts');

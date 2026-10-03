@@ -5,7 +5,7 @@ test('a slow metadata reader keeps its own deadline without cancelling shared ve
 	const script = String.raw`
 		import { mock } from 'bun:test';
 		const fs = { ...(await import('node:fs/promises')) };
-		const cp = { ...(await import('node:child_process')) };
+		const { NativeWorkerChannel } = await import('./src/native/worker-host.ts');
 		const windows = { ...(await import('./src/network-helper-windows.ts')) };
 		const metadata = Promise.withResolvers();
 		const signatureStarted = Promise.withResolvers();
@@ -22,11 +22,11 @@ test('a slow metadata reader keeps its own deadline without cancelling shared ve
 			windowsPowerShellPath: () => 'powershell.exe',
 			windowsSystemEnvironment: () => ({}),
 		}));
-		mock.module('node:child_process', () => ({ ...cp, execFile: (_file, _args, _options, callback) => {
+		NativeWorkerChannel.prototype.call = () => new Promise(resolve => {
 			signatures++;
-			finishSignature = () => callback(null, { stdout: '', stderr: '' });
+			finishSignature = () => resolve(true);
 			signatureStarted.resolve();
-		} }));
+		});
 		const { verifyWindowsHelper } = await import('./src/network-helper-client.ts');
 		const helper = 'C:/Program Files/Example/lish-network-helper.exe';
 		const first = verifyWindowsHelper(helper, () => firstNow).then(value => value, error => error.name);

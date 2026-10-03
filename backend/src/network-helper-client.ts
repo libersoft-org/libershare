@@ -1,23 +1,24 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { uptime as osUptime } from 'node:os';
 import { existsSync } from 'node:fs';
 import { realpath, stat, unlink } from 'node:fs/promises';
 import { dirname, join, resolve, win32 } from 'node:path';
-import { promisify } from 'node:util';
 import { productIdentifier, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { parseSystemTimeExitCode, systemTimeHelperFailure } from './system-time-helper.ts';
 import { remainingSaveBudget } from './system-time-common.ts';
 import { expectedNetworkHelperHash, HelperVerificationTimeoutError, sha256File, trustIdentity } from './network-helper-integrity.ts';
 import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-linux.ts';
 import { encodeNetworkHelperRequest, NETWORK_HELPER_EXIT, type NetworkHelperFailure, type NetworkHelperRequest, type NetworkHelperOperation, type NetworkHelperResponse } from './network-helper-protocol.ts';
-import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE, windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
+import { elevationClock, verifyWindowsInstalledHelper, verifyWindowsInstalledSibling, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS, WINDOWS_LAUNCHER_EXIT, WINDOWS_LAUNCHER_FILE } from './network-helper-windows.ts';
 
 import { requireNativeMutationContext } from './native/mutation-context.ts';
 import { HelperResultStore, createHelperCancellation, helperRequestHash, type HelperResultRecord } from './native/helper-results-store.ts';
 import { getNativeBootId, nativeProcessIdentity } from './native/process-identity.ts';
 import { readTrustedHelperResult, type HelperOperationRule } from './native/helper-results.ts';
+import { NativeWorkerChannel, NativeWorkerFailure } from './native/worker-host.ts';
+import type { MacCodeIdentity } from './native/darwin/security.ts';
 
-const execFileAsync = promisify(execFile);
+const signatureReader = new NativeWorkerChannel('read');
 /** Cooperative network budget, including checkpoint rollback and reporting. */
 export const HELPER_TIMEOUT_MS: number = NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 + 15_000;
 const MAX_HELPER_OUTPUT_BYTES = 4096;
@@ -35,7 +36,7 @@ export const SIGNATURE_TIMEOUT_MS = 30_000;
 
 /** Legacy duration estimate; execution lifetime is governed by the mutation journal. */
 export const WINDOWS_TIME_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_ELEVATION_WAIT_MS + 20_000;
-export const MAC_HELPER_SHELL = 'set -eu; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
+export const MAC_HELPER_SHELL = 'set -eu; unset TZ; d=$(/usr/bin/mktemp -d /private/var/tmp/lish-network-helper.XXXXXX); trap \'/bin/rm -f "$d/helper"; /bin/rmdir "$d"\' EXIT HUP INT TERM; /bin/cp "$1" "$d/helper"; /usr/bin/codesign --verify --strict "$d/helper"; t=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^TeamIdentifier=/{print $2}\'); i=$(/usr/bin/codesign -dv --verbose=4 "$d/helper" 2>&1 | /usr/bin/awk -F= \'/^Identifier=/{print $2}\'); h=$(/usr/bin/shasum -a 256 "$d/helper" | /usr/bin/awk \'{print $1}\'); [ -n "$t" ] && [ "$t" = "$3" ] && [ "$h" = "$4" ] && [ "$i" = "$5" ]; "$d/helper" --request "$2"';
 
 export function macNetworkHelperScript(): string {
 	return 'on run argv\nset helperPath to item 1 of argv\nset requestValue to item 2 of argv\nset expectedTeam to item 3 of argv\nset expectedHash to item 4 of argv\nset expectedIdentifier to item 5 of argv\nset shellProgram to item 6 of argv\ndo shell script "/bin/sh -c " & quoted form of shellProgram & " sh " & quoted form of helperPath & " " & quoted form of requestValue & " " & quoted form of expectedTeam & " " & quoted form of expectedHash & " " & quoted form of expectedIdentifier with administrator privileges\nend run';
@@ -201,32 +202,19 @@ async function measureWindowsHelperTrust(helper: string, launcher: string, expec
 	// A budget already spent is a timeout, not an answer to cache.
 	remaining();
 	if (expectedHash === null || !(await bounded(verifyWindowsInstalledHelper(helper, process.execPath, expectedHash, { signal: controller.signal, timeoutMs: remaining() }))) || !(await bounded(verifyWindowsInstalledSibling(launcher, process.execPath)))) return false;
-	const quote = (value: string): string => `'${value.replaceAll("'", "''")}'`;
-	const script = `$ErrorActionPreference='Stop'; $s=@(${[helper, launcher, process.execPath].map(quote).join(',')} | ForEach-Object { Get-AuthenticodeSignature -LiteralPath $_ }); if ($s.Count -ne 3 -or @($s | Where-Object { $_.Status -ne 'Valid' -or -not $_.SignerCertificate }).Count -ne 0 -or @($s.SignerCertificate.Thumbprint | Select-Object -Unique).Count -ne 1) { exit 3 }`;
 	// Outside the try: a budget already spent is a timeout, not a bad signature to cache.
 	const timeout = Math.max(1, Math.floor(remaining()));
 	try {
-		await execFileAsync(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { timeout, maxBuffer: 1024, windowsHide: true, env: windowsSystemEnvironment() });
-		return true;
+		return await signatureReader.call<boolean>({ method: 'win32.signatures.match', args: { paths: [helper, launcher, process.execPath] } }, timeout);
 	} catch (error) {
-		// Killed by the timeout is the budget running out, not a bad signature.
-		if ((error as { killed?: boolean }).killed) throw new HelperVerificationTimeoutError();
+		if (error instanceof NativeWorkerFailure) throw new HelperVerificationTimeoutError();
 		return false;
 	}
 }
 
-interface MacCodeIdentity {
-	team: string;
-	identifier: string;
-}
-
 async function macCodeIdentity(path: string, deep: boolean = false): Promise<MacCodeIdentity | null> {
 	try {
-		await execFileAsync('/usr/bin/codesign', ['--verify', ...(deep ? ['--deep'] : []), '--strict', path], { timeout: 10_000 });
-		const { stderr } = await execFileAsync('/usr/bin/codesign', ['-dv', '--verbose=4', path], { timeout: 10_000 });
-		const team = stderr.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
-		const identifier = stderr.match(/^Identifier=(.+)$/m)?.[1]?.trim();
-		return team && identifier ? { team, identifier } : null;
+		return await signatureReader.call<MacCodeIdentity | null>({ method: 'darwin.signature', args: { path, deep } }, 10000);
 	} catch {
 		return null;
 	}
