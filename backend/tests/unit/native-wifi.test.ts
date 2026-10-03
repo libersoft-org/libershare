@@ -97,7 +97,35 @@ describe('native Wi-Fi transactions', () => {
 			expect(f.reads.some(call => call.member === 'GetSecrets')).toBe(false);
 			expect(f.profiles.get(PROFILE)!['802-11-wireless-security']!['psk-flags']!.value).toBe(flags);
 			expect(f.secrets.has(PROFILE)).toBe(false);
+			expect(f.agentScopes).toEqual([{ profilePath: PROFILE, uuid: UUID, ssidHex: Buffer.from('Demo').toString('hex'), authentication: 'wpa-psk', password: NEW_PASSWORD }]);
+			expect(f.state.secretAgent).toBe(false);
+			expect(f.state.closed).toBe(true);
 		}
+	});
+	test('a known activation failure releases the entered password before restoring an agent-owned profile', async () => {
+		const f = wifiFixture({ flags: 1, active: true });
+		f.state.failure = 'original-activation';
+		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow('activation failed');
+		expect(f.writes.some(call => call.member === 'CheckpointRollback')).toBe(true);
+		expect(f.state.active).toBe(PROFILE);
+		expect(f.state.secretAgent).toBe(false);
+		expect(f.state.closed).toBe(true);
+	});
+	test('an unknown activation retains its credential worker and never starts rollback', async () => {
+		const f = wifiFixture({ flags: 2 });
+		f.state.unknown = 'ActivateConnection';
+		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow();
+		expect(f.writes.some(call => call.member === 'CheckpointRollback')).toBe(false);
+		expect(f.state.secretAgent).toBe(true);
+		expect(f.state.retained).toBe(true);
+		expect(f.state.closed).toBe(false);
+	});
+	test('failed agent registration leaves the profile untouched and creates no checkpoint', async () => {
+		const f = wifiFixture({ flags: 1 });
+		f.state.failure = 'secret-agent';
+		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow();
+		expect(f.writes).toHaveLength(0);
+		expect(f.state.closed).toBe(true);
 	});
 	test('new protected profile is created once with the caller-selected AP', async () => {
 		const f = wifiFixture({ existing: false });

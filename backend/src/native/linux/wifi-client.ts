@@ -7,6 +7,7 @@ import type { NativeNetworkSettings } from './network-mutation.ts';
 import type { LinuxNetlinkState } from './netlink.ts';
 import type { Nl80211Link } from './nl80211.ts';
 import { wifiDictionary, wifiNumber, wifiPaths, wifiString, type WifiProperties } from './wifi-settings.ts';
+import type { WifiSecretScope } from './wifi-secret-agent.ts';
 
 export const WIFI_NM: string = 'org.freedesktop.NetworkManager';
 export const WIFI_NM_PATH: string = '/org/freedesktop/NetworkManager';
@@ -24,11 +25,13 @@ export interface WifiMutationDeps {
 	readonly bind: (request: DBusEndpointRequest) => Promise<BoundDBusEndpoint>;
 	readonly read: (endpoint: BoundDBusEndpoint, request: WifiCall, timeoutMs: number) => Promise<DBusReply>;
 	readonly mutate: (context: NativeMutationContext, endpoint: BoundDBusEndpoint, request: WifiCall) => Promise<DBusReply>;
+	readonly provideSecret: (context: NativeMutationContext, endpoint: BoundDBusEndpoint, scope: WifiSecretScope) => Promise<DBusReply>;
+	readonly releaseSecret: (context: NativeMutationContext, endpoint: BoundDBusEndpoint) => Promise<DBusReply>;
 	readonly scan: (device: string, timeoutMs: number) => Promise<unknown>;
 	readonly link: (device: string, timeoutMs: number) => Promise<Nl80211Link>;
 	readonly now: () => number;
 	readonly sleep: (ms: number) => Promise<void>;
-	readonly close: () => void;
+	readonly close: (retainReceiver?: BoundDBusEndpoint) => void;
 }
 
 const reader = new NativeWorkerChannel('read');
@@ -39,6 +42,8 @@ function nativeDeps(): WifiMutationDeps {
 		bind: request => mutation.bind(request),
 		read: (endpoint, request, timeoutMs) => reader.call({ method: 'linux.dbus', args: { options: { bus: 'system' }, request: { ...request, kind: 'read', destination: endpoint.rule.destination, timeoutUsec: BigInt(Math.max(1, Math.floor(timeoutMs * 1000))) } } }, timeoutMs),
 		mutate: (context, endpoint, request) => mutation.call(context, endpoint, 'nm', request),
+		provideSecret: (context, endpoint, scope) => mutation.provideWifiSecret(context, endpoint, scope),
+		releaseSecret: (context, endpoint) => mutation.releaseWifiSecret(context, endpoint),
 		scan: (device, timeoutMs) => reader.call({ method: 'linux.network.scan', args: { device, timeoutMs } }, timeoutMs),
 		link: async (device, timeoutMs) => {
 			const deadline = performance.now() + timeoutMs;
@@ -51,8 +56,9 @@ function nativeDeps(): WifiMutationDeps {
 		},
 		now: () => performance.now(),
 		sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
-		close: () => {
-			mutation.close();
+		close: retainReceiver => {
+			if (retainReceiver) mutation.retainUntilReceiverEnds(retainReceiver);
+			else mutation.close();
 		},
 	};
 }
@@ -77,6 +83,7 @@ export class WifiSession {
 	compensationReserveMs = 0;
 	private checkpointDeadline = Infinity;
 	private readonly readDeadline: number;
+	private secretAgentActive = false;
 	constructor(options: WifiMutationOptions, context?: NativeMutationContext, deps: WifiMutationDeps = nativeDeps()) {
 		this.options = options;
 		this.context = context;
@@ -127,12 +134,31 @@ export class WifiSession {
 		if (!this.context) throw new Error('Wi-Fi mutation requires durable ownership');
 		if (this.unknown) return this.context.pending(this.endpoint!.rule);
 		this.ensureBudget(budgetMs, reserve);
+		return this.mutate(() => this.deps.mutate(this.context!, this.endpoint!, request));
+	}
+	private async mutate(action: () => Promise<DBusReply>): Promise<DBusReply> {
 		try {
-			return await this.deps.mutate(this.context, this.endpoint!, request);
+			return await action();
 		} catch (error) {
 			this.unknown = !(error instanceof DBusError || error instanceof NativeMutationStopped || (error instanceof DBusTransportError && !error.mayHaveBeenSent) || (error instanceof NativeWorkerFailure && !error.mayHaveRun));
 			throw error;
 		}
+	}
+	async provideSecret(scope: WifiSecretScope): Promise<void> {
+		if (!this.context) throw new Error('Wi-Fi credentials require durable ownership');
+		this.ensureBudget(this.options.updateTimeoutMs);
+		this.secretAgentActive = true;
+		await this.mutate(() => this.deps.provideSecret(this.context!, this.endpoint!, scope));
+	}
+	async releaseSecret(): Promise<void> {
+		if (!this.secretAgentActive) return;
+		if (!this.context) throw new Error('Wi-Fi credentials require durable ownership');
+		this.ensureBudget(this.options.updateTimeoutMs, false);
+		await this.mutate(() => this.deps.releaseSecret(this.context!, this.endpoint!));
+		this.secretAgentActive = false;
+	}
+	secretCleanupBudgetMs(): number {
+		return this.secretAgentActive ? this.options.updateTimeoutMs : 0;
 	}
 	async checkpoint(devicePath: string): Promise<void> {
 		this.checkpointDeadline = this.deps.now() + this.options.checkpointTimeoutSeconds * 1000;
@@ -179,6 +205,6 @@ export class WifiSession {
 		return this.deps.link(device, timeout);
 	}
 	close(): void {
-		this.deps.close();
+		this.deps.close(this.secretAgentActive && (this.unknown || this.checkpointPath !== null) ? this.endpoint : undefined);
 	}
 }

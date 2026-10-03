@@ -46,6 +46,24 @@ export interface DBusSubscription {
 	close(): void;
 }
 
+export interface DBusMethodCall {
+	readonly sender: string;
+	readonly interface: string;
+	readonly member: string;
+	readonly signature: string;
+	readonly values: DBusValue[];
+}
+
+export type DBusMethodResponse = { readonly signature: string; readonly args: readonly DBusValue[] } | { readonly errorName: string; readonly errorMessage: string };
+
+interface ObjectRegistration {
+	readonly path: string;
+	readonly slotOut: BigUint64Array;
+	readonly callback: DBusCallback;
+	readonly receive: (call: DBusMethodCall) => DBusMethodResponse;
+	readonly onClose?: () => void;
+}
+
 interface SignalSubscription {
 	readonly slotOut: BigUint64Array;
 	readonly callback: DBusCallback;
@@ -96,6 +114,9 @@ export class SystemBus {
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private readonly pending = new Set<PendingCall>();
 	private readonly subscriptions = new Set<SignalSubscription>();
+	private readonly objects = new Set<ObjectRegistration>();
+	private methodQueue: { object: ObjectRegistration; message: Pointer; call: DBusMethodCall | null }[] = [];
+	private repliesQueued = false;
 	private signalQueue: { subscription: SignalSubscription; value: DBusSignal | Error }[] = [];
 	private processing = false;
 	private closeRequested = false;
@@ -233,6 +254,50 @@ export class SystemBus {
 		return reply.values[0] as Record<string, DBusVariant>;
 	}
 
+	exportObject(path: string, expectedSender: string, receive: (call: DBusMethodCall) => DBusMethodResponse, onClose?: () => void): DBusSubscription {
+		if (!this.bus || this.closeRequested) throw new DBusTransportError('D-Bus connection is closed', 'before-send', false);
+		if (!isUniqueDBusName(expectedSender) || !/^\/(?:[A-Za-z0-9_]+\/?)*$/.test(path) || [...this.objects].some(object => object.path === path)) throw new Error('Invalid or duplicate bound D-Bus object');
+		let object: ObjectRegistration;
+		const callback = retainDBusCallback(message => {
+			const type = new Uint8Array(1);
+			if (this.sd.sd_bus_message_get_type(message, ptr(type)) < 0 || type[0] !== 1) return 0;
+			let sender: string | null;
+			try {
+				sender = copyDBusString(this.sd.sd_bus_message_get_sender(message), 255);
+			} catch {
+				return 0;
+			}
+			if (sender !== expectedSender) return 0;
+			const retained = this.sd.sd_bus_message_ref(message);
+			if (!retained) return -12;
+			let call: DBusMethodCall | null = null;
+			try {
+				call = {
+					sender,
+					interface: copyDBusString(this.sd.sd_bus_message_get_interface(message), 255) ?? '',
+					member: copyDBusString(this.sd.sd_bus_message_get_member(message), 255) ?? '',
+					signature: copyDBusString(this.sd.sd_bus_message_get_signature(message, 1), 255) ?? '',
+					values: decodeDBus(this.sd, message),
+				};
+			} catch {
+				// Malformed requests never reach the credential provider or its error output.
+			}
+			this.methodQueue.push({ object, message: nativePointer(retained), call });
+			return 1;
+		});
+		object = { path, callback, slotOut: new BigUint64Array(1), receive, ...(onClose ? { onClose } : {}) };
+		this.objects.add(object);
+		try {
+			const address = dbusCString(path);
+			checkSdBus(this.sd.sd_bus_add_object(this.bus, ptr(object.slotOut), ptr(address), callback.ptr, callback.userdata), 'export object');
+		} catch (error) {
+			this.releaseObject(object);
+			throw error;
+		}
+		this.schedule();
+		return { close: () => this.releaseObject(object) };
+	}
+
 	roundTrip(signature: string, args: readonly DBusValue[]): DBusValue[] {
 		if (!this.bus || this.closeRequested) throw new DBusTransportError('D-Bus connection is closed', 'before-send', false);
 		const strings = ['/org/libershare/Codec', 'org.libershare.Codec', 'RoundTrip'].map(dbusCString);
@@ -260,6 +325,10 @@ export class SystemBus {
 			this.finish(pending);
 		}
 		for (const subscription of this.subscriptions) this.releaseSubscription(subscription);
+		for (const object of this.objects) this.releaseObject(object);
+		for (const call of this.methodQueue) this.sd.sd_bus_message_unref(call.message);
+		this.methodQueue = [];
+		this.repliesQueued = false;
 		this.signalQueue = [];
 		if (this.bus) this.sd.sd_bus_close_unref(this.bus);
 		this.bus = null;
@@ -286,7 +355,7 @@ export class SystemBus {
 	}
 
 	private schedule(): void {
-		if (!this.timer && !this.closeRequested && (this.pending.size || this.subscriptions.size)) this.timer = setTimeout(() => this.pump(), 5);
+		if (!this.timer && !this.closeRequested && (this.pending.size || this.subscriptions.size || this.objects.size || this.repliesQueued)) this.timer = setTimeout(() => this.pump(), 5);
 	}
 
 	private pump(): void {
@@ -301,11 +370,35 @@ export class SystemBus {
 			}
 		} catch (error) {
 			const failure = error instanceof DBusTransportError ? error : new DBusTransportError(String(error), 'process', true);
-			for (const pending of this.pending) pending.result ??= failure;
-			for (const subscription of this.subscriptions) this.signalQueue.push({ subscription, value: failure });
-			this.closeRequested = true;
+			this.failConnection(failure);
 		} finally {
 			this.processing = false;
+		}
+		const methods = this.methodQueue;
+		this.methodQueue = [];
+		for (const { object, message, call } of methods) {
+			try {
+				if (!this.objects.has(object) || this.closeRequested) continue;
+				let response: DBusMethodResponse = { errorName: 'org.freedesktop.DBus.Error.InvalidArgs', errorMessage: 'Invalid method arguments' };
+				if (call) {
+					try {
+						response = object.receive(call);
+					} catch {
+						response = { errorName: 'org.freedesktop.DBus.Error.Failed', errorMessage: 'The method could not be completed' };
+					}
+				}
+				if (this.bus && !this.closeRequested) this.sendMethodResponse(message, response);
+			} catch {
+				this.failConnection(new DBusTransportError('D-Bus method response could not be sent', 'send', true));
+			} finally {
+				this.sd.sd_bus_message_unref(message);
+			}
+		}
+		if (this.repliesQueued && this.bus && !this.closeRequested) {
+			const queued = new BigUint64Array(1);
+			const result = this.sd.sd_bus_get_n_queued_write(this.bus, ptr(queued));
+			if (result < 0) this.failConnection(new DBusTransportError('D-Bus write queue is unavailable', 'process', true, -result));
+			else this.repliesQueued = queued[0] !== 0n;
 		}
 		const signals = this.signalQueue;
 		this.signalQueue = [];
@@ -340,9 +433,44 @@ export class SystemBus {
 		else pending.resolve(pending.result);
 	}
 
+	private failConnection(failure: DBusTransportError): void {
+		for (const pending of this.pending) pending.result ??= failure;
+		for (const subscription of this.subscriptions) this.signalQueue.push({ subscription, value: failure });
+		this.closeRequested = true;
+	}
+
 	private releaseSubscription(subscription: SignalSubscription): void {
 		if (!this.subscriptions.delete(subscription)) return;
 		if (subscription.slotOut[0]) this.sd.sd_bus_slot_unref(nativePointer(subscription.slotOut[0]));
 		subscription.callback.close();
+	}
+
+	private sendMethodResponse(request: Pointer, response: DBusMethodResponse): void {
+		const out = new BigUint64Array(1);
+		let message: Pointer | null = null;
+		try {
+			if ('errorName' in response) {
+				const name = dbusCString(response.errorName),
+					text = dbusCString(response.errorMessage);
+				const error = Buffer.alloc(24);
+				error.writeBigUInt64LE(BigInt(ptr(name)), 0);
+				error.writeBigUInt64LE(BigInt(ptr(text)), 8);
+				checkSdBus(this.sd.sd_bus_message_new_method_error(request, ptr(out), ptr(error)), 'new method error');
+			} else checkSdBus(this.sd.sd_bus_message_new_method_return(request, ptr(out)), 'new method return');
+			message = nativePointer(out[0]!);
+			if (!('errorName' in response)) encodeDBus(this.sd, message, response.signature, response.args);
+			checkSdBus(this.sd.sd_bus_send(this.bus!, message, null), 'send method response');
+			// sd_bus_send may queue a partial write after the final export was closed.
+			this.repliesQueued = true;
+		} finally {
+			if (message ?? out[0]) this.sd.sd_bus_message_unref(message ?? nativePointer(out[0]!));
+		}
+	}
+
+	private releaseObject(object: ObjectRegistration): void {
+		if (!this.objects.delete(object)) return;
+		if (object.slotOut[0]) this.sd.sd_bus_slot_unref(nativePointer(object.slotOut[0]));
+		object.callback.close();
+		object.onClose?.();
 	}
 }

@@ -1,6 +1,8 @@
 import { DBusError, DBusTransportError, SystemBus, isUniqueDBusName, type DBusOptions, type DBusReply, type DBusRequest } from './dbus.ts';
 import { nativeProcessIdentity } from '../process-identity.ts';
 import type { NativeEndRule, NativeProcessIdentity } from '../mutation-proof.ts';
+import { classifyDBusMutation } from '../mutation-proof.ts';
+import { WifiSecretAgent, type WifiSecretScope } from './wifi-secret-agent.ts';
 
 export interface BoundDBusEndpoint {
 	readonly connectionId: string;
@@ -15,10 +17,11 @@ export interface DBusEndpointRequest {
 	readonly timeoutMs: number;
 }
 
-type Bus = Pick<SystemBus, 'call' | 'close'>;
+type Bus = Pick<SystemBus, 'call' | 'close'> & Partial<Pick<SystemBus, 'exportObject'>>;
 interface Connection {
 	readonly bus: Bus;
 	readonly id: string;
+	agent?: WifiSecretAgent;
 }
 
 export class WorkerDBusConnections {
@@ -45,6 +48,7 @@ export class WorkerDBusConnections {
 			return await connection.bus.call(request);
 		} catch (error) {
 			if (error instanceof DBusTransportError) {
+				connection.agent?.close();
 				connection.bus.close();
 				for (const [key, value] of this.connections) if (value === connection) this.connections.delete(key);
 			}
@@ -89,8 +93,35 @@ export class WorkerDBusConnections {
 		return this.send(connection, request);
 	}
 
+	async provideWifiSecret(endpoint: BoundDBusEndpoint, scope: WifiSecretScope): Promise<DBusReply> {
+		const connection = [...this.connections.values()].find(value => value.id === endpoint.connectionId);
+		if (!connection?.bus.exportObject || connection.agent) throw new DBusTransportError('The bound Wi-Fi agent connection is unavailable', 'before-send', false);
+		const agent = new WifiSecretAgent({ call: request => this.send(connection, request), exportObject: connection.bus.exportObject.bind(connection.bus) }, endpoint.rule.destination, scope);
+		connection.agent = agent;
+		const reply = await agent.register();
+		if (classifyDBusMutation('nm', endpoint.rule.destination, reply).kind !== 'unknown' && reply.type === 'error') {
+			agent.close();
+			delete connection.agent;
+		}
+		return reply;
+	}
+
+	async releaseWifiSecret(endpoint: BoundDBusEndpoint): Promise<DBusReply> {
+		const connection = [...this.connections.values()].find(value => value.id === endpoint.connectionId);
+		if (!connection?.agent) throw new DBusTransportError('The bound Wi-Fi agent is unavailable', 'before-send', false);
+		const reply = await connection.agent.unregister();
+		if (classifyDBusMutation('nm', endpoint.rule.destination, reply).kind !== 'unknown') {
+			connection.agent.close();
+			delete connection.agent;
+		}
+		return reply;
+	}
+
 	close(): void {
-		for (const { bus } of this.connections.values()) bus.close();
+		for (const { bus, agent } of this.connections.values()) {
+			agent?.close();
+			bus.close();
+		}
 		this.connections.clear();
 	}
 }

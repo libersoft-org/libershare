@@ -4,6 +4,7 @@ import type { NativeNetworkSettings } from '../../../src/native/linux/network-mu
 import type { WifiCall, WifiMutationDeps, WifiMutationOptions } from '../../../src/native/linux/wifi-client.ts';
 import type { WifiRecoveryData } from '../../../src/native/linux/wifi-mutation.ts';
 import type { JournalValue } from '../../../src/native/mutation-journal.ts';
+import type { WifiSecretScope } from '../../../src/native/linux/wifi-secret-agent.ts';
 
 export const NM: string = 'org.freedesktop.NetworkManager';
 export const ROOT: string = '/org/freedesktop/NetworkManager';
@@ -29,7 +30,8 @@ export interface WifiFixture {
 	writes: WifiCall[];
 	reads: WifiCall[];
 	records: WifiRecoveryData[];
-	state: { active: string | null; autoconnect: boolean; candidates: string[]; flags: number; wpa: number; rsn: number; failure: string; unknown: string; failSecrets: boolean; expireAtCommit: boolean; remaining: number; clock: number; closed: boolean; pending: boolean };
+	agentScopes: WifiSecretScope[];
+	state: { active: string | null; autoconnect: boolean; candidates: string[]; flags: number; wpa: number; rsn: number; failure: string; unknown: string; failSecrets: boolean; expireAtCommit: boolean; remaining: number; clock: number; closed: boolean; pending: boolean; secretAgent: boolean; retained: boolean };
 	autoRollback(): void;
 }
 
@@ -42,7 +44,8 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 		if (!options.open && !options.flags) secrets.set(PROFILE, OLD_PASSWORD);
 	}
 	const originalActive = options.active ? PROFILE : null;
-	const state = { active: originalActive, autoconnect: !!options.active, candidates: [...profiles.keys()], flags: options.open ? 0 : 1, wpa: 0, rsn: options.open ? 0 : 0x188, failure: '', unknown: '', failSecrets: false, expireAtCommit: false, remaining: 355000, clock: 0, closed: false, pending: false };
+	const state = { active: originalActive, autoconnect: !!options.active, candidates: [...profiles.keys()], flags: options.open ? 0 : 1, wpa: 0, rsn: options.open ? 0 : 0x188, failure: '', unknown: '', failSecrets: false, expireAtCommit: false, remaining: 355000, clock: 0, closed: false, pending: false, secretAgent: false, retained: false };
+	const agentScopes: WifiSecretScope[] = [];
 	const writes: WifiCall[] = [],
 		reads: WifiCall[] = [],
 		records: WifiRecoveryData[] = [];
@@ -96,6 +99,16 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 	};
 	const deps: WifiMutationDeps = {
 		bind: async () => endpoint,
+		provideSecret: async (_context, _endpoint, scope) => {
+			if (state.failure === 'secret-agent') throw error();
+			agentScopes.push(scope);
+			state.secretAgent = true;
+			return reply('');
+		},
+		releaseSecret: async () => {
+			state.secretAgent = false;
+			return reply('');
+		},
 		scan: async () => [],
 		link: async () => ({ ssid: state.active ? 'Demo' : null, bssid: state.active ? BSSID : null, signal: state.active ? -38 : null }),
 		read: async (_endpoint, request) => {
@@ -160,6 +173,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				return reply('a{sv}', {});
 			}
 			if (request.member === 'ActivateConnection') {
+				if (options.flags && !state.secretAgent) throw error(`${NM}.NoSecrets`);
 				for (const path of volatile) {
 					profiles.delete(path);
 					secrets.delete(path);
@@ -174,6 +188,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				return reply('o', activePath());
 			}
 			if (request.member === 'CheckpointRollback') {
+				if (state.secretAgent) throw new Error('Interactive credentials must not override checkpoint restoration');
 				autoRollback();
 				return reply('a{su}', { [DEVICE]: 0 });
 			}
@@ -198,9 +213,11 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 			state.clock += ms;
 			state.remaining -= ms;
 		},
-		close: () => {
-			state.closed = true;
+		close: retainReceiver => {
+			state.retained = !!retainReceiver;
+			state.closed = !retainReceiver;
+			if (!retainReceiver) state.secretAgent = false;
 		},
 	};
-	return { context, deps, profiles, secrets, writes, reads, records, state, autoRollback };
+	return { context, deps, profiles, secrets, writes, reads, records, state, agentScopes, autoRollback };
 }

@@ -177,6 +177,7 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 			}
 		}
 		await record();
+		if (selectedPath && pskFlags !== null && pskFlags !== 0 && authentication !== 'open') await session.provideSecret({ profilePath: selectedPath, uuid: metadata.selectedProfileUuid!, ssidHex: metadata.targetSsidHex!, authentication, password });
 		await session.checkpoint(path);
 		await record({ checkpointPath: session.checkpointPath });
 		if (!selected) {
@@ -231,7 +232,13 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 		if (session.unknown) throw error;
 		if (session.checkpointPath) {
 			const compensationMs = originalMayHaveChanged ? options.updateTimeoutMs : 0;
-			if (session.remainingMs() < options.rollbackTimeoutMs + options.checkpointSafetyMs + compensationMs) return await context.pending(session.endpoint!.rule);
+			if (session.remainingMs() < options.rollbackTimeoutMs + options.checkpointSafetyMs + compensationMs + session.secretCleanupBudgetMs()) return await context.pending(session.endpoint!.rule);
+			try {
+				await session.releaseSecret();
+			} catch (failure) {
+				if (session.unknown) throw failure;
+				return await context.pending(session.endpoint!.rule);
+			}
 			let compensationError: unknown;
 			if (originalMayHaveChanged && originalWithSecret) {
 				try {

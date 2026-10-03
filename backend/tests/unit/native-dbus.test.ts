@@ -4,9 +4,131 @@ import { DBusError, DBusTransportError, SystemBus, type DBusRequest, type DBusSi
 import { splitDBusSignature } from '../../src/native/linux/dbus-codec.ts';
 import type { SdBusSymbols } from '../../src/native/linux/dbus-native.ts';
 
+describe('sd-bus exported methods', () => {
+	test('an export pumps idle requests, answers after the C callback and releases its message', async () => {
+		const { sd, state } = fakeBus();
+		const bus = new SystemBus({}, sd);
+		let calls = 0;
+		const object = bus.exportObject('/org/example/Service', ':1.42', call => {
+			expect(state.insideCallback).toBe(false);
+			expect(call.sender).toBe(':1.42');
+			calls++;
+			return { signature: '', args: [] };
+		});
+		try {
+			state.methodReady = true;
+			await Bun.sleep(40);
+			expect(calls).toBe(1);
+			expect(state.methodHandled).toBe(1);
+			expect(state.methodReplies).toBe(1);
+			expect(state.methodRefs).toBe(0);
+			object.close();
+			expect(state.slots).toBe(0);
+			expect(state.replay[0]!()).toBe(0);
+		} finally {
+			bus.close();
+		}
+	});
+
+	test('another sender cannot invoke the decoder or credential provider', async () => {
+		const { sd, state } = fakeBus();
+		const bus = new SystemBus({}, sd);
+		const decoder = spyOn(sd, 'sd_bus_message_peek_type');
+		let called = false;
+		bus.exportObject('/org/example/Service', ':1.42', () => {
+			called = true;
+			return { signature: '', args: [] };
+		});
+		try {
+			state.sender = ':1.99';
+			state.methodReady = true;
+			await Bun.sleep(40);
+			expect(state.methodHandled).toBe(0);
+			expect(decoder).not.toHaveBeenCalled();
+			expect(called).toBe(false);
+			expect(state.methodRefs).toBe(0);
+			expect(state.methodReplies).toBe(0);
+		} finally {
+			bus.close();
+			decoder.mockRestore();
+		}
+	});
+
+	test('malformed bodies and provider errors never expose the original error text', async () => {
+		for (const malformed of [true, false]) {
+			const { sd, state } = fakeBus();
+			const bus = new SystemBus({}, sd);
+			bus.exportObject('/org/example/Service', ':1.42', () => {
+				throw new Error('private credential value');
+			});
+			try {
+				state.badMethodBody = malformed;
+				state.methodReady = true;
+				await Bun.sleep(40);
+				expect(state.methodError).toBe(malformed ? 'org.freedesktop.DBus.Error.InvalidArgs' : 'org.freedesktop.DBus.Error.Failed');
+				expect(state.methodErrorMessage).not.toContain('private credential');
+				expect(state.methodRefs).toBe(0);
+			} finally {
+				bus.close();
+			}
+		}
+	});
+
+	test('a provider can close its export without freeing a callback still on the C stack', async () => {
+		const { sd, state } = fakeBus();
+		const bus = new SystemBus({}, sd);
+		let closed = false;
+		const object = bus.exportObject(
+			'/org/example/Service',
+			':1.42',
+			() => {
+				object.close();
+				return { signature: '', args: [] };
+			},
+			() => {
+				closed = true;
+			}
+		);
+		try {
+			state.methodReady = true;
+			await Bun.sleep(40);
+			expect(closed).toBe(true);
+			expect(state.slots).toBe(0);
+			expect(state.methodReplies).toBe(1);
+			expect(state.methodRefs).toBe(0);
+		} finally {
+			bus.close();
+		}
+	});
+
+	test('a queued reply continues draining after its final export closes', async () => {
+		const { sd, state } = fakeBus();
+		const bus = new SystemBus({}, sd);
+		const object = bus.exportObject('/org/example/Service', ':1.42', () => {
+			object.close();
+			return { signature: '', args: [] };
+		});
+		try {
+			state.writeBackpressure = true;
+			state.methodReady = true;
+			await Bun.sleep(40);
+			expect(state.slots).toBe(0);
+			expect(state.queuedWrites).toBe(1);
+			expect(state.flushedReplies).toBe(0);
+			state.writeBackpressure = false;
+			await Bun.sleep(40);
+			expect(state.queuedWrites).toBe(0);
+			expect(state.flushedReplies).toBe(1);
+			expect(state.methodRefs).toBe(0);
+		} finally {
+			bus.close();
+		}
+	});
+});
+
 function fakeBus(): {
 	sd: SdBusSymbols;
-	state: { destination: string; timeout: bigint; slots: number; released: number; calls: number; delivered: boolean; signalReady: boolean; rule: string; failProcess: boolean; sendError: number; insideCallback: boolean; sender: string; errorName: string | null; events: string[]; callbacks: Pointer[]; userdata: Pointer[]; replay: (() => number)[] };
+	state: { destination: string; timeout: bigint; slots: number; released: number; calls: number; delivered: boolean; signalReady: boolean; rule: string; failProcess: boolean; sendError: number; insideCallback: boolean; sender: string; errorName: string | null; events: string[]; callbacks: Pointer[]; userdata: Pointer[]; replay: (() => number)[]; methodReady: boolean; methodHandled: number; methodRefs: number; methodReplies: number; methodError: string; methodErrorMessage: string; badMethodBody: boolean; writeBackpressure: boolean; queuedWrites: number; flushedReplies: number };
 } {
 	const buffers: Buffer[] = [];
 	const allocate = (value: string | number): Pointer => {
@@ -17,13 +139,16 @@ function fakeBus(): {
 	const write = (address: Pointer, value: bigint): void => {
 		new DataView(toArrayBuffer(address, 0, 8)).setBigUint64(0, value, true);
 	};
-	const state = { destination: '', timeout: 0n, slots: 0, released: 0, calls: 0, delivered: false, signalReady: false, rule: '', failProcess: false, sendError: 0, insideCallback: false, sender: ':1.42', errorName: null as string | null, events: [] as string[], callbacks: [] as Pointer[], userdata: [] as Pointer[], replay: [] as (() => number)[] };
+	const state = { destination: '', timeout: 0n, slots: 0, released: 0, calls: 0, delivered: false, signalReady: false, rule: '', failProcess: false, sendError: 0, insideCallback: false, sender: ':1.42', errorName: null as string | null, events: [] as string[], callbacks: [] as Pointer[], userdata: [] as Pointer[], replay: [] as (() => number)[], methodReady: false, methodHandled: 0, methodRefs: 0, methodReplies: 0, methodError: '', methodErrorMessage: '', badMethodBody: false, writeBackpressure: false, queuedWrites: 0, flushedReplies: 0 };
 	const bus = allocate(8),
 		message = allocate(8);
 	const callbacks = new Map<Pointer, () => number>();
 	const replySenders = new Map<Pointer, string>();
 	let signalCallback: (() => number) | undefined;
 	const signalSlot = allocate(8);
+	const objectSlot = allocate(8),
+		methodMessage = allocate(8);
+	let objectCallback: (() => number) | undefined;
 	const symbols = {
 		sd_bus_open_system: (out: Pointer) => {
 			write(out, BigInt(bus));
@@ -35,7 +160,46 @@ function fakeBus(): {
 			write(out, BigInt(allocate(8)));
 			return 0;
 		},
-		sd_bus_message_unref: () => null,
+		sd_bus_message_ref: (value: Pointer) => {
+			if (value === methodMessage) state.methodRefs++;
+			return value;
+		},
+		sd_bus_message_unref: (value: Pointer) => {
+			if (value === methodMessage) {
+				if (state.insideCallback) throw new Error('Released method message inside callback');
+				state.methodRefs--;
+			}
+			return null;
+		},
+		sd_bus_message_new_method_return: (_request: Pointer, out: Pointer) => {
+			write(out, BigInt(allocate(8)));
+			return 0;
+		},
+		sd_bus_message_new_method_error: (_request: Pointer, out: Pointer, error: Pointer) => {
+			const view = new DataView(toArrayBuffer(error, 0, 24));
+			state.methodError = new CString(Number(view.getBigUint64(0, true)) as Pointer).toString();
+			state.methodErrorMessage = new CString(Number(view.getBigUint64(8, true)) as Pointer).toString();
+			write(out, BigInt(allocate(8)));
+			return 0;
+		},
+		sd_bus_send: () => {
+			if (state.insideCallback) throw new Error('Answered method inside callback');
+			state.methodReplies++;
+			if (state.writeBackpressure) state.queuedWrites++;
+			return 1;
+		},
+		sd_bus_get_n_queued_write: (_bus: Pointer, out: Pointer) => {
+			write(out, BigInt(state.queuedWrites));
+			return 0;
+		},
+		sd_bus_add_object: (_bus: Pointer, out: Pointer, _path: Pointer, callbackAddress: Pointer, data: Pointer) => {
+			write(out, BigInt(objectSlot));
+			state.slots++;
+			const invoke = CFunction({ ptr: callbackAddress, args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 });
+			objectCallback = () => invoke(methodMessage, data, null);
+			state.replay.push(objectCallback);
+			return 0;
+		},
 		sd_bus_call_async: (_bus: Pointer, out: Pointer, _message: Pointer, callbackAddress: Pointer, data: Pointer, timeout: bigint) => {
 			state.calls++;
 			state.timeout = timeout;
@@ -54,6 +218,18 @@ function fakeBus(): {
 		},
 		sd_bus_process: () => {
 			if (state.failProcess) return -104;
+			if (state.queuedWrites && !state.writeBackpressure) {
+				state.queuedWrites--;
+				state.flushedReplies++;
+				return 1;
+			}
+			if (state.methodReady && objectCallback) {
+				state.methodReady = false;
+				state.insideCallback = true;
+				state.methodHandled = objectCallback();
+				state.insideCallback = false;
+				return 1;
+			}
 			if (state.signalReady && signalCallback) {
 				state.signalReady = false;
 				state.insideCallback = true;
@@ -78,6 +254,7 @@ function fakeBus(): {
 			state.slots--;
 			state.released++;
 			if (releasedSlot === signalSlot) signalCallback = undefined;
+			else if (releasedSlot === objectSlot) objectCallback = undefined;
 			else callbacks.delete(releasedSlot);
 			return null;
 		},
@@ -85,8 +262,8 @@ function fakeBus(): {
 			state.events.push('bus-close');
 			return null;
 		},
-		sd_bus_message_get_type: (_message: Pointer, out: Pointer) => {
-			new Uint8Array(toArrayBuffer(out, 0, 1))[0] = state.errorName ? 3 : 2;
+		sd_bus_message_get_type: (value: Pointer, out: Pointer) => {
+			new Uint8Array(toArrayBuffer(out, 0, 1))[0] = value === methodMessage ? 1 : state.errorName ? 3 : 2;
 			return 0;
 		},
 		sd_bus_message_get_sender: (reply: Pointer) => allocate(replySenders.get(reply) ?? state.sender),
@@ -111,7 +288,7 @@ function fakeBus(): {
 			write((error + 8) as Pointer, BigInt(allocate('Rejected')));
 			return error;
 		},
-		sd_bus_message_peek_type: () => 0,
+		sd_bus_message_peek_type: (value: Pointer) => (value === methodMessage && state.badMethodBody ? -22 : 0),
 	};
 	return { sd: symbols as unknown as SdBusSymbols, state };
 }

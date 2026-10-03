@@ -97,6 +97,8 @@ test('the production read worker rejects durable writes and returns real process
 		expect(identity.executor.pid).toBe(process.pid);
 		expect(identity.executor.started.length).toBeGreaterThan(0);
 		await expectWorkerRejection(channel.call({ method: 'journal.begin', args: {} }, 3000), 'cannot execute mutations');
+		await expectWorkerRejection(channel.call({ method: 'linux.wifi.agent.provide', args: {} }, 3000), 'cannot execute mutations');
+		await expectWorkerRejection(channel.call({ method: 'linux.wifi.agent.release', args: {} }, 3000), 'cannot execute mutations');
 		await expectWorkerRejection(channel.call({ method: 'linux.dbus', args: { request: { kind: 'mutation' } } }, 3000), 'cannot execute mutations');
 		await expectWorkerRejection(channel.call({ method: 'win32.network.ipv4.write', args: {} }, 3000), 'cannot execute mutations');
 	} finally {

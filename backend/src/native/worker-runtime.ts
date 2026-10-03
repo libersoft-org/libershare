@@ -1,6 +1,7 @@
 import { parentPort } from 'node:worker_threads';
 import { DBusTransportError, type DBusOptions, type DBusRequest } from './linux/dbus.ts';
 import { WorkerDBusConnections, type BoundDBusEndpoint, type DBusEndpointRequest } from './linux/dbus-worker.ts';
+import type { WifiSecretScope } from './linux/wifi-secret-agent.ts';
 import { readLinuxNetlinkState } from './linux/netlink.ts';
 import { readNl80211Link, readNl80211Scan } from './linux/nl80211.ts';
 import { readNativeLinuxNetwork, readNativeLinuxCapabilities, scanNativeLinuxWifi } from './linux/network-reader.ts';
@@ -196,6 +197,12 @@ async function dispatch(request: NativeWorkerRequest): Promise<unknown> {
 			const args = request.args as { endpoint: BoundDBusEndpoint; request: DBusRequest };
 			return buses.call(args.endpoint, args.request);
 		}
+		case 'linux.wifi.agent.provide': {
+			const args = request.args as { endpoint: BoundDBusEndpoint; scope: WifiSecretScope };
+			return buses.provideWifiSecret(args.endpoint, args.scope);
+		}
+		case 'linux.wifi.agent.release':
+			return buses.releaseWifiSecret(request.args as BoundDBusEndpoint);
 		default:
 			throw new Error(`Unknown native operation: ${request.method}`);
 	}
@@ -210,7 +217,7 @@ parentPort.on('message', async (request: NativeWorkerRequest & { id: number; lan
 	let response: NativeWorkerResponse;
 	try {
 		const dbusMutation = request.method === 'linux.dbus' && (request.args as { request: DBusRequest }).request.kind === 'mutation';
-		if (request.lane === 'read' && (dbusMutation || ['linux.dbus.call', 'linux.time.jobs.set-ntp', 'linux.time.jobs.restart', 'linux.volume.write', 'linux.volume.monitor.start', 'linux.volume.monitor.stop', 'win32.network.ipv4.write', 'win32.time.write', 'darwin.volume.write', 'darwin.time.write', 'darwin.network.ipv4.prepare', 'darwin.network.ipv4.write', 'darwin.network.ipv4.release', 'journal.begin', 'journal.update', 'journal.finish'].includes(request.method))) throw new Error('A read worker cannot execute mutations');
+		if (request.lane === 'read' && (dbusMutation || ['linux.dbus.call', 'linux.wifi.agent.provide', 'linux.wifi.agent.release', 'linux.time.jobs.set-ntp', 'linux.time.jobs.restart', 'linux.volume.write', 'linux.volume.monitor.start', 'linux.volume.monitor.stop', 'win32.network.ipv4.write', 'win32.time.write', 'darwin.volume.write', 'darwin.time.write', 'darwin.network.ipv4.prepare', 'darwin.network.ipv4.write', 'darwin.network.ipv4.release', 'journal.begin', 'journal.update', 'journal.finish'].includes(request.method))) throw new Error('A read worker cannot execute mutations');
 		response = { id: request.id, ok: true, value: await dispatch(request) };
 	} catch (error) {
 		response = { id: request.id, ok: false, error: errorData(error) };
