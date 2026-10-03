@@ -215,13 +215,19 @@ function run(request) {
 
 if (!isMainThread)
 	self.onmessage = event => {
+		if (event.data.operation === 'close') {
+			self.postMessage({ closed: true });
+			return;
+		}
+		let response;
 		try {
-			self.postMessage({ result: run(event.data) });
+			response = { result: run(event.data) };
 		} catch (error) {
 			const password = event.data.password;
 			const message = error instanceof Error ? error.message : 'macOS Wi-Fi operation failed';
-			self.postMessage({ error: password ? message.split(password).join('[redacted]') : message });
+			response = { error: password ? message.split(password).join('[redacted]') : message };
 		} finally {
 			event.data.password = '';
 		}
+		self.postMessage({ ...response, settled: true });
 	};

@@ -12,6 +12,58 @@ type CoreWlanRequest = { operation: 'state' } | { operation: 'scan'; device: str
 // Shared worker phase: 0 = preparing/reading, 1 = mutation started, 2 = cancelled.
 let pending: { worker: Worker; phase: Int32Array; mutationUnsettled: boolean } | null = null;
 const NATIVE_BUSY = 'macOS Wi-Fi native operation is still finishing; try again after it has stopped';
+interface CoreWlanReader {
+	readonly worker: Worker;
+	readonly closed: Promise<void>;
+	closing: boolean;
+}
+let reader: CoreWlanReader | null = null;
+
+function workerEntry(): string {
+	return typeof LISH_COREWLAN_WORKER_ENTRY === 'string' ? new URL(LISH_COREWLAN_WORKER_ENTRY, import.meta.url).href : new URL('./system-network-corewlan-worker.js', import.meta.url).href;
+}
+
+function getReader(): CoreWlanReader {
+	if (reader?.closing) throw new Error(NATIVE_BUSY);
+	if (reader) return reader;
+	const worker = new Worker(workerEntry());
+	let resolveClosed!: () => void;
+	const current: CoreWlanReader = {
+		worker,
+		closing: false,
+		closed: new Promise<void>(resolve => {
+			resolveClosed = resolve;
+		}),
+	};
+	reader = current;
+	worker.unref();
+	worker.addEventListener('message', (event: MessageEvent<{ closed?: boolean }>) => {
+		if (current.closing && event.data.closed) worker.terminate();
+	});
+	worker.addEventListener('close', () => {
+		if (reader === current) reader = null;
+		resolveClosed();
+	});
+	return current;
+}
+
+function closeReader(current: CoreWlanReader): void {
+	if (current.closing) return;
+	current.closing = true;
+	current.worker.ref();
+	try {
+		current.worker.postMessage({ operation: 'close' });
+	} catch {
+		if (pending?.worker !== current.worker) current.worker.terminate();
+	}
+}
+
+export async function closeCoreWlanReads(): Promise<void> {
+	const current = reader;
+	if (!current) return;
+	closeReader(current);
+	await current.closed;
+}
 
 /** A timed-out native Wi-Fi mutation must not overlap even an elevated IPv4 change. */
 export function assertMacWifiMutationIdle(): void {
@@ -42,42 +94,79 @@ export function macSsidHex(ssid: string, ssidHex: string | null = null): string 
 function runCoreWlan<T>(request: CoreWlanRequest): Promise<T> {
 	if (pending) return Promise.reject(new Error(NATIVE_BUSY));
 	return new Promise((resolve, reject) => {
-		const entry = typeof LISH_COREWLAN_WORKER_ENTRY === 'string' ? new URL(LISH_COREWLAN_WORKER_ENTRY, import.meta.url).href : new URL('./system-network-corewlan-worker.js', import.meta.url).href;
-		const worker = new Worker(entry);
+		const reading = request.operation === 'state' || request.operation === 'scan';
+		const pooled = reading ? getReader() : null;
+		const worker = pooled?.worker ?? new Worker(workerEntry());
+		worker.ref();
 		const current = { worker, phase: new Int32Array(new SharedArrayBuffer(4)), mutationUnsettled: false };
 		pending = current;
 		let result: { error?: Error; value?: T } | undefined;
 		let expired = false;
+		let closing = false;
+		const close = (): void => {
+			if (pooled) {
+				closeReader(pooled);
+				return;
+			}
+			if (closing) return;
+			closing = true;
+			try {
+				worker.postMessage({ operation: 'close' });
+			} catch {
+				worker.terminate();
+			}
+		};
 		const timer = setTimeout(
 			() => {
 				expired = true;
 				current.mutationUnsettled = Atomics.exchange(current.phase, 0, 2) === 1;
-				worker.terminate();
+				if (pooled) close();
+				else worker.terminate();
 				reject(new Error(current.mutationUnsettled ? `macOS Wi-Fi ${request.operation === 'disconnect' ? 'disconnect' : 'association'} timed out; its result is unknown and further network changes are blocked until the native operation stops` : 'macOS Wi-Fi native operation timed out before any network change was started'));
 			},
 			request.operation === 'associate' ? 45_000 : 20_000
 		);
-		worker.addEventListener('close', () => {
+		const finish = (): void => {
 			clearTimeout(timer);
+			worker.onmessage = null;
+			worker.onerror = null;
+			worker.removeEventListener('close', onClose);
 			if (pending === current) pending = null;
 			if (expired) return;
 			if (!result) reject(new Error('macOS Wi-Fi native worker exited before reporting its result'));
 			else if (result.error) reject(result.error);
 			else resolve(result.value as T);
-		});
-		worker.onmessage = (event: MessageEvent<{ error?: string; result: T }>) => {
-			if (expired) return;
-			result = event.data.error ? { error: new Error(event.data.error) } : { value: event.data.result };
-			worker.terminate();
 		};
-		worker.onerror = () => {
+		const onClose = (): void => finish();
+		worker.addEventListener('close', onClose);
+		worker.onmessage = (event: MessageEvent<{ error?: string; result: T; settled?: boolean; closed?: boolean }>) => {
+			if (event.data.closed) {
+				if (!pooled) worker.terminate();
+				return;
+			}
+			// The worker publishes settled only after its native scope and sensitive buffers close.
+			if (reading && !event.data.settled) return;
+			if (expired) {
+				close();
+				return;
+			}
+			result = event.data.error ? { error: new Error(event.data.error) } : { value: event.data.result };
+			if (pooled && !pooled.closing) {
+				worker.unref();
+				finish();
+			} else close();
+		};
+		worker.onerror = event => {
+			event.preventDefault();
 			result = { error: new Error('macOS Wi-Fi native worker failed') };
-			worker.terminate();
+			close();
 		};
 		try {
 			worker.postMessage({ ...request, phase: current.phase });
 		} catch {
 			result = { error: new Error('macOS Wi-Fi native worker could not receive the request') };
+			// No request was dispatched, so there is no native scope to interrupt.
+			if (pooled) pooled.closing = true;
 			worker.terminate();
 		}
 	});
