@@ -35,9 +35,7 @@ export function resolveNativeTimeServiceIdentity(user: string, group: string, su
 				const buffer = Buffer.alloc(size);
 				const record = Buffer.alloc(passwd ? 48 : 32);
 				const out = new BigUint64Array(1);
-				const status = passwd
-					? numeric ? libc.getpwuid_r(Number(name), ptr(record), ptr(buffer), BigInt(size), ptr(out)) : libc.getpwnam_r(ptr(encoded), ptr(record), ptr(buffer), BigInt(size), ptr(out))
-					: numeric ? libc.getgrgid_r(Number(name), ptr(record), ptr(buffer), BigInt(size), ptr(out)) : libc.getgrnam_r(ptr(encoded), ptr(record), ptr(buffer), BigInt(size), ptr(out));
+				const status = passwd ? (numeric ? libc.getpwuid_r(Number(name), ptr(record), ptr(buffer), BigInt(size), ptr(out)) : libc.getpwnam_r(ptr(encoded), ptr(record), ptr(buffer), BigInt(size), ptr(out))) : numeric ? libc.getgrgid_r(Number(name), ptr(record), ptr(buffer), BigInt(size), ptr(out)) : libc.getgrnam_r(ptr(encoded), ptr(record), ptr(buffer), BigInt(size), ptr(out));
 				if (status === 34) continue;
 				if (status !== 0 || !out[0]) throw new Error('The time service account could not be resolved through NSS');
 				const namePointer = read.ptr(ptr(record), 0);
@@ -55,13 +53,18 @@ export function resolveNativeTimeServiceIdentity(user: string, group: string, su
 			const count = new Int32Array([size]);
 			const status = libc.getgrouplist(ptr(encoded), gid, ptr(values), ptr(count));
 			if (count[0]! < 0 || count[0]! > 65536) throw new Error('Invalid NSS group count');
-			if (status >= 0 && count[0]! <= size) { groups = [...values.subarray(0, count[0])]; break; }
+			if (status >= 0 && count[0]! <= size) {
+				groups = [...values.subarray(0, count[0])];
+				break;
+			}
 			if (count[0]! <= size) throw new Error('NSS group lookup failed');
 			size = count[0]!;
 		}
 		if (!groups) throw new Error('The time service group list is unavailable');
 		return { uid: account.id, gid, groups: [...new Set([gid, ...groups, ...supplementary.map(name => lookup(name, false).id)])] };
-	} finally { library.close(); }
+	} finally {
+		library.close();
+	}
 }
 
 /** Only called in the read worker, where NSS and sd-bus may block. */
@@ -87,10 +90,10 @@ export async function readNativeTimeServiceIdentity(timeoutMs: number): Promise<
 			if (reply.signature !== 'v' || !value || typeof value !== 'object' || !('sig' in value) || value.sig !== signature || !('value' in value)) throw new Error(`Invalid time service property ${name}`);
 			return value.value;
 		};
-		const [load, user, group, groups, dynamic] = await Promise.all([
-			property(`${destination}.Unit`, 'LoadState', 's'), property(`${destination}.Service`, 'User', 's'), property(`${destination}.Service`, 'Group', 's'), property(`${destination}.Service`, 'SupplementaryGroups', 'as'), property(`${destination}.Service`, 'DynamicUser', 'b'),
-		]);
+		const [load, user, group, groups, dynamic] = await Promise.all([property(`${destination}.Unit`, 'LoadState', 's'), property(`${destination}.Service`, 'User', 's'), property(`${destination}.Service`, 'Group', 's'), property(`${destination}.Service`, 'SupplementaryGroups', 'as'), property(`${destination}.Service`, 'DynamicUser', 'b')]);
 		if (load !== 'loaded' || typeof user !== 'string' || typeof group !== 'string' || !Array.isArray(groups) || groups.some(name => typeof name !== 'string') || typeof dynamic !== 'boolean' || (dynamic && !user)) throw new Error('The time service identity is unknown');
 		return resolveNativeTimeServiceIdentity(user || 'root', group, groups as string[]);
-	} finally { bus.close(); }
+	} finally {
+		bus.close();
+	}
 }

@@ -4,7 +4,6 @@ import { NativeMutationUnknown } from './native/mutation-host.ts';
 import { associateMacWifi, disconnectCoreWlanWifi, readCoreWlanWifi, scanCoreWlanWifi, type MacWifiInterface } from './system-network-corewlan.ts';
 import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
 
-
 /** SCPreferences owns policy; SCDynamicStore and BSD expose the live state. */
 /** `<redacted>` is what macOS substitutes for a network name when Location access was not granted. */
 const REDACTED = '<redacted>';
@@ -472,8 +471,12 @@ export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
 /** The unprivileged process uses the helper; root still needs available frameworks. */
 export async function isMacWritable(): Promise<boolean> {
 	if (!hasMacWritePrivilege(process.getuid?.())) return false;
-	try { await darwinNetworkReader.call({ method: 'darwin.network.read' }, 15000); return true; }
-	catch { return false; }
+	try {
+		await darwinNetworkReader.call({ method: 'darwin.network.read' }, 15000);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /** Root is the only privilege level that is safe under every macOS policy. */

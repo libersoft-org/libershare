@@ -22,8 +22,11 @@ function dependencies(): DarwinIPv4MutationDeps {
 		write: args => writer.call({ method: 'darwin.network.ipv4.write', args }),
 		observe: (saved, timeoutMs) => darwinNetworkReader.call({ method: 'darwin.network.ipv4.observe', args: { saved } }, timeoutMs),
 		release: token => writer.call({ method: 'darwin.network.ipv4.release', args: { token } }),
-		now: () => performance.now(), sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
-		close: () => { writer.close(); },
+		now: () => performance.now(),
+		sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+		close: () => {
+			writer.close();
+		},
 	};
 }
 
@@ -35,14 +38,16 @@ export async function observeNativeDarwinIPv4(saved: DarwinIPv4Recovery, timeout
 export async function applyNativeDarwinIPv4(context: NativeMutationContext, device: string, desired: NetIPv4Config, options: { addressingChanged: boolean; requireLease: boolean }, supplied?: DarwinIPv4MutationDeps): Promise<void> {
 	const deps = supplied ?? dependencies();
 	let prepared: { token: string; recovery: DarwinIPv4Recovery } | undefined;
-	let uncertain = false, committed = false;
+	let uncertain = false,
+		committed = false;
 	try {
 		prepared = await deps.prepare({ device, desired, ...options });
 		await context.recordRecovery({ darwinIPv4: JSON.parse(JSON.stringify(prepared.recovery)) });
 		const write = async (restore: boolean): Promise<void> => {
 			let reply: DarwinIPv4WriteResult;
-			try { reply = await context.call({ kind: 'boot' }, async () => ({ known: true, value: await deps.write({ token: prepared!.token, restore }) })); }
-			catch (error) {
+			try {
+				reply = await context.call({ kind: 'boot' }, async () => ({ known: true, value: await deps.write({ token: prepared!.token, restore }) }));
+			} catch (error) {
 				uncertain = error instanceof NativeMutationUnknown || (error instanceof NativeWorkerFailure && error.mayHaveRun);
 				throw error;
 			}
@@ -58,11 +63,15 @@ export async function applyNativeDarwinIPv4(context: NativeMutationContext, devi
 				await deps.sleep(200);
 			}
 		};
-		try { await write(false); await verify(false); }
-		catch (error) {
+		try {
+			await write(false);
+			await verify(false);
+		} catch (error) {
 			if (uncertain || error instanceof NativeMutationStopped || !committed) throw error;
-			try { await write(true); await verify(true); }
-			catch (restoreError) {
+			try {
+				await write(true);
+				await verify(true);
+			} catch (restoreError) {
 				if (uncertain || restoreError instanceof NativeMutationStopped) throw restoreError;
 				throw new Error(`Network apply failed: ${String(error)}; rollback failed: ${String(restoreError)}`);
 			}
@@ -70,6 +79,10 @@ export async function applyNativeDarwinIPv4(context: NativeMutationContext, devi
 		}
 	} finally {
 		// Releasing the local lock never commits or applies staged preferences.
-		try { if (prepared && !uncertain) await deps.release(prepared.token); } finally { deps.close(); }
+		try {
+			if (prepared && !uncertain) await deps.release(prepared.token);
+		} finally {
+			deps.close();
+		}
 	}
 }

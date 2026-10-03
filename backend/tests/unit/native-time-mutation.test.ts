@@ -23,18 +23,73 @@ function fixture() {
 	let current = { ...snapshot, utcMs: 111000, hostUptimeMs: 21000 };
 	let invoke: () => Promise<DBusReply> = async () => reply;
 	const context: NativeMutationContext = {
-		operationId: 'time-test', dataDirectory: '.', remainingMs: () => 10000 - time,
-		async call(_rule, action) { const value = await action(); if (!value.known) throw new NativeMutationUnknown(); return value.value; },
-		async pending() { throw new NativeMutationUnknown(); }, async recordExecution() {},
-		async recordRecovery(value) { metadata.push(value['time'] as unknown as LinuxTimeRecovery); },
+		operationId: 'time-test',
+		dataDirectory: '.',
+		remainingMs: () => 10000 - time,
+		async call(_rule, action) {
+			const value = await action();
+			if (!value.known) throw new NativeMutationUnknown();
+			return value.value;
+		},
+		async pending() {
+			throw new NativeMutationUnknown();
+		},
+		async recordExecution() {},
+		async recordRecovery(value) {
+			metadata.push(value['time'] as unknown as LinuxTimeRecovery);
+		},
 	};
 	const api = new LinuxTimeMutations({
-		synchronous: { async bind() { return endpoint; }, async call(_context, _endpoint, _method, request) { sent.push(request); return invoke(); }, close() { return true; } },
-		reader: { async call<T>(request: { args?: unknown }) { reads++; return ((request.args as { clock?: unknown; timezone?: unknown }).clock || (request.args as { timezone?: unknown }).timezone ? snapshot : current) as T; }, close() { return true; } },
-		jobs: { async call<T>() { throw new Error('Unexpected jobs call'); return undefined as T; }, close() { return true; } },
-		now: () => time, pause: async ms => { time += ms; },
+		synchronous: {
+			async bind() {
+				return endpoint;
+			},
+			async call(_context, _endpoint, _method, request) {
+				sent.push(request);
+				return invoke();
+			},
+			close() {
+				return true;
+			},
+		},
+		reader: {
+			async call<T>(request: { args?: unknown }) {
+				reads++;
+				return ((request.args as { clock?: unknown; timezone?: unknown }).clock || (request.args as { timezone?: unknown }).timezone ? snapshot : current) as T;
+			},
+			close() {
+				return true;
+			},
+		},
+		jobs: {
+			async call<T>() {
+				throw new Error('Unexpected jobs call');
+				return undefined as T;
+			},
+			close() {
+				return true;
+			},
+		},
+		now: () => time,
+		pause: async ms => {
+			time += ms;
+		},
 	});
-	return { api, context, metadata, sent, reads: () => reads, now: () => time, setCurrent: (value: LinuxTimeSnapshot) => { current = value; }, setInvoke: (value: typeof invoke) => { invoke = value; }, run: (operation: SystemOperation) => withNativeMutationContext(context, () => operation.run(new AbortController().signal)) };
+	return {
+		api,
+		context,
+		metadata,
+		sent,
+		reads: () => reads,
+		now: () => time,
+		setCurrent: (value: LinuxTimeSnapshot) => {
+			current = value;
+		},
+		setInvoke: (value: typeof invoke) => {
+			invoke = value;
+		},
+		run: (operation: SystemOperation) => withNativeMutationContext(context, () => operation.run(new AbortController().signal)),
+	};
 }
 
 function refusal(name: string, message = '', sender = ':1.42'): DBusError {
@@ -44,14 +99,19 @@ function refusal(name: string, message = '', sender = ':1.42'): DBusError {
 describe('native time operations', () => {
 	test('records UTC and boot/uptime before sending SetTime', async () => {
 		const f = fixture();
-		f.setInvoke(async () => { expect(f.metadata[0]?.clock).toEqual({ targetUtcMs: 110000, hostUptimeMs: 20000, bootId: 'boot-1' }); return reply; });
+		f.setInvoke(async () => {
+			expect(f.metadata[0]?.clock).toEqual({ targetUtcMs: 110000, hostUptimeMs: 20000, bootId: 'boot-1' });
+			return reply;
+		});
 		expect((await f.run(f.api.clock({ hours: 12, minutes: 0, seconds: 0 }))).kind).toBe('ok');
 		expect(f.sent[0]?.args).toEqual([110000000n, false, false]);
 	});
 
 	test('retries only the authenticated previous-request refusal for at most five seconds', async () => {
 		const f = fixture();
-		f.setInvoke(async () => { throw refusal('org.freedesktop.timedate1.AutomaticTimeSyncEnabled', 'Previous request is not finished, refusing.'); });
+		f.setInvoke(async () => {
+			throw refusal('org.freedesktop.timedate1.AutomaticTimeSyncEnabled', 'Previous request is not finished, refusing.');
+		});
 		expect(await f.run(f.api.clock({ hours: 12, minutes: 0, seconds: 0 }))).toMatchObject({ kind: 'failed', stateMayHaveChanged: false });
 		expect(f.now()).toBe(5000);
 		expect(f.sent).toHaveLength(51);
@@ -61,14 +121,19 @@ describe('native time operations', () => {
 		['org.freedesktop.timedate1.AutomaticTimeSyncEnabled', 'Automatic time synchronization is enabled'],
 		['org.freedesktop.DBus.Error.AccessDenied', 'Previous request is not finished'],
 	])('does not retry %s with %s', async (name, message) => {
-		const f = fixture(); f.setInvoke(async () => { throw refusal(name, message); });
+		const f = fixture();
+		f.setInvoke(async () => {
+			throw refusal(name, message);
+		});
 		await f.run(f.api.clock({ hours: 12, minutes: 0, seconds: 0 }));
 		expect(f.sent).toHaveLength(1);
 	});
 
 	test('timezone AccessDenied checks the physical file and forbids blind elevation', async () => {
 		const f = fixture();
-		f.setInvoke(async () => { throw refusal('org.freedesktop.DBus.Error.AccessDenied'); });
+		f.setInvoke(async () => {
+			throw refusal('org.freedesktop.DBus.Error.AccessDenied');
+		});
 		expect(await f.run(f.api.timezone('Europe/Prague'))).toMatchObject({ kind: 'denied', stateMayHaveChanged: true });
 		expect(f.reads()).toBe(2);
 		expect(f.sent).toHaveLength(1);
@@ -82,7 +147,10 @@ describe('native time operations', () => {
 	});
 
 	test('unknown SetTime stops before readback', async () => {
-		const f = fixture(); f.setInvoke(async () => { throw new NativeMutationUnknown(); });
+		const f = fixture();
+		f.setInvoke(async () => {
+			throw new NativeMutationUnknown();
+		});
 		await expect(f.run(f.api.clock({ hours: 12, minutes: 0, seconds: 0 }))).rejects.toBeInstanceOf(NativeMutationUnknown);
 		expect(f.reads()).toBe(1);
 	});
@@ -90,26 +158,71 @@ describe('native time operations', () => {
 
 describe('SystemOperation sequencing', () => {
 	test('reports completed steps when a later step is denied', async () => {
-		const outcome = await runOperations('linux', [{ describe: 'first', run: async () => ({ kind: 'ok', output: '' }) }, { describe: 'second', run: async () => ({ kind: 'denied', output: 'denied', stateMayHaveChanged: false }) }]);
-		expect(outcome).toMatchObject({ success: false, changed: true, stateMayHaveChanged: true, steps: [{ command: 'first', ok: true }, { command: 'second', ok: false }] });
+		const outcome = await runOperations('linux', [
+			{ describe: 'first', run: async () => ({ kind: 'ok', output: '' }) },
+			{ describe: 'second', run: async () => ({ kind: 'denied', output: 'denied', stateMayHaveChanged: false }) },
+		]);
+		expect(outcome).toMatchObject({
+			success: false,
+			changed: true,
+			stateMayHaveChanged: true,
+			steps: [
+				{ command: 'first', ok: true },
+				{ command: 'second', ok: false },
+			],
+		});
 	});
 
 	test('budget expiration prevents the next dispatch without aborting the in-flight call', async () => {
 		let time = 0;
 		let next = false;
-		const outcome = await withSaveBudget(() => runOperations('linux', [
-			{ describe: 'first', run: async signal => { time = 20; expect(signal.aborted).toBe(false); return { kind: 'ok', output: '' }; } },
-			{ describe: 'second', run: async () => { next = true; return { kind: 'ok', output: '' }; } },
-		], () => time), () => time, 10);
-		expect(outcome.changed).toBe(true); expect(next).toBe(false);
+		const outcome = await withSaveBudget(
+			() =>
+				runOperations(
+					'linux',
+					[
+						{
+							describe: 'first',
+							run: async signal => {
+								time = 20;
+								expect(signal.aborted).toBe(false);
+								return { kind: 'ok', output: '' };
+							},
+						},
+						{
+							describe: 'second',
+							run: async () => {
+								next = true;
+								return { kind: 'ok', output: '' };
+							},
+						},
+					],
+					() => time
+				),
+			() => time,
+			10
+		);
+		expect(outcome.changed).toBe(true);
+		expect(next).toBe(false);
 	});
 
 	test('unknown prevents the following operation', async () => {
-		const f = fixture(); let next = false;
-		await expect(withNativeMutationContext(f.context, () => runOperations('linux', [
-			{ describe: 'first', run: async () => ({ kind: 'unknown', output: '', endRule: { kind: 'boot' } }) },
-			{ describe: 'second', run: async () => { next = true; return { kind: 'ok', output: '' }; } },
-		]))).rejects.toBeInstanceOf(NativeMutationUnknown);
+		const f = fixture();
+		let next = false;
+		await expect(
+			withNativeMutationContext(f.context, () =>
+				runOperations('linux', [
+					{ describe: 'first', run: async () => ({ kind: 'unknown', output: '', endRule: { kind: 'boot' } }) },
+					{
+						describe: 'second',
+						run: async () => {
+							next = true;
+							return { kind: 'ok', output: '' };
+						},
+					},
+				])
+			)
+		).rejects.toBeInstanceOf(NativeMutationUnknown);
 		expect(next).toBe(false);
 	});
 });
@@ -135,8 +248,19 @@ describe('dedicated access probe', () => {
 	const request = { uid: 123, gid: 124, groups: [124, 125], path: '/etc/systemd/timesyncd.conf.d', mode: 'x' as const };
 	test.each(['setgroups', 'setresgid', 'setresuid', 'none'])('drops groups, gid and uid before access; stops on %s failure', failure => {
 		const calls: string[] = [];
-		const step = (name: string) => { calls.push(name); return name === failure ? -1 : 0; };
-		const syscalls: TimeAccessSyscalls = { setgroups: () => step('setgroups'), setresgid: () => step('setresgid'), setresuid: () => step('setresuid'), access: () => { calls.push('access'); return { result: 0, errno: 0 }; } };
+		const step = (name: string) => {
+			calls.push(name);
+			return name === failure ? -1 : 0;
+		};
+		const syscalls: TimeAccessSyscalls = {
+			setgroups: () => step('setgroups'),
+			setresgid: () => step('setresgid'),
+			setresuid: () => step('setresuid'),
+			access: () => {
+				calls.push('access');
+				return { result: 0, errno: 0 };
+			},
+		};
 		expect(executeTimeAccessProbe(request, syscalls)).toBe(failure === 'none' ? 0 : 3);
 		const all = ['setgroups', 'setresgid', 'setresuid', 'access'];
 		expect(calls).toEqual(failure === 'none' ? all : all.slice(0, all.indexOf(failure) + 1));

@@ -11,8 +11,18 @@ const MANAGER = `${SYSTEMD}.Manager`;
 const ROOT = '/org/freedesktop/systemd1';
 const TIMEDATED = 'org.freedesktop.timedate1';
 type JobBus = Pick<SystemBus, 'call' | 'close' | 'subscribe'>;
-interface Provider { name: string; id: string; path: string | null; load: string; active: string }
-interface RemovedJob { path: string; unit: string; result: string }
+interface Provider {
+	name: string;
+	id: string;
+	path: string | null;
+	load: string;
+	active: string;
+}
+interface RemovedJob {
+	path: string;
+	unit: string;
+	result: string;
+}
 
 export interface NativeNtpState {
 	readonly enabled: boolean | null;
@@ -33,9 +43,7 @@ export interface RestartNativeTimeUnitRequest {
 
 export function nativeNtpStateMatches(state: NativeNtpState, enabled: boolean): boolean {
 	if (state.enabled !== enabled) return false;
-	return enabled
-		? state.selected !== null && state.providers.some(unit => unit.id === state.selected && unit.active === 'active') && state.providers.every(unit => unit.id === state.selected || ['inactive', 'failed'].includes(unit.active))
-		: state.providers.every(unit => ['inactive', 'failed'].includes(unit.active));
+	return enabled ? state.selected !== null && state.providers.some(unit => unit.id === state.selected && unit.active === 'active') && state.providers.every(unit => unit.id === state.selected || ['inactive', 'failed'].includes(unit.active)) : state.providers.every(unit => ['inactive', 'failed'].includes(unit.active));
 }
 
 function failed(error: unknown, changed: boolean): OperationOutcome {
@@ -50,13 +58,12 @@ export class LinuxTimeJobWorker {
 	private readonly buses = new Map<string, JobBus>();
 	private readonly providers: (timeoutMs: number) => Promise<string[] | null>;
 	private readonly pause: (ms: number) => Promise<void>;
-	constructor(
-		open: (options: DBusOptions) => JobBus = options => new SystemBus(options),
-		identity: (pid: number) => NativeProcessIdentity | null = nativeProcessIdentity,
-		providers: (timeoutMs: number) => Promise<string[] | null> = async timeoutMs => readNtpUnitsList(await readNativeTimedatedEnvironment({ timeoutMs })),
-		pause: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
-	) {
-		this.connections = new WorkerDBusConnections(options => { const bus = open(options); this.currentBus = bus; return bus; }, identity);
+	constructor(open: (options: DBusOptions) => JobBus = options => new SystemBus(options), identity: (pid: number) => NativeProcessIdentity | null = nativeProcessIdentity, providers: (timeoutMs: number) => Promise<string[] | null> = async timeoutMs => readNtpUnitsList(await readNativeTimedatedEnvironment({ timeoutMs })), pause: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+		this.connections = new WorkerDBusConnections(options => {
+			const bus = open(options);
+			this.currentBus = bus;
+			return bus;
+		}, identity);
 		this.providers = providers;
 		this.pause = pause;
 	}
@@ -91,8 +98,9 @@ export class LinuxTimeJobWorker {
 
 	private async provider(endpoint: BoundDBusEndpoint, name: string, timeoutMs: number): Promise<Provider> {
 		let loaded: DBusReply;
-		try { loaded = await this.read(endpoint, ROOT, MANAGER, 'LoadUnit', 's', [name], timeoutMs); }
-		catch (error) {
+		try {
+			loaded = await this.read(endpoint, ROOT, MANAGER, 'LoadUnit', 's', [name], timeoutMs);
+		} catch (error) {
 			if (error instanceof DBusError && error.errorName === `${SYSTEMD}.NoSuchUnit`) return { name, id: name, path: null, load: 'not-found', active: 'inactive' };
 			throw error;
 		}
@@ -172,7 +180,10 @@ export class LinuxTimeJobWorker {
 				removed.set(path, { path, unit, result });
 				wake?.();
 			};
-			subscription = this.bus(request.endpoint).subscribe({ sender: request.endpoint.rule.destination, path: ROOT, interface: MANAGER, member: 'JobRemoved' }, onSignal, error => { signalError = error; wake?.(); });
+			subscription = this.bus(request.endpoint).subscribe({ sender: request.endpoint.rule.destination, path: ROOT, interface: MANAGER, member: 'JobRemoved' }, onSignal, error => {
+				signalError = error;
+				wake?.();
+			});
 			await this.read(request.endpoint, ROOT, MANAGER, 'Subscribe', '', [], request.readTimeoutMs);
 			dispatched = true;
 			const reply = await this.connections.call(request.endpoint, { kind: 'mutation', destination: request.endpoint.rule.destination, path: ROOT, interface: MANAGER, member: 'RestartUnit', signature: 'ss', args: [request.unit, 'replace'] });
@@ -185,7 +196,9 @@ export class LinuxTimeJobWorker {
 			jobPath = path;
 			while (!removed.has(jobPath)) {
 				if (signalError) throw signalError;
-				await new Promise<void>(resolve => { wake = resolve; });
+				await new Promise<void>(resolve => {
+					wake = resolve;
+				});
 				wake = undefined;
 			}
 			const job = removed.get(jobPath)!;
@@ -197,8 +210,13 @@ export class LinuxTimeJobWorker {
 		} catch (error) {
 			if (!dispatched || ended || (!answered && error instanceof DBusTransportError && !error.mayHaveBeenSent)) return failed(error, ended);
 			return { kind: 'unknown', endRule: { kind: 'boot' }, output: 'The time service restart may still be running' };
-		} finally { subscription?.close(); }
+		} finally {
+			subscription?.close();
+		}
 	}
 
-	close(): void { this.connections.close(); this.buses.clear(); }
+	close(): void {
+		this.connections.close();
+		this.buses.clear();
+	}
 }

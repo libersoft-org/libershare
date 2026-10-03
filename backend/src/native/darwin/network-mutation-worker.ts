@@ -11,7 +11,10 @@ export interface DarwinIPv4Prepare {
 	readonly addressingChanged: boolean;
 	readonly requireLease: boolean;
 }
-export interface DarwinIPv4Write { readonly token: string; readonly restore: boolean }
+export interface DarwinIPv4Write {
+	readonly token: string;
+	readonly restore: boolean;
+}
 export type DarwinIPv4WriteResult = { readonly ok: true } | { readonly ok: false; readonly commitAttempted: boolean; readonly error: string };
 interface Prepared {
 	token: string;
@@ -37,13 +40,16 @@ export class DarwinNetworkMutationWorker {
 		const session = new DarwinNetworkSession();
 		try {
 			session.lock();
-			const kernel = readDarwinKernelNetwork(), iface = kernel.interfaces.find(iface => iface.device === request.device);
+			const kernel = readDarwinKernelNetwork(),
+				iface = kernel.interfaces.find(iface => iface.device === request.device);
 			const bindings = session.services().filter(service => service.enabled && service.device === request.device);
 			if (!iface || !iface.index || bindings.length !== 1) throw new Error('The device does not have exactly one enabled network service');
 			if (kernel.routes.filter(route => route.family === 'ipv4' && route.device === request.device).length > 1) throw new Error('The device has multiple default routes');
-			const service = bindings[0]!, mode = darwinIPv4Mode(service.ipv4);
+			const service = bindings[0]!,
+				mode = darwinIPv4Mode(service.ipv4);
 			if (mode === 'unknown' || (mode === 'static' && darwinIPv4Addresses(service.ipv4).length !== 1)) throw new Error('The original IPv4 policy cannot be preserved safely');
-			const ipv4 = session.protocol(service.ref, 'IPv4'), dns = session.protocol(service.ref, 'DNS');
+			const ipv4 = session.protocol(service.ref, 'IPv4'),
+				dns = session.protocol(service.ref, 'DNS');
 			if (!ipv4 || (!dns && request.desired.dns !== undefined)) throw new Error('The network service lacks a required protocol');
 			const cf = session.cf;
 			const original = { ipv4: cf.deepCopy(session.sc.SCNetworkProtocolGetConfiguration(ipv4)), dns: dns ? cf.deepCopy(session.sc.SCNetworkProtocolGetConfiguration(dns)) : 0n };
@@ -52,7 +58,11 @@ export class DarwinNetworkMutationWorker {
 				if (!target.ipv4) target.ipv4 = cf.fromJS({});
 				cf.set(target.ipv4, 'ConfigMethod', request.desired.mode === 'dhcp' ? 'DHCP' : 'Manual');
 				if (request.desired.mode === 'dhcp') for (const key of ['Addresses', 'SubnetMasks', 'Router']) cf.remove(target.ipv4, key);
-				else { cf.set(target.ipv4, 'Addresses', [request.desired.address!]); cf.set(target.ipv4, 'SubnetMasks', [mask(request.desired.prefixLength!)]); cf.set(target.ipv4, 'Router', request.desired.gateway!); }
+				else {
+					cf.set(target.ipv4, 'Addresses', [request.desired.address!]);
+					cf.set(target.ipv4, 'SubnetMasks', [mask(request.desired.prefixLength!)]);
+					cf.set(target.ipv4, 'Router', request.desired.gateway!);
+				}
 			}
 			if (request.desired.dns !== undefined) {
 				if (!target.dns) target.dns = cf.fromJS({});
@@ -66,7 +76,10 @@ export class DarwinNetworkMutationWorker {
 			const token = crypto.randomUUID();
 			this.prepared = { token, session, ipv4, dns, original, target, recovery };
 			return { token, recovery };
-		} catch (error) { session.close(); throw error; }
+		} catch (error) {
+			session.close();
+			throw error;
+		}
 	}
 	write(request: DarwinIPv4Write): DarwinIPv4WriteResult {
 		const prepared = this.prepared;
@@ -83,7 +96,9 @@ export class DarwinNetworkMutationWorker {
 			if (!session.sc.SCPreferencesCommitChanges(session.preferences)) throw session.error('SCPreferencesCommitChanges');
 			if (!session.sc.SCPreferencesApplyChanges(session.preferences)) throw session.error('SCPreferencesApplyChanges');
 			return { ok: true };
-		} catch (error) { return { ok: false, commitAttempted, error: error instanceof Error ? error.message : String(error) }; }
+		} catch (error) {
+			return { ok: false, commitAttempted, error: error instanceof Error ? error.message : String(error) };
+		}
 	}
 	release(token: string): void {
 		if (!this.prepared || this.prepared.token !== token) throw new Error('The macOS preferences transaction is unavailable');
@@ -91,5 +106,7 @@ export class DarwinNetworkMutationWorker {
 		this.prepared = undefined;
 		session.close();
 	}
-	close(): void { if (this.prepared) this.release(this.prepared.token); }
+	close(): void {
+		if (this.prepared) this.release(this.prepared.token);
+	}
 }

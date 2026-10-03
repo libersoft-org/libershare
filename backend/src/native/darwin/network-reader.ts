@@ -14,11 +14,15 @@ export function darwinIPv4Mode(configuration: DarwinDictionary | null): NetInter
 	return configuration?.['ConfigMethod'] === 'DHCP' ? 'dhcp' : configuration?.['ConfigMethod'] === 'Manual' ? 'static' : 'unknown';
 }
 export function darwinIPv4Addresses(configuration: DarwinDictionary | null): NetAddress[] {
-	const addresses = darwinStrings(configuration?.['Addresses']), masks = darwinStrings(configuration?.['SubnetMasks']);
+	const addresses = darwinStrings(configuration?.['Addresses']),
+		masks = darwinStrings(configuration?.['SubnetMasks']);
 	return addresses.flatMap((address, index) => {
 		const mask = masks[index];
 		if (!isIPv4(address) || !mask || !isIPv4(mask)) return [];
-		const bits = mask.split('.').map(byte => Number(byte).toString(2).padStart(8, '0')).join('');
+		const bits = mask
+			.split('.')
+			.map(byte => Number(byte).toString(2).padStart(8, '0'))
+			.join('');
 		if (!/^1*0*$/.test(bits)) return [];
 		return [{ family: 'ipv4' as const, address, prefixLength: bits.indexOf('0') < 0 ? 32 : bits.indexOf('0') }];
 	});
@@ -54,17 +58,22 @@ export function buildDarwinNetworkState(source: DarwinNetworkSources): NetInterf
 	const primary6 = source.routes.find(route => route.family === 'ipv6' && !route.scoped && route.usable);
 	const fallback6 = source.routes.filter(route => route.family === 'ipv6' && route.usable && source.interfaces.some(iface => iface.device === route.device && !iface.loopback && source.values.get(`State:/Network/Interface/${iface.device}/Link`)?.['Active'] !== false)).sort((a, b) => Number(a.scoped) - Number(b.scoped) || a.device.localeCompare(b.device))[0];
 	const primary = primary4 ?? primary6 ?? fallback6;
-	return source.interfaces.filter(iface => !iface.loopback).map(iface => {
-		const bindings = source.services.filter(service => service.enabled && service.device === iface.device), service = bindings.length === 1 ? bindings[0] : undefined;
-		const ipv4Mode = darwinIPv4Mode(service?.ipv4 ?? null), live4 = iface.addresses.filter(address => address.family === 'ipv4');
-		const stored4 = ipv4Mode === 'static' && !live4.length ? darwinIPv4Addresses(service?.ipv4 ?? null) : [];
-		const addresses = [...iface.addresses, ...stored4], ipv4 = addresses.filter(address => address.family === 'ipv4');
-		const active4 = service ? source.values.get(`State:/Network/Service/${service.id}/IPv4`) ?? null : null;
-		const gateway = darwinRouter(service?.ipv4 ?? null) ?? darwinRouter(active4) ?? (primary?.device === iface.device ? primary4?.gateway ?? null : null);
-		const safeStatic = ipv4Mode !== 'static' || (ipv4.length === 1 && validateIPv4Config({ mode: 'static', address: ipv4[0]!.address, prefixLength: ipv4[0]!.prefixLength, gateway: gateway ?? '' }, { staticGatewayRequired: true }) === null);
-		const link = source.values.get(`State:/Network/Interface/${iface.device}/Link`)?.['Active'];
-		return { id: iface.device, name: bindings[0]?.name ?? source.ports.get(iface.device)?.name ?? iface.device, medium: medium(source.ports.get(iface.device)), link: link === true ? 'up' : link === false ? 'down' : 'unknown', defaultRoute: primary?.device === iface.device, mac: iface.mac, addresses, ipv4Mode, ipv4Configurable: !!service && ipv4Mode !== 'unknown' && safeStatic && ipv4.length <= 1 && source.routes.filter(route => route.family === 'ipv4' && route.device === iface.device).length <= 1, wifiConfigurable: false, gateway, dns: dnsForService(source, service, iface.device).map(canonicalDnsServer) };
-	});
+	return source.interfaces
+		.filter(iface => !iface.loopback)
+		.map(iface => {
+			const bindings = source.services.filter(service => service.enabled && service.device === iface.device),
+				service = bindings.length === 1 ? bindings[0] : undefined;
+			const ipv4Mode = darwinIPv4Mode(service?.ipv4 ?? null),
+				live4 = iface.addresses.filter(address => address.family === 'ipv4');
+			const stored4 = ipv4Mode === 'static' && !live4.length ? darwinIPv4Addresses(service?.ipv4 ?? null) : [];
+			const addresses = [...iface.addresses, ...stored4],
+				ipv4 = addresses.filter(address => address.family === 'ipv4');
+			const active4 = service ? (source.values.get(`State:/Network/Service/${service.id}/IPv4`) ?? null) : null;
+			const gateway = darwinRouter(service?.ipv4 ?? null) ?? darwinRouter(active4) ?? (primary?.device === iface.device ? (primary4?.gateway ?? null) : null);
+			const safeStatic = ipv4Mode !== 'static' || (ipv4.length === 1 && validateIPv4Config({ mode: 'static', address: ipv4[0]!.address, prefixLength: ipv4[0]!.prefixLength, gateway: gateway ?? '' }, { staticGatewayRequired: true }) === null);
+			const link = source.values.get(`State:/Network/Interface/${iface.device}/Link`)?.['Active'];
+			return { id: iface.device, name: bindings[0]?.name ?? source.ports.get(iface.device)?.name ?? iface.device, medium: medium(source.ports.get(iface.device)), link: link === true ? 'up' : link === false ? 'down' : 'unknown', defaultRoute: primary?.device === iface.device, mac: iface.mac, addresses, ipv4Mode, ipv4Configurable: !!service && ipv4Mode !== 'unknown' && safeStatic && ipv4.length <= 1 && source.routes.filter(route => route.family === 'ipv4' && route.device === iface.device).length <= 1, wifiConfigurable: false, gateway, dns: dnsForService(source, service, iface.device).map(canonicalDnsServer) };
+		});
 }
 
 /** Worker entry: SCPreferences policy and SCDynamicStore state share BSD interface identities. */
@@ -77,5 +86,7 @@ export function readNativeDarwinNetwork(): NetInterfaceInfo[] {
 		const values = new Map<string, DarwinDictionary | null>();
 		for (const key of session.keys('State:/Network/(Interface|Service|Global)(/.*)?')) values.set(key, session.value(key));
 		return buildDarwinNetworkState({ ...kernel, services: session.services(), ports: session.ports(), values });
-	} finally { session.close(); }
+	} finally {
+		session.close();
+	}
 }

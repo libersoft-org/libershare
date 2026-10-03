@@ -12,9 +12,14 @@ const status: SystemTimeStatus = { supported: true, nowMs: 100000, timezone: 'Et
 
 async function verify(changes: SystemTimeChanges, current: LinuxTimeSnapshot, metadata: unknown, malformed = false): Promise<NativeSettlement> {
 	const controller = new NativeTimeChanges({} as NativeMutationHost, async () => status, {
-		async call<T>() { return current as T; }, close() { return true; },
+		async call<T>() {
+			return current as T;
+		},
+		close() {
+			return true;
+		},
 	});
-	const record = { recoveryData: malformed ? metadata : { kind: 'time', changes, original: { timezone: 'Etc/UTC', ntpEnabled: false, ntpServer: null }, physical: original, time: metadata } as unknown as JournalValue } as NativeMutationRecord;
+	const record = { recoveryData: malformed ? metadata : ({ kind: 'time', changes, original: { timezone: 'Etc/UTC', ntpEnabled: false, ntpServer: null }, physical: original, time: metadata } as unknown as JournalValue) } as NativeMutationRecord;
 	// Exercise settlement without creating a journal or claiming a live executor has ended.
 	return (controller as unknown as { verify(record: NativeMutationRecord): Promise<NativeSettlement> }).verify(record);
 }
@@ -50,10 +55,11 @@ test('malformed recovery metadata cannot unlock the operation', async () => {
 test('restoring the old drop-in is insufficient when its previously running provider is stopped', async () => {
 	const controller = new NativeTimeChanges({} as NativeMutationHost, async () => ({ ...status, ntpEnabled: false }), {
 		async call<T>(request: { method: string }) {
-			return (request.method === 'linux.time.jobs.state'
-				? { enabled: false, selected: 'systemd-timesyncd.service', providers: [{ id: 'systemd-timesyncd.service', active: 'inactive' }] }
-				: { ...original, dropinHash: null, configurationHash: 'c'.repeat(64) }) as T;
-		}, close() { return true; },
+			return (request.method === 'linux.time.jobs.state' ? { enabled: false, selected: 'systemd-timesyncd.service', providers: [{ id: 'systemd-timesyncd.service', active: 'inactive' }] } : { ...original, dropinHash: null, configurationHash: 'c'.repeat(64) }) as T;
+		},
+		close() {
+			return true;
+		},
 	});
 	const record = { recoveryData: { kind: 'time', changes: { ntpServer: 'ntp.example.org' }, original: { timezone: 'Etc/UTC', ntpEnabled: true, ntpServer: null }, physical: { ...original, dropinHash: null, configurationHash: 'c'.repeat(64) } } as unknown as JournalValue } as NativeMutationRecord;
 	expect(await (controller as unknown as { verify(record: NativeMutationRecord): Promise<NativeSettlement> }).verify(record)).toBe('interrupted');

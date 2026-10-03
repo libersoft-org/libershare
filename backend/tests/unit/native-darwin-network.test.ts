@@ -8,9 +8,11 @@ import { darwinStaticStateMatches, type DarwinIPv4Recovery } from '../../src/nat
 
 function source(): DarwinNetworkSources {
 	return {
-		interfaces: [{ device: 'en7', index: 7, loopback: false, mac: '02:00:00:00:00:07', addresses: [] }], routes: [],
+		interfaces: [{ device: 'en7', index: 7, loopback: false, mac: '02:00:00:00:00:07', addresses: [] }],
+		routes: [],
 		services: [{ id: 'service-id', name: 'Renamed adapter', enabled: true, device: 'en7', port: 'Ethernet', type: 'Ethernet', ipv4: { ConfigMethod: 'DHCP' }, dns: null }],
-		ports: new Map([['en7', { name: 'Ethernet', type: 'Ethernet' }]]), values: new Map([['State:/Network/Interface/en7/Link', { Active: false }]]),
+		ports: new Map([['en7', { name: 'Ethernet', type: 'Ethernet' }]]),
+		values: new Map([['State:/Network/Interface/en7/Link', { Active: false }]]),
 	};
 }
 
@@ -30,7 +32,8 @@ describe('typed macOS network composition', () => {
 		expect(buildDarwinNetworkState({ ...sources, services })[0]).toMatchObject({ addresses: [{ family: 'ipv4', address: '192.0.2.20', prefixLength: 24 }], dns: ['2001:db8::53'], gateway: '192.0.2.1', ipv4Configurable: true });
 	});
 	test('DHCP DNS falls back from dynamic DNS to packet option 6', () => {
-		const sources = source(), values = new Map(sources.values);
+		const sources = source(),
+			values = new Map(sources.values);
 		values.set('State:/Network/Service/service-id/DHCP', { Option_6: Buffer.from([192, 0, 2, 53]) });
 		expect(buildDarwinNetworkState({ ...sources, values })[0]?.dns).toEqual(['192.0.2.53']);
 		values.set('State:/Network/Service/service-id/DNS', { ServerAddresses: ['fe80::53%en7'] });
@@ -41,8 +44,15 @@ describe('typed macOS network composition', () => {
 describe('Darwin route ABI', () => {
 	function route(): Buffer {
 		const buffer = Buffer.alloc(128);
-		buffer.writeUInt16LE(buffer.length, 0); buffer[2] = 5; buffer.writeUInt16LE(7, 4); buffer.writeUInt32LE(0x1000003, 8); buffer.writeUInt32LE(7, 12);
-		buffer[92] = 16; buffer[93] = 2; buffer[108] = 16; buffer[109] = 2;
+		buffer.writeUInt16LE(buffer.length, 0);
+		buffer[2] = 5;
+		buffer.writeUInt16LE(7, 4);
+		buffer.writeUInt32LE(0x1000003, 8);
+		buffer.writeUInt32LE(7, 12);
+		buffer[92] = 16;
+		buffer[93] = 2;
+		buffer[108] = 16;
+		buffer[109] = 2;
 		Buffer.from([192, 0, 2, 1]).copy(buffer, 112);
 		return buffer;
 	}
@@ -51,7 +61,8 @@ describe('Darwin route ABI', () => {
 	});
 	test('rejects truncated and zero-length route messages', () => {
 		expect(() => parseDarwinDefaultRoutes(route().subarray(0, 100), 2, () => 'en7')).toThrow();
-		const invalid = route(); invalid.writeUInt16LE(0, 0);
+		const invalid = route();
+		invalid.writeUInt16LE(0, 0);
 		expect(() => parseDarwinDefaultRoutes(invalid, 2, () => 'en7')).toThrow();
 	});
 	test('clears the embedded KAME scope from IPv6 addresses', () => {
@@ -59,7 +70,9 @@ describe('Darwin route ABI', () => {
 		expect(darwinAddress(bytes, 30)).toBe('fe80::1');
 	});
 	test('keeps point-to-point IPv6 when its destination is unspecified', () => {
-		const destination = Buffer.alloc(28); destination[0] = 28; destination[1] = 30;
+		const destination = Buffer.alloc(28);
+		destination[0] = 28;
+		destination[1] = 30;
 		expect(darwinHasPeer(0x10, 30, destination)).toBe(false);
 		destination[23] = 1;
 		expect(darwinHasPeer(0x10, 30, destination)).toBe(true);
@@ -69,26 +82,74 @@ describe('Darwin route ABI', () => {
 function mutationFixture() {
 	const saved: DarwinIPv4Recovery = { device: 'en7', serviceId: 'service-id', interfaceIndex: 7, mac: '02:00:00:00:00:07', original: { ipv4: 'AAAA', dns: null, hadLease: false, linkActive: false }, target: { ipv4: 'BBBB', dns: null }, desired: { mode: 'dhcp' }, addressingChanged: true, requireLease: false };
 	const events: string[] = [];
-	let time = 0, target = true;
+	let time = 0,
+		target = true;
 	let write: DarwinIPv4MutationDeps['write'] = async () => ({ ok: true });
 	const context: NativeMutationContext = {
-		operationId: 'test', dataDirectory: '.', remainingMs: () => 60000 - time,
-		async call(_rule, action) { const result = await action(); if (!result.known) throw new NativeMutationUnknown(); return result.value; },
-		async recordRecovery() { events.push('journal'); }, async recordExecution() {}, async pending() { throw new NativeMutationUnknown(); },
+		operationId: 'test',
+		dataDirectory: '.',
+		remainingMs: () => 60000 - time,
+		async call(_rule, action) {
+			const result = await action();
+			if (!result.known) throw new NativeMutationUnknown();
+			return result.value;
+		},
+		async recordRecovery() {
+			events.push('journal');
+		},
+		async recordExecution() {},
+		async pending() {
+			throw new NativeMutationUnknown();
+		},
 	};
 	const deps: DarwinIPv4MutationDeps = {
-		async prepare() { events.push('prepare'); return { token: 'token', recovery: saved }; },
-		async write(request) { events.push(request.restore ? 'restore' : 'apply'); return write(request); },
-		async observe() { return { original: true, target }; }, async release() { events.push('release'); },
-		now: () => time, sleep: async ms => { time += ms; }, close() { events.push('close'); },
+		async prepare() {
+			events.push('prepare');
+			return { token: 'token', recovery: saved };
+		},
+		async write(request) {
+			events.push(request.restore ? 'restore' : 'apply');
+			return write(request);
+		},
+		async observe() {
+			return { original: true, target };
+		},
+		async release() {
+			events.push('release');
+		},
+		now: () => time,
+		sleep: async ms => {
+			time += ms;
+		},
+		close() {
+			events.push('close');
+		},
 	};
-	return { events, run: () => applyNativeDarwinIPv4(context, 'en7', saved.desired, { addressingChanged: true, requireLease: false }, deps), setWrite: (fn: typeof write) => { write = fn; }, failVerification: () => { target = false; } };
+	return {
+		events,
+		run: () => applyNativeDarwinIPv4(context, 'en7', saved.desired, { addressingChanged: true, requireLease: false }, deps),
+		setWrite: (fn: typeof write) => {
+			write = fn;
+		},
+		failVerification: () => {
+			target = false;
+		},
+	};
 }
 
 describe('macOS preferences transaction', () => {
 	test('the legacy rollback boundary also preserves unknown outcomes', async () => {
 		let restored = false;
-		await expect(withMacRollback(async () => { throw new NativeMutationUnknown(); }, async () => { restored = true; })).rejects.toBeInstanceOf(NativeMutationUnknown);
+		await expect(
+			withMacRollback(
+				async () => {
+					throw new NativeMutationUnknown();
+				},
+				async () => {
+					restored = true;
+				}
+			)
+		).rejects.toBeInstanceOf(NativeMutationUnknown);
 		expect(restored).toBe(false);
 	});
 	test('restored static policy requires its original kernel address and exact route', () => {
@@ -102,23 +163,34 @@ describe('macOS preferences transaction', () => {
 		expect(darwinStaticStateMatches(configuration, configuration, [address], [route, route])).toBe(false);
 	});
 	test('persists the deep-copy recovery before committing and releases after verification', async () => {
-		const f = mutationFixture(); await f.run(); expect(f.events).toEqual(['prepare', 'journal', 'apply', 'release', 'close']);
+		const f = mutationFixture();
+		await f.run();
+		expect(f.events).toEqual(['prepare', 'journal', 'apply', 'release', 'close']);
 	});
 	test('a known Apply failure restores the snapshot with another Commit/Apply', async () => {
-		const f = mutationFixture(); f.setWrite(async request => request.restore ? { ok: true } : { ok: false, commitAttempted: true, error: 'Apply failed' });
-		await expect(f.run()).rejects.toThrow('Apply failed'); expect(f.events).toContain('restore');
+		const f = mutationFixture();
+		f.setWrite(async request => (request.restore ? { ok: true } : { ok: false, commitAttempted: true, error: 'Apply failed' }));
+		await expect(f.run()).rejects.toThrow('Apply failed');
+		expect(f.events).toContain('restore');
 	});
 	test('failed readback restores the snapshot without extending the write timeout', async () => {
-		const f = mutationFixture(); f.failVerification();
-		await expect(f.run()).rejects.toThrow('did not apply'); expect(f.events).toContain('restore');
+		const f = mutationFixture();
+		f.failVerification();
+		await expect(f.run()).rejects.toThrow('did not apply');
+		expect(f.events).toContain('restore');
 	});
 	test('unknown results forbid rollback and any following worker operation', async () => {
-		const f = mutationFixture(); f.setWrite(async () => { throw new NativeMutationUnknown(); });
+		const f = mutationFixture();
+		f.setWrite(async () => {
+			throw new NativeMutationUnknown();
+		});
 		await expect(f.run()).rejects.toBeInstanceOf(NativeMutationUnknown);
 		expect(f.events).toEqual(['prepare', 'journal', 'apply', 'close']);
 	});
 	test('a staging refusal does not publish a compensating write', async () => {
-		const f = mutationFixture(); f.setWrite(async () => ({ ok: false, commitAttempted: false, error: 'SetConfiguration failed' }));
-		await expect(f.run()).rejects.toThrow('SetConfiguration failed'); expect(f.events).not.toContain('restore');
+		const f = mutationFixture();
+		f.setWrite(async () => ({ ok: false, commitAttempted: false, error: 'SetConfiguration failed' }));
+		await expect(f.run()).rejects.toThrow('SetConfiguration failed');
+		expect(f.events).not.toContain('restore');
 	});
 });

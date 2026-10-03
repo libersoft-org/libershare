@@ -40,18 +40,23 @@ export function readDarwinClockReference(): DarwinClockReference {
 }
 
 const coreTimeSymbols = { TMIsAutomaticTimeEnabled: { args: [], returns: 'bool' }, TMSetAutomaticTimeEnabled: { args: ['bool'], returns: 'void' } } as const;
-export function openDarwinCoreTime(): Library<typeof coreTimeSymbols> { return loadSystemLibrary(DARWIN_CORE_TIME, coreTimeSymbols); }
+export function openDarwinCoreTime(): Library<typeof coreTimeSymbols> {
+	return loadSystemLibrary(DARWIN_CORE_TIME, coreTimeSymbols);
+}
 
 export function darwinHostUptimeMs(): number {
 	const library = loadSystemLibrary('/usr/lib/libSystem.B.dylib', {
-		mach_continuous_time: { args: [], returns: F.u64 }, mach_timebase_info: { args: [F.ptr], returns: F.i32 },
+		mach_continuous_time: { args: [], returns: F.u64 },
+		mach_timebase_info: { args: [F.ptr], returns: F.i32 },
 	});
 	try {
 		const scale = new Uint32Array(2);
 		if (library.symbols.mach_timebase_info(ptr(scale)) !== 0 || !scale[1]) throw new Error('macOS monotonic clock is unavailable');
 		const ticks = BigInt(library.symbols.mach_continuous_time());
-		return Number(ticks * BigInt(scale[0]!) / BigInt(scale[1]) / 1000000n);
-	} finally { library.close(); }
+		return Number((ticks * BigInt(scale[0]!)) / BigInt(scale[1]) / 1000000n);
+	} finally {
+		library.close();
+	}
 }
 
 /** Darwin mktime chooses the host's DST rule; the helper must have no process-local TZ. */
@@ -91,17 +96,25 @@ export function prepareDarwinClock(clock: DarwinClockParts): number {
 
 export function setDarwinClock(utcMs: number): number {
 	const library = loadSystemLibrary('/usr/lib/libSystem.B.dylib', {
-		settimeofday: { args: [F.ptr, F.ptr], returns: F.i32 }, __error: { args: [], returns: F.ptr },
+		settimeofday: { args: [F.ptr, F.ptr], returns: F.i32 },
+		__error: { args: [], returns: F.ptr },
 	});
 	try {
 		const value = Buffer.alloc(16);
-		value.writeBigInt64LE(BigInt(Math.floor(utcMs / 1000)), 0); value.writeInt32LE((utcMs % 1000) * 1000, 8);
+		value.writeBigInt64LE(BigInt(Math.floor(utcMs / 1000)), 0);
+		value.writeInt32LE((utcMs % 1000) * 1000, 8);
 		return library.symbols.settimeofday(ptr(value), null) === 0 ? 0 : read.i32(library.symbols.__error()!);
-	} finally { library.close(); }
+	} finally {
+		library.close();
+	}
 }
 
 export function notifyDarwinTimezone(): number {
 	const library = loadSystemLibrary('/usr/lib/libSystem.B.dylib', { notify_post: { args: [F.ptr], returns: F.u32 } });
-	try { const name = Buffer.from('com.apple.system.timezone\0'); return library.symbols.notify_post(ptr(name)); }
-	finally { library.close(); }
+	try {
+		const name = Buffer.from('com.apple.system.timezone\0');
+		return library.symbols.notify_post(ptr(name));
+	} finally {
+		library.close();
+	}
 }

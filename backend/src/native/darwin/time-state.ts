@@ -19,7 +19,11 @@ export interface DarwinTimeZone {
 	readonly mode: number;
 	readonly fingerprint: string;
 }
-export interface DarwinClockProof { readonly targetUtcMs: number; readonly hostUptimeMs: number; readonly bootId: string | null }
+export interface DarwinClockProof {
+	readonly targetUtcMs: number;
+	readonly hostUptimeMs: number;
+	readonly bootId: string | null;
+}
 export interface DarwinTimeSnapshot {
 	readonly utcMs: number;
 	readonly hostUptimeMs: number;
@@ -34,7 +38,11 @@ export interface DarwinTimeSnapshot {
 	readonly targetClock?: DarwinClockProof;
 	readonly targetNtpFingerprint?: string;
 }
-export interface DarwinTimeSnapshotRequest { readonly clock?: DarwinClockParts; readonly timezone?: string; readonly server?: string }
+export interface DarwinTimeSnapshotRequest {
+	readonly clock?: DarwinClockParts;
+	readonly timezone?: string;
+	readonly server?: string;
+}
 export interface DarwinTimeRecovery {
 	clock?: DarwinClockProof;
 	timezone?: { before: DarwinTimeZone | null; target: DarwinTimeZone };
@@ -47,15 +55,22 @@ function zoneFingerprint(source: Omit<DarwinTimeZone, 'fingerprint'>): DarwinTim
 }
 export function readDarwinTimeZone(): { zone: DarwinTimeZone; bytes: Buffer } | null {
 	try {
-		const stat = lstatSync(DARWIN_LOCALTIME), resolved = realpathSync(DARWIN_LOCALTIME), bytes = readFileSync(DARWIN_LOCALTIME);
+		const stat = lstatSync(DARWIN_LOCALTIME),
+			resolved = realpathSync(DARWIN_LOCALTIME),
+			bytes = readFileSync(DARWIN_LOCALTIME);
 		parseTzif(bytes);
 		const link = stat.isSymbolicLink() ? readlinkSync(DARWIN_LOCALTIME) : null;
 		return { bytes, zone: zoneFingerprint({ link, resolved, name: parseZoneinfoLink(link ?? resolved), sha256: createHash('sha256').update(bytes).digest('hex'), uid: stat.uid, gid: stat.gid, mode: stat.mode & 0o7777 }) };
-	} catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	}
 }
 export function prepareDarwinTimeZone(name: string, previous: DarwinTimeZone | null): DarwinTimeZone {
 	if (!/^[A-Za-z0-9_+./-]+$/.test(name) || name.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid macOS timezone');
-	const link = `/var/db/timezone/zoneinfo/${name}`, resolved = realpathSync(link), bytes = readFileSync(link);
+	const link = `/var/db/timezone/zoneinfo/${name}`,
+		resolved = realpathSync(link),
+		bytes = readFileSync(link);
 	parseTzif(bytes);
 	return zoneFingerprint({ link, resolved, name, sha256: createHash('sha256').update(bytes).digest('hex'), uid: previous?.uid ?? 0, gid: previous?.gid ?? 0, mode: previous?.mode ?? 0o755 });
 }

@@ -37,21 +37,39 @@ export function executeTimeAccessProbe(request: TimeAccessProbeRequest, calls: T
 export async function runTimeAccessProbeArgument(encoded: string): Promise<number> {
 	if (process.platform !== 'linux' || process.getuid?.() !== 0 || typeof encoded !== 'string' || encoded.length > 1024 * 1024) return 3;
 	let request: unknown;
-	try { request = JSON.parse(encoded); } catch { return 3; }
+	try {
+		request = JSON.parse(encoded);
+	} catch {
+		return 3;
+	}
 	if (!validRequest(request)) return 3;
 	const resolution = await resolveForServiceAccount(TIMESYNCD_DROPIN_PATH);
 	const allowed = new Set([...resolution.traversed, resolution.target, resolution.directory].filter((path): path is string => path !== null));
 	if (!allowed.has(request.path)) return 3;
 	const libc = loadSystemLibrary('libc.so.6', {
-		setgroups: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 }, setresgid: { args: [FFIType.u32, FFIType.u32, FFIType.u32], returns: FFIType.i32 }, setresuid: { args: [FFIType.u32, FFIType.u32, FFIType.u32], returns: FFIType.i32 }, access: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 }, __errno_location: { args: [], returns: FFIType.ptr },
+		setgroups: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
+		setresgid: { args: [FFIType.u32, FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+		setresuid: { args: [FFIType.u32, FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+		access: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+		__errno_location: { args: [], returns: FFIType.ptr },
 	});
 	try {
 		return executeTimeAccessProbe(request, {
-			setgroups: groups => { const values = new Uint32Array(groups); return libc.symbols.setgroups(BigInt(values.length), values.length ? ptr(values) : null); },
-			setresgid: gid => libc.symbols.setresgid(gid, gid, gid), setresuid: uid => libc.symbols.setresuid(uid, uid, uid),
-			access: (path, mode) => { const value = Buffer.from(`${path}\0`); const result = libc.symbols.access(ptr(value), mode === 'r' ? 4 : 1); return { result, errno: result === 0 ? 0 : read.i32(libc.symbols.__errno_location()!) }; },
+			setgroups: groups => {
+				const values = new Uint32Array(groups);
+				return libc.symbols.setgroups(BigInt(values.length), values.length ? ptr(values) : null);
+			},
+			setresgid: gid => libc.symbols.setresgid(gid, gid, gid),
+			setresuid: uid => libc.symbols.setresuid(uid, uid, uid),
+			access: (path, mode) => {
+				const value = Buffer.from(`${path}\0`);
+				const result = libc.symbols.access(ptr(value), mode === 'r' ? 4 : 1);
+				return { result, errno: result === 0 ? 0 : read.i32(libc.symbols.__errno_location()!) };
+			},
 		});
-	} finally { libc.close(); }
+	} finally {
+		libc.close();
+	}
 }
 
 export function timeAccessProbeCommand(request: TimeAccessProbeRequest): string[] {
@@ -65,7 +83,13 @@ export async function probeNativeTimeServiceAccess(request: TimeAccessProbeReque
 	try {
 		const child = Bun.spawn(timeAccessProbeCommand(request), { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' });
 		const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
-		try { const status = await child.exited; return status === 0 ? true : status === 1 ? false : { unknown: 'The kernel access check for the time service could not be completed' }; }
-		finally { clearTimeout(timer); }
-	} catch { return { unknown: 'The time service access probe could not be started' }; }
+		try {
+			const status = await child.exited;
+			return status === 0 ? true : status === 1 ? false : { unknown: 'The kernel access check for the time service could not be completed' };
+		} finally {
+			clearTimeout(timer);
+		}
+	} catch {
+		return { unknown: 'The time service access probe could not be started' };
+	}
 }

@@ -15,7 +15,10 @@ export interface DarwinIPv4Recovery {
 	readonly addressingChanged: boolean;
 	readonly requireLease: boolean;
 }
-export interface DarwinIPv4Observation { readonly original: boolean; readonly target: boolean }
+export interface DarwinIPv4Observation {
+	readonly original: boolean;
+	readonly target: boolean;
+}
 
 export function isDarwinIPv4Recovery(value: unknown): value is DarwinIPv4Recovery {
 	if (!value || typeof value !== 'object') return false;
@@ -24,10 +27,14 @@ export function isDarwinIPv4Recovery(value: unknown): value is DarwinIPv4Recover
 	return typeof data.device === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(data.device) && typeof data.serviceId === 'string' && !!data.serviceId && Number.isSafeInteger(data.interfaceIndex) && data.interfaceIndex > 0 && (data.mac === null || typeof data.mac === 'string') && !!data.original && !!data.target && plist(data.original.ipv4) && plist(data.original.dns) && plist(data.target.ipv4) && plist(data.target.dns) && typeof data.original.hadLease === 'boolean' && typeof data.original.linkActive === 'boolean' && typeof data.addressingChanged === 'boolean' && typeof data.requireLease === 'boolean' && !!data.desired && validateIPv4Config(data.desired, { staticGatewayRequired: true }) === null;
 }
 
-export function usableDarwinAddress(address: string): boolean { return address !== '0.0.0.0' && !address.startsWith('169.254.') && !address.startsWith('127.'); }
+export function usableDarwinAddress(address: string): boolean {
+	return address !== '0.0.0.0' && !address.startsWith('169.254.') && !address.startsWith('127.');
+}
 
 export function darwinStaticStateMatches(configuration: DarwinDictionary | null, live: DarwinDictionary | null, addresses: readonly NetAddress[], routes: readonly DarwinDefaultRoute[]): boolean {
-	const expected = darwinIPv4Addresses(configuration), state = darwinIPv4Addresses(live), gateway = darwinRouter(configuration);
+	const expected = darwinIPv4Addresses(configuration),
+		state = darwinIPv4Addresses(live),
+		gateway = darwinRouter(configuration);
 	const matching = (list: readonly NetAddress[]): boolean => expected.length === 1 && list.length === 1 && list[0]!.address === expected[0]!.address && list[0]!.prefixLength === expected[0]!.prefixLength;
 	return matching(addresses) && matching(state) && darwinRouter(live) === gateway && routes.length === (gateway ? 1 : 0) && routes.every(route => route.gateway === gateway && route.usable);
 }
@@ -38,10 +45,13 @@ export function observeDarwinIPv4(saved: DarwinIPv4Recovery): DarwinIPv4Observat
 	const session = new DarwinNetworkSession();
 	try {
 		const service = session.services().find(service => service.id === saved.serviceId && service.device === saved.device && service.enabled);
-		const kernel = readDarwinKernelNetwork(), iface = kernel.interfaces.find(iface => iface.device === saved.device);
+		const kernel = readDarwinKernelNetwork(),
+			iface = kernel.interfaces.find(iface => iface.device === saved.device);
 		if (!service || !iface || iface.index !== saved.interfaceIndex || iface.mac !== saved.mac) return { original: false, target: false };
-		const ipv4 = session.protocol(service.ref, 'IPv4'), dns = session.protocol(service.ref, 'DNS');
-		const actual4 = ipv4 ? session.sc.SCNetworkProtocolGetConfiguration(ipv4) : 0n, actualDns = dns ? session.sc.SCNetworkProtocolGetConfiguration(dns) : 0n;
+		const ipv4 = session.protocol(service.ref, 'IPv4'),
+			dns = session.protocol(service.ref, 'DNS');
+		const actual4 = ipv4 ? session.sc.SCNetworkProtocolGetConfiguration(ipv4) : 0n,
+			actualDns = dns ? session.sc.SCNetworkProtocolGetConfiguration(dns) : 0n;
 		const equal = (actual: CFRef, encoded: string | null): boolean => {
 			const expected = session.cf.deserialize(encoded);
 			return !actual || !expected ? actual === expected : session.cf.symbols.CFEqual(actual, expected);
@@ -62,5 +72,7 @@ export function observeDarwinIPv4(saved: DarwinIPv4Recovery): DarwinIPv4Observat
 			}
 		}
 		return { original, target: liveTarget && equal(actual4, saved.target.ipv4) && equal(actualDns, saved.target.dns) };
-	} finally { session.close(); }
+	} finally {
+		session.close();
+	}
 }

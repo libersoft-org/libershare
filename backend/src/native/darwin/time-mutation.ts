@@ -25,14 +25,25 @@ async function record(context: NativeMutationContext, patch: DarwinTimeRecovery,
 
 export class DarwinTimeMutations {
 	private readonly deps: DarwinTimeMutationDeps;
-	constructor(deps?: DarwinTimeMutationDeps) { this.deps = deps ?? { read: readDarwinTimeSnapshotAsync, writer: new NativeWorkerChannel('mutation') }; }
-	private snapshot(context: NativeMutationContext, request: DarwinTimeSnapshotRequest = {}): Promise<DarwinTimeSnapshot> { return this.deps.read(request, Math.max(1, Math.min(15000, context.remainingMs()))); }
+	constructor(deps?: DarwinTimeMutationDeps) {
+		this.deps = deps ?? { read: readDarwinTimeSnapshotAsync, writer: new NativeWorkerChannel('mutation') };
+	}
+	private snapshot(context: NativeMutationContext, request: DarwinTimeSnapshotRequest = {}): Promise<DarwinTimeSnapshot> {
+		return this.deps.read(request, Math.max(1, Math.min(15000, context.remainingMs())));
+	}
 	private operation(describe: string, action: (context: NativeMutationContext) => Promise<OperationOutcome>): SystemOperation {
-		return { describe, run: async signal => {
-			signal.throwIfAborted();
-			try { return await action(requireNativeMutationContext()); }
-			catch (error) { if (error instanceof NativeMutationUnknown || (error instanceof NativeWorkerFailure && error.mayHaveRun)) throw error; return failure(error); }
-		} };
+		return {
+			describe,
+			run: async signal => {
+				signal.throwIfAborted();
+				try {
+					return await action(requireNativeMutationContext());
+				} catch (error) {
+					if (error instanceof NativeMutationUnknown || (error instanceof NativeWorkerFailure && error.mayHaveRun)) throw error;
+					return failure(error);
+				}
+			},
+		};
 	}
 	private write(context: NativeMutationContext, request: DarwinTimeWrite): Promise<OperationOutcome> {
 		return context.call({ kind: 'boot' }, async () => {
@@ -49,8 +60,11 @@ export class DarwinTimeMutations {
 			await record(context, { clock: before.targetClock });
 			const outcome = await this.write(context, { kind: 'clock', clock, zoneFingerprint: before.zone.fingerprint });
 			if (outcome.kind !== 'ok') return outcome;
-			try { return darwinClockMatches(recoveryByContext.get(context)!.clock!, await this.snapshot(context)) ? outcome : failure('The host clock does not match the requested time', true); }
-			catch (error) { return failure(error, true); }
+			try {
+				return darwinClockMatches(recoveryByContext.get(context)!.clock!, await this.snapshot(context)) ? outcome : failure('The host clock does not match the requested time', true);
+			} catch (error) {
+				return failure(error, true);
+			}
 		});
 	}
 	timezone(timezone: string): SystemOperation {
@@ -60,8 +74,11 @@ export class DarwinTimeMutations {
 			await record(context, { timezone: { before: before.zone, target: before.targetZone } });
 			const outcome = await this.write(context, { kind: 'timezone', timezone, zoneFingerprint: before.zone?.fingerprint ?? null, targetFingerprint: before.targetZone.fingerprint });
 			if (outcome.kind !== 'ok') return outcome;
-			try { return (await this.snapshot(context)).zone?.fingerprint === before.targetZone.fingerprint ? outcome : failure('The host timezone symlink does not match the requested timezone', true); }
-			catch (error) { return failure(error, true); }
+			try {
+				return (await this.snapshot(context)).zone?.fingerprint === before.targetZone.fingerprint ? outcome : failure('The host timezone symlink does not match the requested timezone', true);
+			} catch (error) {
+				return failure(error, true);
+			}
 		});
 	}
 	server(server: string): SystemOperation {
@@ -71,8 +88,12 @@ export class DarwinTimeMutations {
 			await record(context, { server: { server, beforeFingerprint: before.ntpFingerprint, targetFingerprint: before.targetNtpFingerprint } });
 			const outcome = await this.write(context, { kind: 'server', server, fileFingerprint: before.ntpFingerprint, fileIdentity: before.ntpIdentity, enabled: before.ntpEnabled });
 			if (outcome.kind !== 'ok') return outcome;
-			try { const after = await this.snapshot(context); return after.ntpFingerprint === before.targetNtpFingerprint && after.ntpServer === server && after.ntpEnabled === before.ntpEnabled ? outcome : failure('The NTP file or synchronization state does not match the requested setting', true); }
-			catch (error) { return failure(error, true); }
+			try {
+				const after = await this.snapshot(context);
+				return after.ntpFingerprint === before.targetNtpFingerprint && after.ntpServer === server && after.ntpEnabled === before.ntpEnabled ? outcome : failure('The NTP file or synchronization state does not match the requested setting', true);
+			} catch (error) {
+				return failure(error, true);
+			}
 		});
 	}
 	enabled(enabled: boolean): SystemOperation {
@@ -81,13 +102,18 @@ export class DarwinTimeMutations {
 			return this.write(context, { kind: 'enabled', enabled });
 		});
 	}
-	close(): void { this.deps.writer.close(); }
+	close(): void {
+		this.deps.writer.close();
+	}
 }
 
 export async function runDarwinTimeOperation(select: (mutations: DarwinTimeMutations) => SystemOperation): Promise<SystemTimeResult> {
 	const mutations = new DarwinTimeMutations();
-	try { return await runOperations('darwin', [select(mutations)]); }
-	finally { mutations.close(); }
+	try {
+		return await runOperations('darwin', [select(mutations)]);
+	} finally {
+		mutations.close();
+	}
 }
 
 export async function observeNativeDarwinTime(original: DarwinTimeSnapshot, changes: SystemTimeChanges, recovery: DarwinTimeRecovery | undefined, timeoutMs: number): Promise<{ original: boolean; target: boolean }> {

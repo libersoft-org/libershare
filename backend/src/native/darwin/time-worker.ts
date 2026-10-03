@@ -6,11 +6,7 @@ import { darwinHostUptimeMs, notifyDarwinTimezone, openDarwinCoreTime, readDarwi
 import { prepareDarwinClockSafely, sameDarwinClockReference, type DarwinClockProbeReply } from './time-clock-probe.ts';
 import { readDarwinNtpFile, syncDarwinTimeDirectory, writeDarwinNtpFile } from './time-files.ts';
 
-export type DarwinTimeWrite =
-	| { readonly kind: 'clock'; readonly clock: DarwinClockParts; readonly zoneFingerprint: string | null }
-	| { readonly kind: 'timezone'; readonly timezone: string; readonly zoneFingerprint: string | null; readonly targetFingerprint: string }
-	| { readonly kind: 'server'; readonly server: string; readonly fileFingerprint: string | null; readonly fileIdentity: string | null; readonly enabled: boolean }
-	| { readonly kind: 'enabled'; readonly enabled: boolean };
+export type DarwinTimeWrite = { readonly kind: 'clock'; readonly clock: DarwinClockParts; readonly zoneFingerprint: string | null } | { readonly kind: 'timezone'; readonly timezone: string; readonly zoneFingerprint: string | null; readonly targetFingerprint: string } | { readonly kind: 'server'; readonly server: string; readonly fileFingerprint: string | null; readonly fileIdentity: string | null; readonly enabled: boolean } | { readonly kind: 'enabled'; readonly enabled: boolean };
 export interface DarwinTimeWriteResult {
 	readonly outcome: OperationOutcome;
 	readonly clock?: DarwinClockProof;
@@ -59,7 +55,7 @@ export async function executeDarwinClockWrite(request: Extract<DarwinTimeWrite, 
 const unknown = (): OperationOutcome => ({ kind: 'unknown', output: 'CoreTime has not confirmed the requested state', endRule: { kind: 'boot' } });
 
 export async function refreshDarwinAutomaticTime(enabled: boolean, change: (enabled: boolean) => Promise<boolean>): Promise<OperationOutcome> {
-	if (enabled && (!await change(false) || !await change(true))) return unknown();
+	if (enabled && (!(await change(false)) || !(await change(true)))) return unknown();
 	return { kind: 'ok', output: '' };
 }
 
@@ -89,27 +85,45 @@ export async function executeDarwinTimeWrite(request: DarwinTimeWrite): Promise<
 			if (target.fingerprint !== request.targetFingerprint || !target.link) throw new Error('The target timezone changed before writing');
 			const temporary = `${DARWIN_LOCALTIME}.lish-${randomUUID()}`;
 			try {
-				symlinkSync(target.link, temporary); lchownSync(temporary, target.uid, target.gid); lchmodSync(temporary, target.mode);
+				symlinkSync(target.link, temporary);
+				lchownSync(temporary, target.uid, target.gid);
+				lchmodSync(temporary, target.mode);
 				if ((readDarwinTimeZone()?.zone.fingerprint ?? null) !== request.zoneFingerprint) throw new Error('The timezone changed during publication');
-				renameSync(temporary, DARWIN_LOCALTIME); changed = true;
+				renameSync(temporary, DARWIN_LOCALTIME);
+				changed = true;
 				syncDarwinTimeDirectory();
 				if (notifyDarwinTimezone() !== 0) throw new Error('macOS did not accept the timezone notification');
-			} finally { if (!changed) { try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } } }
+			} finally {
+				if (!changed) {
+					try {
+						unlinkSync(temporary);
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+					}
+				}
+			}
 			return { outcome: { kind: 'ok', output: '' } };
 		}
 		const coreTime = openDarwinCoreTime();
 		try {
 			if (request.kind === 'enabled') {
 				changed = true;
-				return { outcome: await setAutomaticTime(request.enabled, coreTime) ? { kind: 'ok', output: '' } : unknown() };
+				return { outcome: (await setAutomaticTime(request.enabled, coreTime)) ? { kind: 'ok', output: '' } : unknown() };
 			}
 			if (!isValidNtpServer(request.server)) return { outcome: { kind: 'failed', code: null, output: 'Invalid NTP server', outcome: 'invalid-input', stateMayHaveChanged: false } };
 			const before = readDarwinNtpFile();
 			if ((before?.fingerprint ?? null) !== request.fileFingerprint || (before?.identity ?? null) !== request.fileIdentity || coreTime.symbols.TMIsAutomaticTimeEnabled() !== request.enabled) throw new Error('The time server or synchronization policy changed before writing');
-			try { writeDarwinNtpFile(Buffer.from(`server ${request.server}\n`), before); changed = true; }
-			catch (error) { changed = !!(error as { published?: boolean }).published; throw error; }
+			try {
+				writeDarwinNtpFile(Buffer.from(`server ${request.server}\n`), before);
+				changed = true;
+			} catch (error) {
+				changed = !!(error as { published?: boolean }).published;
+				throw error;
+			}
 			return { outcome: await refreshDarwinAutomaticTime(request.enabled, enabled => setAutomaticTime(enabled, coreTime)) };
-		} finally { coreTime.close(); }
+		} finally {
+			coreTime.close();
+		}
 	} catch (error) {
 		const output = error instanceof Error ? error.message : String(error);
 		const code = (error as NodeJS.ErrnoException).code;

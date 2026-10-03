@@ -64,13 +64,21 @@ async function timezoneSource(path: string): Promise<{ source: LinuxTimezoneSour
 	const bytes = await readFile(path);
 	parseTzif(bytes);
 	let symlink = true;
-	try { await readlink(path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EINVAL') throw error; symlink = false; }
+	try {
+		await readlink(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'EINVAL') throw error;
+		symlink = false;
+	}
 	return { bytes, source: { resolved, sha256: createHash('sha256').update(bytes).digest('hex'), name: resolved.startsWith(`${ZONEINFO}/`) ? resolved.slice(ZONEINFO.length + 1) : null, symlink } };
 }
 
 /** Worker-only host reference; uptime remains comparable when SetTime moves CLOCK_REALTIME. */
 export async function readLinuxTimeSnapshot(request: LinuxTimeSnapshotRequest = {}): Promise<LinuxTimeSnapshot> {
-	const local = await timezoneSource('/etc/localtime').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
+	const local = await timezoneSource('/etc/localtime').catch(error => {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	});
 	let targetTimezone: LinuxTimezoneSource | undefined;
 	if (request.timezone !== undefined) {
 		const parts = request.timezone.split('/');
@@ -83,8 +91,16 @@ export async function readLinuxTimeSnapshot(request: LinuxTimeSnapshotRequest = 
 	const zone = local ? parseTzif(local.bytes) : null;
 	let files: { dropinHash: string | null; configurationHash: string } | undefined;
 	if (request.dropin) {
-		const content = await readFile(TIMESYNCD_DROPIN_PATH).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
-		files = { dropinHash: content === null ? null : createHash('sha256').update(content).digest('hex'), configurationHash: createHash('sha256').update(await readTimesyncdConfiguration()).digest('hex') };
+		const content = await readFile(TIMESYNCD_DROPIN_PATH).catch(error => {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		});
+		files = {
+			dropinHash: content === null ? null : createHash('sha256').update(content).digest('hex'),
+			configurationHash: createHash('sha256')
+				.update(await readTimesyncdConfiguration())
+				.digest('hex'),
+		};
 	}
 	const snapshot: LinuxTimeSnapshot = { utcMs, hostUptimeMs, bootId: getNativeBootId(), timezone: local?.source ?? null, offsetSeconds: zone ? tzifOffsetAt(zone, Math.floor(utcMs / 1000)) : null, ...files, ...(targetTimezone ? { targetTimezone } : {}) };
 	if (!request.clock) return snapshot;

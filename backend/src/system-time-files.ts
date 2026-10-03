@@ -327,7 +327,6 @@ export function serviceAccountProbe(identity: ServiceAccountIdentity, mode: 'r' 
 /** The exit status of one probe process, or null when it could not be run at all. */
 export type ProbeRunner = (argv: string[]) => number | null;
 
-
 /**
  * An access check for ONE operation: the identity is read on the first probe and shared by
  * the rest of that operation's probes, then let go.
@@ -370,8 +369,11 @@ async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null |
 	try {
 		const identity = await reader.call<NativeTimeServiceIdentity>({ method: 'linux.time.service-identity', args: { timeoutMs } }, timeoutMs);
 		return { uid: identity.uid, gid: identity.gid, groups: identity.groups.map(String) };
-	} catch { return { unknown: 'The time service identity could not be established through NSS and systemd' }; }
-	finally { reader.close(); }
+	} catch {
+		return { unknown: 'The time service identity could not be established through NSS and systemd' };
+	} finally {
+		reader.close();
+	}
 }
 
 /**
