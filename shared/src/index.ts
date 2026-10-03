@@ -1,6 +1,9 @@
 // Product info
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
+// Network mutations
+export { type NetworkMutationOutcome, type LegacyNetworkMutation, type NetworkMutationResponse, combineNetworkMutations, toNetworkMutationResponse } from './network-mutation.ts';
+
 // Network defaults
 export { DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit, parseRelayReservationLimit } from './network-defaults.ts';
 
@@ -351,6 +354,8 @@ export interface SuccessResponse {
 
 /** Outcome of changing one lishnet's enabled state in storage and at runtime. */
 export interface SetLISHNetworkEnabledResponse extends SuccessResponse {
+	/** Whether the request was saved; absent from servers that predate it. */
+	stored?: boolean;
 	applied: boolean;
 	transitioned: boolean;
 	joined: boolean;

@@ -72,12 +72,16 @@ describe('ErrorRecovery', () => {
 		expect(evt!.data.delayMs).toBe(60000);
 	});
 
-	it('re-entrancy guard: second start is no-op while recovery active', () => {
+	it('another failure retains both directions without resetting the pending retry', () => {
 		recovery.start('<redacted-bootstrap>', ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: false });
+		const timer = recovery.getState('<redacted-bootstrap>')!.timer;
 		recovery.start('<redacted-bootstrap>', ErrorCodes.DISK_FULL, { downloadEnabled: false, uploadEnabled: true });
 		const state = recovery.getState('<redacted-bootstrap>');
 		expect(state!.errorCode).toBe(ErrorCodes.IO_NOT_FOUND);
 		expect(state!.downloadWasEnabled).toBe(true);
+		expect(state!.uploadWasEnabled).toBe(true);
+		expect(state!.retryCount).toBe(0);
+		expect(state!.timer).toBe(timer);
 	});
 
 	it('ignores non-recoverable error codes', () => {

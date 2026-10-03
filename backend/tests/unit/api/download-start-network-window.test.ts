@@ -5,6 +5,7 @@ import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
 import { type Settings } from '../../../src/settings.ts';
 import { Downloader } from '../../../src/protocol/downloader.ts';
+import { initUploadState } from '../../../src/protocol/lish-protocol.ts';
 
 /**
  * A download start spans several awaits before the downloader is registered, and both
@@ -153,6 +154,7 @@ describe('download start — the lishnet window', () => {
 	let persisted: Array<{ lishID: string; enabled: boolean }> = [];
 
 	beforeEach(() => {
+		initUploadState(new Set(), () => {});
 		persisted = [];
 		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
 	});

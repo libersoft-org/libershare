@@ -458,6 +458,9 @@
 			"errorNotStarted": "LISH network not started",
 			"errorPortInUse": "Failed to start LISH network: port {detail} is likely already in use",
 			"networkAdded": "LISH network \"{name}\" was added",
+			"savedNotApplied": "Saved, but the running node has not applied the change yet.",
+			"savedUnconfirmed": "Saved; the server did not confirm that the change was applied.",
+			"changeUnconfirmed": "The server did not confirm the outcome of this change.",
 			"networkUpdated": "LISH network \"{name}\" was updated",
 			"networkConnected": "LISH network \"{name}\" connected",
 			"networkDisconnected": "LISH network \"{name}\" disconnected",
@@ -481,6 +484,11 @@
 				"discoveredHelp": "Learned at runtime from gossip. Auto-removed when stale.",
 				"originConfigured": "saved",
 				"originDiscovered": "gossip",
+				"groupHealthy": "Available",
+				"groupPartial": "Partly available",
+				"groupProblem": "Problem with addresses",
+				"groupPending": "Checking",
+				"groupCounts": "{connected} working, {failing} failing, {pending} pending",
 				"connected": "Connected",
 				"pending": "Connecting…",
 				"identityMismatch": "Identity mismatch",
@@ -528,6 +536,7 @@
 			"filePath": "LISHNET file",
 			"url": "URL address of LISHNET file"
 		},
+		"applyFailed": "Setting was not applied: {detail}",
 		"backup": {
 			"title": "Settings backup",
 			"exportTitle": "Export settings",
@@ -535,6 +544,8 @@
 			"confirmRestore": "Restore settings? Keys present in the backup will overwrite current values.",
 			"exported": "Settings were exported",
 			"restored": "Settings restored ({count} values)",
+			"savedNotApplied": "Settings were saved, but could not be fully applied. The network or transfers may be stopped: {detail}",
+			"reloadFailed": "Could not reload the current settings. Displayed values may be outdated: {detail}",
 			"restartHint": "Some changes will only take effect after restarting the application.",
 			"errorInvalidFormat": "Invalid backup file format"
 		},

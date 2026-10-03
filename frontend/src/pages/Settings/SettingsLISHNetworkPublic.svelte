@@ -6,8 +6,7 @@
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { type LISHNetworkDefinition } from '@shared';
 	import { productNetworkList } from '@shared';
-	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists } from '../../scripts/lishNetwork.ts';
-	import { api } from '../../scripts/api.ts';
+	import { fetchPublicNetworks, getExistingNetworkIDs, addNetworkIfNotExists, setNetworkEnabled } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
 	import Row from '../../components/Row/Row.svelte';
@@ -59,7 +58,7 @@
 	}
 
 	async function confirmConnect(): Promise<void> {
-		if (pendingConnectNetwork) await api.lishnets.setEnabled(pendingConnectNetwork.networkID, true);
+		if (pendingConnectNetwork) await setNetworkEnabled(pendingConnectNetwork.networkID, true);
 		await closeConnect();
 	}
 

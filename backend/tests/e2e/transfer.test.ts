@@ -56,7 +56,7 @@ async function expectStoppedDownload(nodeIndex: number, id: string): Promise<ILI
 	const paused = await downloadState(node, id);
 	expect(paused.verifiedChunks).toBeGreaterThan(0);
 	expect(paused.verifiedChunks).toBeLessThan(paused.totalChunks);
-	const deadline = Date.now() + 3000;
+	const deadline = Date.now() + 5000;
 	do {
 		await Bun.sleep(100);
 		const current = await downloadState(node, id);

@@ -1,6 +1,7 @@
 import { type Settings, type SettingsData } from '../settings.ts';
 import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
 import { Utils } from '../utils.ts';
+import { SettingsCommittedError } from './network-restart.ts';
 import { type CompressionAlgorithm, type SuccessResponse, type ISettingsImportResult, CodedError, ErrorCodes } from '@shared';
 const assert = Utils.assertParams;
 
@@ -135,9 +136,14 @@ export function initSettingsHandlers(settings: Settings): SettingsHandlers {
 		}
 		// One write, not one per key: a reset arriving mid-loop used to split the stored
 		// settings between the import and the defaults, with both reporting success.
-		const { applied, skipped } = await persistAndApplyNetworkLimits(settings, () => settings.setMany(flattenSettings(filtered)));
-		console.log(`✓ Settings restored: ${applied} applied, ${skipped.length} skipped`);
-		return { applied, skipped };
+		try {
+			const { applied, skipped } = await persistAndApplyNetworkLimits(settings, () => settings.setMany(flattenSettings(filtered)));
+			console.log(`✓ Settings restored: ${applied} applied, ${skipped.length} skipped`);
+			return { applied, skipped };
+		} catch (error) {
+			if (error instanceof SettingsCommittedError) throw new CodedError(ErrorCodes.SETTINGS_SAVED_NOT_APPLIED, JSON.stringify({ code: error.code, ...(error.code !== ErrorCodes.INTERNAL_ERROR && error.detail !== undefined && { detail: error.detail }) }));
+			throw error;
+		}
 	}
 
 	return { get, set, list, getDefaults, reset, exportToFile, parseFromFile, parseFromJSON, parseFromURL, applyImported };
