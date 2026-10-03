@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, type NetworkHelperRequest } from '../../src/network-helper-protocol.ts';
 import { HelperResultStore, createHelperCancellation, helperResultCanExpire, helperRequestHash, trustedUnixHelperResult, validateHelperResult, type HelperResultRecord, type HelperResultSecurity } from '../../src/native/helper-results-store.ts';
-import { observeHelperOperation, type HelperOperationRule, type HelperObservationDeps } from '../../src/native/helper-results.ts';
+import { observeHelperOperation, readTrustedHelperResult, type HelperOperationRule, type HelperObservationDeps } from '../../src/native/helper-results.ts';
 import { executeRecordedHelper, type HelperExecutorDeps } from '../../src/native/helper-results-executor.ts';
 import { requireNativeMutationContext } from '../../src/native/mutation-context.ts';
 import { trustedHelperAcl } from '../../src/native/helper-results-windows.ts';
@@ -97,6 +97,16 @@ describe('helper protocol v2', () => {
 });
 
 describe('privileged result storage', () => {
+	test('recovery binds an old receipt to its original boot and request hash', async () => {
+		const f = await fixture();
+		const original = { ...record(f.input), recoveryData: { snapshot: 'original-policy' } };
+		await f.store.start(original);
+		const identity = { operationId: original.operationId, requestHash: original.requestHash, expectedBootId: boot };
+		expect((await readTrustedHelperResult(identity, f.store))?.recoveryData).toEqual(original.recoveryData);
+		await expect(readTrustedHelperResult({ ...identity, expectedBootId: 'wrong-boot' }, f.store)).rejects.toThrow('does not match');
+		await expect(readTrustedHelperResult({ ...identity, requestHash: 'a'.repeat(64) }, f.store)).rejects.toThrow('does not match');
+		await expect(readTrustedHelperResult({ operationId: original.operationId, requestHash: original.requestHash }, f.store)).rejects.toThrow('does not match');
+	});
 	test('publishes complete records and refuses reuse of an operation ID', async () => {
 		const f = await fixture(),
 			original = record(f.input);

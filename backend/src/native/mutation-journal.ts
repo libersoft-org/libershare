@@ -1,7 +1,7 @@
 import { isUniqueDBusName } from './linux/dbus.ts';
 import { Database } from 'bun:sqlite';
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import type { NativePendingExecution, NativeProcessIdentity } from './mutation-proof.ts';
 
 export type NativeMutationDomain = 'network' | 'time';
@@ -40,8 +40,9 @@ export function validateMutationRecord(value: unknown): asserts value is NativeM
 	const record = value as NativeMutationRecord;
 	const rule = record.endRule;
 	if (typeof record.executorReturned !== 'boolean') throw new Error('Invalid native executor state');
-	if (record.version !== 1 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(record.operationId) || !/^[a-f0-9]{64}$/i.test(record.requestHash) || !['network', 'time'].includes(record.domain) || !['pending', 'settling', 'interrupted'].includes(record.phase) || typeof record.operation !== 'string' || !record.operation || !Number.isFinite(record.since) || !processIdentity(record.executor) || (record.bootId !== null && (typeof record.bootId !== 'string' || !record.bootId)) || !rule || typeof rule !== 'object' || !['executor', 'boot', 'dbus-process'].includes(rule.kind)) throw new Error('Invalid native mutation journal');
+	if (record.version !== 1 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(record.operationId) || !/^[a-f0-9]{64}$/i.test(record.requestHash) || !['network', 'time'].includes(record.domain) || !['pending', 'settling', 'interrupted'].includes(record.phase) || typeof record.operation !== 'string' || !record.operation || !Number.isFinite(record.since) || !processIdentity(record.executor) || (record.bootId !== null && (typeof record.bootId !== 'string' || !record.bootId)) || !rule || typeof rule !== 'object' || !['executor', 'boot', 'dbus-process', 'helper'].includes(rule.kind)) throw new Error('Invalid native mutation journal');
 	if (rule.kind === 'dbus-process' && (typeof rule.busId !== 'string' || !rule.busId || !isUniqueDBusName(rule.destination) || !processIdentity(rule.process))) throw new Error('Invalid native mutation endpoint');
+	if (rule.kind === 'helper' && (rule.operationId !== record.operationId || !/^[a-f0-9]{64}$/i.test(rule.requestHash) || typeof rule.cancelPath !== 'string' || !isAbsolute(rule.cancelPath) || (rule.launcher !== null && !processIdentity(rule.launcher)))) throw new Error('Invalid native helper identity');
 	if (!Object.prototype.hasOwnProperty.call(record, 'recoveryData') || record.recoveryData === undefined) throw new Error('Missing native mutation recovery data');
 }
 

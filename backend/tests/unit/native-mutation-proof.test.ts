@@ -6,6 +6,19 @@ const service = { pid: 202, started: 'instance-b' };
 const operation: NativePendingExecution = { bootId: 'boot-a', executor, executorReturned: false, endRule: { kind: 'dbus-process', busId: 'bus-a', destination: ':1.15', process: service } };
 const stopped: NativeEndObservation = { bootId: 'boot-a', executor: { identity: executor, state: 'ended' }, busId: 'bus-a', service: { identity: service, state: 'ended' } };
 
+test('helper completion proof belongs to the exact request and cannot interrupt a live caller', () => {
+	const operationId = crypto.randomUUID();
+	const requestHash = 'a'.repeat(64);
+	const pending: NativePendingExecution = { ...operation, endRule: { kind: 'helper', operationId, requestHash, cancelPath: '/test/cancel', launcher: null } };
+	const helper = { operationId, requestHash, state: 'ended' as const };
+	expect(hasNativeExecutionEnded(pending, { ...stopped, helper })).toBe(true);
+	expect(hasNativeExecutionEnded(pending, { ...stopped, helper: { ...helper, operationId: crypto.randomUUID() } })).toBe(false);
+	expect(hasNativeExecutionEnded(pending, { ...stopped, helper: { ...helper, requestHash: 'b'.repeat(64) } })).toBe(false);
+	expect(hasNativeExecutionEnded(pending, { ...stopped, helper: { ...helper, state: 'unknown' } })).toBe(false);
+	expect(hasNativeExecutionEnded(pending, { ...stopped, helper, executor: { identity: executor, state: 'running' } })).toBe(false);
+	expect(hasNativeExecutionEnded({ ...pending, executorReturned: true }, { ...stopped, helper, executor: { identity: executor, state: 'running' } })).toBe(true);
+});
+
 test('requires the recorded executor and endpoint to end on the same bus', () => {
 	expect(hasNativeExecutionEnded(operation, stopped)).toBe(true);
 	for (const evidence of [

@@ -8,7 +8,11 @@ import { setSystemVolume, getSystemVolumeStatus, createVolumeWatcher, isMixerWri
 import { elapsedClock, getSystemTimeStatus, listHostTimezones, remainingSaveBudget, SAVE_BUDGET_MS, withFollowUpBudget, withSaveBudget, withSystemTimeLock } from '../system-time.ts';
 import { applySystemTimeSettingsWithElevation } from '../system-time-elevation.ts';
 import { warmElevationTrust } from '../network-helper-client.ts';
-import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, runNetworkMutation, scanWifi } from '../system-network.ts';
+import { applyIPv4Unlocked, connectWifiUnlocked, disconnectWifiUnlocked, readNetworkState, readNetworkStateUnlocked, resetNetworkStateCache, runNetworkMutation, scanWifi } from '../system-network.ts';
+import { NativeMutationHost, type NativeMutationState } from '../native/mutation-host.ts';
+import type { NativeMutationDomain } from '../native/mutation-journal.ts';
+import { NativeNetworkChanges } from '../native/network-changes.ts';
+import { NativeTimeChanges } from '../native/time-changes.ts';
 const assert = Utils.assertParams;
 type BroadcastFn = (event: string, data: any) => void;
 type HasSubscribersFn = (event: string) => boolean;
@@ -58,11 +62,14 @@ interface SystemHandlers {
 	applyTimeSettings: (p: SystemTimeChanges) => Promise<SystemTimeResult>;
 	network: () => Promise<NetworkStateInfo>;
 	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
+	acknowledgeNetwork: () => Promise<NetworkStateInfo>;
+	acknowledgeTime: () => Promise<SystemTimeStatus>;
 	wifiDisconnect: (p: { interfaceID: string }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
 	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string; expectedSsidHex?: string }) => Promise<NetworkStateInfo>;
 	startPolling: () => void;
 	stopPolling: () => void;
+	close: () => Promise<void>;
 }
 
 /**
@@ -149,7 +156,15 @@ export function restrictNetworkCapabilities(state: NetworkStateInfo, networkAdmi
 	return { ...state, capabilities: { ...state.capabilities, ipv4: false, ipv4Elevation: false, wifi: false } };
 }
 
-export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean): SystemHandlers {
+export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, hasSubscribers: HasSubscribersFn, networkAdminEnabled: boolean, dataDirectory?: string): SystemHandlers {
+	const nativeHost = dataDirectory ? new NativeMutationHost(dataDirectory) : undefined;
+	const nativeTime = nativeHost ? new NativeTimeChanges(nativeHost, getSystemTimeStatus) : undefined;
+	const nativeNetwork = nativeHost
+		? new NativeNetworkChanges(nativeHost, () => {
+				resetNetworkStateCache();
+				return readNetworkStateUnlocked(settings.get('network.primaryInterface') ?? '');
+			})
+		: undefined;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	/**
 	 * Set by stopPolling. Callbacks that were already on their way — the startup volume read,
@@ -157,6 +172,14 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * setting or restarts the monitor after shutdown began.
 	 */
 	let pollingStopped = false;
+
+	async function readMutation(domain: NativeMutationDomain): Promise<NativeMutationState | null | undefined> {
+		try {
+			return await nativeHost?.state(domain);
+		} catch {
+			return null;
+		}
+	}
 
 	/** Persist an OS volume change unless polling has stopped; a failed save is only logged. */
 	function persistVolume(volume: number): void {
@@ -232,12 +255,16 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	 * this host is capable of). Never throws — an unsupported or unreadable host is
 	 * reported through `supported: false` and empty capabilities.
 	 */
-	function getTime(): Promise<SystemTimeStatus> {
+	async function getTime(): Promise<SystemTimeStatus> {
 		// Start measuring the privileged helper's trust chain now, outside the lock and without
 		// waiting for it: on Windows that check is seconds of hashing, and paid inside the save
 		// it is a screen that sits still before the elevation prompt even appears.
 		warmElevationTrust();
-		return withSystemTimeLock(getSystemTimeStatus);
+		nativeTime?.startRecovery();
+		const state = await getSystemTimeStatus();
+		const mutation = await readMutation('time');
+		if (mutation === null) return { ...state, stale: true, capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } };
+		return mutation ? { ...state, mutation } : state;
 	}
 
 	/** IANA timezone identifiers this host accepts, for the timezone picker. Excludes zones this platform cannot express. Empty on a runtime without a timezone database. */
@@ -246,8 +273,9 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	/** Run a system-time write and tell every client what the host looks like afterwards. */
-	function applyTimeWrite(write: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
-		return runTimeWrite(write, getSystemTimeStatus, broadcast);
+	function applyTimeWrite(changes: SystemTimeChanges): Promise<SystemTimeResult> {
+		const write = () => runTimeWrite(() => applySystemTimeSettingsWithElevation(changes), getTime, broadcast);
+		return nativeTime ? nativeTime.apply(changes, write) : write();
 	}
 
 	/**
@@ -260,28 +288,28 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		for (const key of ['hours', 'minutes', 'seconds'] as const) {
 			if (typeof p[key] !== 'number' || !Number.isFinite(p[key])) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${key} must be a number`);
 		}
-		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ clock: { hours: p.hours, minutes: p.minutes, seconds: p.seconds } }));
+		return applyTimeWrite({ clock: { hours: p.hours, minutes: p.minutes, seconds: p.seconds } });
 	}
 
 	/** Set the system timezone from an IANA identifier. An unknown identifier comes back as an `invalid-input` outcome. */
 	function setTimezone(p: { timezone: string }): Promise<SystemTimeResult> {
 		assert(p, ['timezone']);
 		if (typeof p.timezone !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'timezone must be a string');
-		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ timezone: p.timezone }));
+		return applyTimeWrite({ timezone: p.timezone });
 	}
 
 	/** Point automatic time synchronisation at an NTP server (host name or IP address). */
 	function setNtpServer(p: { server: string }): Promise<SystemTimeResult> {
 		assert(p, ['server']);
 		if (typeof p.server !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'server must be a string');
-		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ ntpServer: p.server.trim() }));
+		return applyTimeWrite({ ntpServer: p.server.trim() });
 	}
 
 	/** Switch automatic time synchronisation on or off. Setting the clock by hand requires it off. */
 	function setNtpEnabled(p: { enabled: boolean }): Promise<SystemTimeResult> {
 		assert(p, ['enabled']);
 		if (typeof p.enabled !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'enabled must be a boolean');
-		return applyTimeWrite(() => applySystemTimeSettingsWithElevation({ ntpEnabled: p.enabled }));
+		return applyTimeWrite({ ntpEnabled: p.enabled });
 	}
 
 	/** Validate and apply every changed time field as one serialized save. */
@@ -319,7 +347,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 			}
 			changes.clock = { hours: p.clock.hours, minutes: p.clock.minutes, seconds: p.clock.seconds };
 		}
-		return applyTimeWrite(() => applySystemTimeSettingsWithElevation(changes));
+		return applyTimeWrite(changes);
 	}
 
 	// Detect OS-side volume changes (system tray, media keys, device plug/unplug)
@@ -468,7 +496,26 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	/** Live host network state, with the user's primary-interface preference applied. */
 	async function getNetworkState(): Promise<NetworkStateInfo> {
-		return restrictNetworkCapabilities(await readNetworkState(settings.get('network.primaryInterface') ?? ''), networkAdminEnabled);
+		nativeNetwork?.startRecovery();
+		const state = await readNetworkState(settings.get('network.primaryInterface') ?? '');
+		const mutation = await readMutation('network');
+		if (mutation === null) return { ...restrictNetworkCapabilities(state, false), stale: true };
+		return restrictNetworkCapabilities(mutation ? { ...state, mutation } : state, networkAdminEnabled);
+	}
+
+	async function acknowledgeNetwork(): Promise<NetworkStateInfo> {
+		if (!nativeNetwork) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED);
+		const state = await nativeNetwork.acknowledge();
+		broadcast('system:network', state);
+		return state;
+	}
+
+	async function acknowledgeTime(): Promise<SystemTimeStatus> {
+		if (!nativeTime) throw new CodedError(ErrorCodes.SYSTEM_TIME_BUSY);
+		await nativeTime.acknowledge();
+		const state = await getTime();
+		broadcast('system:timeChanged', state);
+		return state;
 	}
 
 	/**
@@ -481,6 +528,15 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	async function applyNetworkConfig(p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }): Promise<NetworkStateInfo> {
 		assert(p, ['interfaceID', 'config', 'expected']);
 		const primary = settings.get('network.primaryInterface') ?? '';
+		if (nativeNetwork) {
+			await nativeNetwork.assertIdle();
+			if (process.platform === 'linux' || process.platform === 'win32' || process.platform === 'darwin')
+				return runAndPublishNetworkMutation(
+					() => nativeNetwork.applyIPv4(p.interfaceID, p.config, p.expected, () => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected)),
+					() => getNetworkState(),
+					state => broadcast('system:network', state)
+				);
+		}
 		return runAndPublishNetworkMutation(
 			() => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected),
 			() => readNetworkStateUnlocked(primary),
@@ -489,11 +545,12 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	async function leaveWifiNetwork(p: { interfaceID: string }): Promise<NetworkStateInfo> {
+		if (nativeNetwork) await nativeNetwork.assertIdle();
 		assert(p, ['interfaceID']);
 		const interfaceID = assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => disconnectWifiUnlocked(interfaceID, primary),
+			() => (nativeNetwork && process.platform === 'linux' ? nativeNetwork.wifi({ operation: 'disconnect', interfaceID }, () => disconnectWifiUnlocked(interfaceID, primary)) : disconnectWifiUnlocked(interfaceID, primary)),
 			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
@@ -501,14 +558,19 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	async function scanWifiNetworks(p: { interfaceID: string }): Promise<NetWifiNetwork[]> {
 		assert(p, ['interfaceID']);
+		if (nativeNetwork) await nativeNetwork.assertIdle();
 		return await scanWifi(assertString(p.interfaceID, 'interfaceID', MAX_INTERFACE_ID));
 	}
 
 	async function joinWifiNetwork(p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string; expectedSsidHex?: string }): Promise<NetworkStateInfo> {
+		if (nativeNetwork) await nativeNetwork.assertIdle();
 		assert(p, ['interfaceID', 'ssid']);
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
-			() => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null, p.expectedSecurity, p.expectedSsidHex),
+			() => {
+				const action = () => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null, p.expectedSecurity, p.expectedSsidHex);
+				return nativeNetwork && process.platform === 'linux' ? nativeNetwork.wifi({ operation: 'connect', interfaceID: p.interfaceID, ssid: p.ssid, password: p.password ?? '', bssid: p.bssid ?? null, ...(p.expectedSecurity !== undefined ? { expectedSecurity: p.expectedSecurity } : {}), ...(p.expectedSsidHex !== undefined ? { expectedSsidHex: p.expectedSsidHex } : {}) }, action) : action();
+			},
 			() => readNetworkStateUnlocked(primary),
 			state => broadcast('system:network', state)
 		);
@@ -528,11 +590,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		if (now < nextTimeRead) return;
 		nextTimeRead = now + TIME_POLL_INTERVAL_MS;
 		timeReadInFlight = true;
-		void withSystemTimeLock(async () => {
+		void (async () => {
 			if (generation !== timePollingGeneration || !pollInterval || !hasSubscribers('system:timeChanged')) return;
-			const status = await getSystemTimeStatus();
+			const status = await getTime();
 			if (generation === timePollingGeneration && pollInterval && hasSubscribers('system:timeChanged')) broadcast('system:timeChanged', status);
-		})
+		})()
 			.catch(error => console.warn('[system-time] Could not refresh host time:', (error as Error).message))
 			.finally(() => {
 				timeReadInFlight = false;
@@ -600,5 +662,11 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 	}
 
-	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, getTime, listTimezones, setClock, setTimezone, setNtpServer, setNtpEnabled, applyTimeSettings, network: getNetworkState, networkApply: applyNetworkConfig, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, wifiDisconnect: leaveWifiNetwork, startPolling, stopPolling };
+	async function close(): Promise<void> {
+		stopPolling();
+		await Promise.all([nativeNetwork?.close(), nativeTime?.close()]);
+		if (nativeHost && !(await nativeHost.closeAndDrain())) throw new Error('Native system changes are still running');
+	}
+
+	return { ram: getRamInfo, storage: getStorageInfo, cpu: getCpuInfo, setVolume, getVolume, getTime, listTimezones, setClock, setTimezone, setNtpServer, setNtpEnabled, applyTimeSettings, network: getNetworkState, networkApply: applyNetworkConfig, acknowledgeNetwork, acknowledgeTime, wifiScan: scanWifiNetworks, wifiConnect: joinWifiNetwork, wifiDisconnect: leaveWifiNetwork, startPolling, stopPolling, close };
 }

@@ -18,6 +18,16 @@ export interface NativeWorkerErrorData {
 
 export type NativeWorkerResponse = { readonly id: number; readonly ok: true; readonly value: unknown } | { readonly id: number; readonly ok: false; readonly error: NativeWorkerErrorData };
 
+export interface NativeWorkerEvent {
+	readonly event: string;
+	readonly value?: unknown;
+}
+
+export interface NativeWorkerHooks {
+	readonly onEvent?: (event: NativeWorkerEvent) => void;
+	readonly onExit?: () => void;
+}
+
 export class NativeWorkerFailure extends Error {
 	readonly mayHaveRun: boolean;
 	constructor(message: string, mayHaveRun: boolean) {
@@ -47,15 +57,21 @@ function remoteError(value: NativeWorkerErrorData): Error {
 /** A mutation channel has no timeout and cannot be terminated while a call is outstanding. */
 export class NativeWorkerChannel {
 	private worker: Worker | null = null;
+	private retiringRead: Worker | null = null;
+	private readonly retiringReplies = new Set<number>();
+	private readonly shuttingDown = new Set<Worker>();
+	private readonly exits = new Map<Worker, Promise<void>>();
 	private nextId = 0;
 	private readonly pending = new Map<number, Pending>();
 	private closed = false;
 	private readonly kind: 'read' | 'mutation';
 	private readonly entry: string;
+	private readonly hooks: NativeWorkerHooks;
 
-	constructor(kind: 'read' | 'mutation', entry: string = workerEntry()) {
+	constructor(kind: 'read' | 'mutation', entry: string = workerEntry(), hooks: NativeWorkerHooks = {}) {
 		this.kind = kind;
 		this.entry = entry;
+		this.hooks = hooks;
 	}
 
 	call<T>(request: NativeWorkerRequest, timeoutMs?: number): Promise<T> {
@@ -89,14 +105,40 @@ export class NativeWorkerChannel {
 		return true;
 	}
 
+	async waitUntilClosed(): Promise<void> {
+		if (!this.closed) throw new Error('Close the native worker before waiting for its exit');
+		await Promise.all(this.exits.values());
+	}
+
 	private getWorker(): Worker {
 		if (this.worker) return this.worker;
+		if (this.retiringRead) throw new NativeWorkerFailure('The previous native read has not stopped', false);
 		const worker = new Worker(this.entry, { name: `native-${this.kind}` });
+		let exited!: () => void;
+		this.exits.set(
+			worker,
+			new Promise<void>(resolve => {
+				exited = resolve;
+			})
+		);
 		this.worker = worker;
 		worker.unref();
-		worker.onmessage = (event: MessageEvent<NativeWorkerResponse>) => {
+		worker.onmessage = (event: MessageEvent<NativeWorkerResponse | NativeWorkerEvent>) => {
+			if (this.shuttingDown.has(worker) && 'id' in event.data && event.data.id === 0) {
+				worker.terminate();
+				return;
+			}
+			if (this.retiringRead === worker && 'id' in event.data) {
+				this.retiringReplies.delete(event.data.id);
+				if (!this.retiringReplies.size) this.shutdown(worker);
+				return;
+			}
 			if (this.worker !== worker) return;
 			const reply = event.data;
+			if ('event' in reply) {
+				this.hooks.onEvent?.(reply);
+				return;
+			}
 			const pending = this.remove(reply.id);
 			if (!pending) return;
 			if (reply.ok) pending.resolve(reply.value);
@@ -106,8 +148,27 @@ export class NativeWorkerChannel {
 			event.preventDefault();
 			this.fail(worker, new NativeWorkerFailure(event.message || 'Native worker failed', true), this.kind === 'read');
 		};
-		worker.addEventListener('close', () => this.fail(worker, new NativeWorkerFailure('Native worker exited before replying', true), false));
+		worker.addEventListener('close', () => {
+			this.exits.delete(worker);
+			exited();
+			this.shuttingDown.delete(worker);
+			if (this.retiringRead === worker) {
+				this.retiringRead = null;
+				this.retiringReplies.clear();
+			}
+			this.fail(worker, new NativeWorkerFailure('Native worker exited before replying', true), false);
+		});
 		return worker;
+	}
+
+	private shutdown(worker: Worker): void {
+		if (this.shuttingDown.has(worker)) return;
+		this.shuttingDown.add(worker);
+		try {
+			worker.postMessage({ id: 0, lane: this.kind, method: 'worker.close' });
+		} catch {
+			worker.terminate();
+		}
 	}
 
 	private remove(id: number): Pending | undefined {
@@ -122,14 +183,22 @@ export class NativeWorkerChannel {
 	private fail(worker: Worker, error: Error, terminate: boolean): void {
 		if (this.worker !== worker) return;
 		this.worker = null;
+		if (terminate && this.kind === 'read') {
+			this.retiringRead = worker;
+			for (const id of this.pending.keys()) this.retiringReplies.add(id);
+		}
 		for (const [id, pending] of this.pending) {
 			this.remove(id);
 			pending.reject(error);
 		}
 		worker.unref();
-		if (terminate) worker.terminate();
+		if (terminate) {
+			// Bun terminate() skips JS cleanup. Let native reads leave their finally first.
+			if (!this.retiringReplies.size) this.shutdown(worker);
+		}
 		// An errored mutation worker may still be inside an FFI call.
 		if (this.kind === 'mutation') this.closed = true;
+		this.hooks.onExit?.();
 	}
 }
 

@@ -4,6 +4,22 @@ import { NativeSnapshotReader, NativeWorkerChannel, NativeWorkerFailure } from '
 
 const entry = new URL('../helpers/native-blocking-worker.ts', import.meta.url).href;
 
+test('subscription events do not consume call replies and stop with their worker', async () => {
+	const events: unknown[] = [];
+	let exits = 0;
+	const channel = new NativeWorkerChannel('mutation', entry, { onEvent: event => events.push(event), onExit: () => exits++ });
+	try {
+		expect(await channel.call<number>({ method: 'event', args: { value: 37 } })).toBe(37);
+		expect(events).toEqual([{ event: 'changed', value: 37 }]);
+		expect(channel.close()).toBe(true);
+		await channel.waitUntilClosed();
+		expect(exits).toBe(1);
+		expect(events).toHaveLength(1);
+	} finally {
+		channel.close();
+	}
+});
+
 async function waitForStart(marker: Int32Array): Promise<void> {
 	const deadline = performance.now() + 3000;
 	while (!Atomics.load(marker, 0)) {
@@ -36,9 +52,13 @@ test('a native blocking mutation keeps running while an independent reader respo
 test('a timed out reader returns its last snapshot without affecting a mutation', async () => {
 	const channel = new NativeWorkerChannel('read', entry);
 	const reader = new NativeSnapshotReader<number>(channel);
+	const marker = new Int32Array(new SharedArrayBuffer(12));
 	try {
 		expect(await reader.read({ method: 'read', args: { value: 7 } }, 3000)).toEqual({ value: 7, stale: false });
-		expect(await reader.read({ method: 'block', args: { milliseconds: 200, value: 8 } }, 20)).toEqual({ value: 7, stale: true });
+		expect(await reader.read({ method: 'block', args: { marker, milliseconds: 200, value: 8 } }, 20)).toEqual({ value: 7, stale: true });
+		expect(await reader.read({ method: 'read', args: { value: 9 } }, 3000)).toEqual({ value: 7, stale: true });
+		await Bun.sleep(250);
+		expect(Atomics.load(marker, 2)).toBe(1);
 		expect(await reader.read({ method: 'read', args: { value: 9 } }, 3000)).toEqual({ value: 9, stale: false });
 	} finally {
 		channel.close();
@@ -78,6 +98,7 @@ test('the production read worker rejects durable writes and returns real process
 		expect(identity.executor.started.length).toBeGreaterThan(0);
 		await expectWorkerRejection(channel.call({ method: 'journal.begin', args: {} }, 3000), 'cannot execute mutations');
 		await expectWorkerRejection(channel.call({ method: 'linux.dbus', args: { request: { kind: 'mutation' } } }, 3000), 'cannot execute mutations');
+		await expectWorkerRejection(channel.call({ method: 'win32.network.ipv4.write', args: {} }, 3000), 'cannot execute mutations');
 	} finally {
 		channel.close();
 	}

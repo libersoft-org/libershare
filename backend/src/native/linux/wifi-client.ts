@@ -31,9 +31,10 @@ export interface WifiMutationDeps {
 	readonly close: () => void;
 }
 
+const reader = new NativeWorkerChannel('read');
+
 function nativeDeps(): WifiMutationDeps {
-	const mutation = new NativeDBusMutation(),
-		reader = new NativeWorkerChannel('read');
+	const mutation = new NativeDBusMutation();
 	return {
 		bind: request => mutation.bind(request),
 		read: (endpoint, request, timeoutMs) => reader.call({ method: 'linux.dbus', args: { options: { bus: 'system' }, request: { ...request, kind: 'read', destination: endpoint.rule.destination, timeoutUsec: BigInt(Math.max(1, Math.floor(timeoutMs * 1000))) } } }, timeoutMs),
@@ -51,7 +52,6 @@ function nativeDeps(): WifiMutationDeps {
 		now: () => performance.now(),
 		sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
 		close: () => {
-			reader.close();
 			mutation.close();
 		},
 	};

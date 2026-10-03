@@ -52,9 +52,10 @@ export interface NativeIPv4ProfileObservation {
 	readonly matchesDesired: boolean;
 }
 
+const reader = new NativeWorkerChannel('read');
+
 function nativeDependencies(): NativeNetworkMutationDeps {
 	const mutation = new NativeDBusMutation();
-	const reader = new NativeWorkerChannel('read');
 	return {
 		bind: request => mutation.bind(request),
 		mutate: (context, endpoint, request) => mutation.call(context, endpoint, 'nm', request),
@@ -63,7 +64,6 @@ function nativeDependencies(): NativeNetworkMutationDeps {
 		now: () => performance.now(),
 		sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
 		close: () => {
-			reader.close();
 			mutation.close();
 		},
 	};

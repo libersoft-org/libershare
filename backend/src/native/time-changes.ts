@@ -4,12 +4,15 @@ import { NativeMutationHost, type NativeMutationState, type NativeSettlement } f
 import { NativeMutationBusy, type JournalValue, type NativeMutationRecord } from './mutation-journal.ts';
 import { withNativeMutationContext } from './mutation-context.ts';
 import { NativeWorkerChannel } from './worker-host.ts';
-import { readTrustedHelperResult } from './helper-results.ts';
 import { sameTimezoneSource, type LinuxTimeRecovery, type LinuxTimeSnapshot, type LinuxTimezoneSource } from './linux/time-mutation-state.ts';
 import { nativeNtpStateMatches, type NativeNtpState } from './linux/time-mutation-jobs.ts';
 import { validateSystemTimeChanges } from '../system-time.ts';
 import { result, SAVE_BUDGET_MS, FOLLOW_UP_BUDGET_MS } from '../system-time-common.ts';
 import { verifyTimesyncdServer } from '../system-time-linux.ts';
+import { observeNativeWindowsTime } from './win32/time-mutation.ts';
+import type { WindowsTimeSnapshot, WindowsTimeRecovery } from './win32/time-state.ts';
+import { observeNativeDarwinTime } from './darwin/time-mutation.ts';
+import type { DarwinTimeSnapshot, DarwinTimeRecovery } from './darwin/time-state.ts';
 
 interface TimeRecovery {
 	kind: 'time';
@@ -17,6 +20,22 @@ interface TimeRecovery {
 	original: { timezone: string; ntpEnabled: boolean | null; ntpServer: string | null };
 	physical: LinuxTimeSnapshot;
 	time?: LinuxTimeRecovery;
+}
+
+interface WindowsTimeRecoveryData {
+	kind: 'time';
+	platform: 'win32';
+	changes: SystemTimeChanges;
+	physical: WindowsTimeSnapshot;
+	windowsTime?: WindowsTimeRecovery;
+}
+
+interface DarwinTimeRecoveryData {
+	kind: 'time';
+	platform: 'darwin';
+	changes: SystemTimeChanges;
+	physical: DarwinTimeSnapshot;
+	darwinTime?: DarwinTimeRecovery;
 }
 
 function timezoneSource(value: unknown): value is LinuxTimezoneSource | null {
@@ -30,23 +49,34 @@ export function clockMatchesRecovery(reference: { targetUtcMs: number; hostUptim
 	return !!reference.bootId && reference.bootId === current.bootId && Number.isFinite(reference.targetUtcMs) && Number.isFinite(reference.hostUptimeMs) && current.hostUptimeMs >= reference.hostUptimeMs && Math.abs(current.utcMs - (reference.targetUtcMs + current.hostUptimeMs - reference.hostUptimeMs)) <= 2000;
 }
 
-/** Linux native completion is checked from the host, never from timedated's cached zone name. */
+/** Recovery compares physical host state with the snapshot saved before the native write. */
 export class NativeTimeChanges {
 	private readonly host: NativeMutationHost;
 	private readonly read: () => Promise<SystemTimeStatus>;
 	private readonly reader: Pick<NativeWorkerChannel, 'call' | 'close'>;
 	private recovery: Promise<void> | null = null;
-	private readonly helperRecovery = new Map<string, LinuxTimeRecovery>();
+	private stopping = false;
 
-	constructor(host: NativeMutationHost, read: () => Promise<SystemTimeStatus>, reader: Pick<NativeWorkerChannel, 'call' | 'close'> = new NativeWorkerChannel('read')) { this.host = host; this.read = read; this.reader = reader; }
+	constructor(host: NativeMutationHost, read: () => Promise<SystemTimeStatus>, reader: Pick<NativeWorkerChannel, 'call' | 'close'> = new NativeWorkerChannel('read')) {
+		this.host = host;
+		this.read = read;
+		this.reader = reader;
+	}
 
-	async assertIdle(): Promise<void> { if (await this.host.state('time')) throw new CodedError(ErrorCodes.SYSTEM_TIME_BUSY); }
-	state(): Promise<NativeMutationState | undefined> { return this.host.state('time'); }
+	async assertIdle(): Promise<void> {
+		if (await this.host.state('time')) throw new CodedError(ErrorCodes.SYSTEM_TIME_BUSY);
+	}
+	state(): Promise<NativeMutationState | undefined> {
+		return this.host.state('time');
+	}
 
 	async acknowledge(): Promise<SystemTimeStatus> {
-		try { await this.host.acknowledge('time'); }
-		catch (error) { this.rethrowBusy(error); throw error; }
-		this.helperRecovery.clear();
+		try {
+			await this.host.acknowledge('time');
+		} catch (error) {
+			this.rethrowBusy(error);
+			throw error;
+		}
 		return this.read();
 	}
 
@@ -55,47 +85,75 @@ export class NativeTimeChanges {
 	}
 
 	startRecovery(): void {
-		if (process.platform !== 'linux' || this.recovery) return;
-		this.recovery = this.host.recover('time', async record => {
-			if (record.endRule.kind === 'helper') {
-				const receipt = await readTrustedHelperResult(record.endRule);
-				const data = receipt?.recoveryData;
-				if (data && typeof data === 'object' && !Array.isArray(data) && data['time'] && typeof data['time'] === 'object') this.helperRecovery.set(record.operationId, data['time'] as unknown as LinuxTimeRecovery);
-			}
-			return this.host.observe(record);
-		}, record => this.verify(record)).catch(error => {
-			console.warn('[system-time] Cannot verify interrupted native change:', error instanceof Error ? error.message : String(error));
-		}).finally(() => { this.recovery = null; });
+		if (this.stopping || !['linux', 'win32', 'darwin'].includes(process.platform) || this.recovery) return;
+		this.recovery = this.host
+			.recover(
+				'time',
+				record => this.host.observe(record),
+				record => this.verify(record)
+			)
+			.catch(error => {
+				console.warn('[system-time] Cannot verify interrupted native change:', error instanceof Error ? error.message : String(error));
+			})
+			.finally(() => {
+				this.recovery = null;
+			});
 	}
 
 	async apply(changes: SystemTimeChanges, action: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
-		if (process.platform !== 'linux') return result('unsupported', 'This native time mutation adapter requires Linux');
+		if (!['linux', 'win32', 'darwin'].includes(process.platform)) return result('unsupported', 'This host has no native time mutation adapter');
 		const invalid = validateSystemTimeChanges(changes);
 		if (invalid) return invalid;
 		await this.assertIdle();
 		const original = await this.read();
 		if (!original.supported || original.stale) return result('stale', 'Current system time settings could not be read');
-		const physical = await this.reader.call<LinuxTimeSnapshot>({ method: 'linux.time.snapshot', args: { ...(changes.clock && changes.expectedTimezone ? { timezone: changes.expectedTimezone } : {}), dropin: changes.ntpServer !== undefined } }, 25000);
-		if (changes.clock && (physical.targetTimezone && !sameTimezoneSource(physical.timezone, physical.targetTimezone) || changes.expectedOffsetMinutes !== undefined && physical.offsetSeconds !== changes.expectedOffsetMinutes * 60)) return result('stale', 'The host timezone file changed since the clock was read');
-		const data: TimeRecovery = { kind: 'time', changes, original: { timezone: original.timezone, ntpEnabled: original.ntpEnabled, ntpServer: original.ntpServer }, physical };
+		let data: TimeRecovery | WindowsTimeRecoveryData | DarwinTimeRecoveryData;
+		if (process.platform === 'win32') {
+			data = { kind: 'time', platform: 'win32', changes, physical: await this.reader.call<WindowsTimeSnapshot>({ method: 'win32.time.snapshot' }, 25000) };
+		} else if (process.platform === 'darwin') {
+			const physical = await this.reader.call<DarwinTimeSnapshot>({ method: 'darwin.time.snapshot', args: { ...(changes.clock && changes.expectedTimezone ? { timezone: changes.expectedTimezone } : {}), ...(changes.clock && process.getuid?.() === 0 ? { clock: changes.clock } : {}) } }, 25000);
+			if (changes.clock && ((physical.targetZone && (physical.zone?.resolved !== physical.targetZone.resolved || physical.zone?.sha256 !== physical.targetZone.sha256)) || (changes.expectedOffsetMinutes !== undefined && physical.offsetMinutes !== changes.expectedOffsetMinutes))) return result('stale', 'The host timezone file changed since the clock was read');
+			data = { kind: 'time', platform: 'darwin', changes, physical };
+		} else {
+			const physical = await this.reader.call<LinuxTimeSnapshot>({ method: 'linux.time.snapshot', args: { ...(changes.clock && changes.expectedTimezone ? { timezone: changes.expectedTimezone } : {}), dropin: changes.ntpServer !== undefined } }, 25000);
+			if (changes.clock && ((physical.targetTimezone && !sameTimezoneSource(physical.timezone, physical.targetTimezone)) || (changes.expectedOffsetMinutes !== undefined && physical.offsetSeconds !== changes.expectedOffsetMinutes * 60))) return result('stale', 'The host timezone file changed since the clock was read');
+			data = { kind: 'time', changes, original: { timezone: original.timezone, ntpEnabled: original.ntpEnabled, ntpServer: original.ntpServer }, physical };
+		}
 		const encoded = JSON.stringify(data);
 		try {
 			let outcome: SystemTimeResult | undefined;
-			const completed = await this.host.run({ domain: 'time', operation: 'applySystemTime', requestHash: createHash('sha256').update(encoded).digest('hex'), recoveryData: JSON.parse(encoded) as JournalValue, timeoutMs: SAVE_BUDGET_MS + FOLLOW_UP_BUDGET_MS }, context => withNativeMutationContext(context, async () => { outcome = await action(); return outcome; }), record => outcome && !outcome.success && !outcome.changed && !outcome.stateMayHaveChanged ? Promise.resolve('completed') : this.verify(record));
+			const completed = await this.host.run(
+				{ domain: 'time', operation: 'applySystemTime', requestHash: createHash('sha256').update(encoded).digest('hex'), recoveryData: JSON.parse(encoded) as JournalValue, timeoutMs: SAVE_BUDGET_MS + FOLLOW_UP_BUDGET_MS },
+				context =>
+					withNativeMutationContext(context, async () => {
+						outcome = await action();
+						return outcome;
+					}),
+				record => (outcome && !outcome.success && !outcome.changed && !outcome.stateMayHaveChanged ? Promise.resolve('completed') : this.verify(record))
+			);
 			return completed.state === 'completed' ? completed.value : { ...result('error', 'The system time change is still pending; no further change can start yet'), stateMayHaveChanged: true };
-		} catch (error) { this.rethrowBusy(error); throw error; }
+		} catch (error) {
+			this.rethrowBusy(error);
+			throw error;
+		}
 	}
 
 	private async verify(record: NativeMutationRecord): Promise<NativeSettlement> {
-		const settlement = await this.settle(record);
-		this.helperRecovery.delete(record.operationId);
-		return settlement;
-	}
-
-	private async settle(record: NativeMutationRecord): Promise<NativeSettlement> {
+		if ((record.recoveryData as { platform?: string } | null)?.platform === 'darwin') {
+			const data = record.recoveryData as unknown as DarwinTimeRecoveryData;
+			if (data.kind !== 'time' || !data.changes || validateSystemTimeChanges(data.changes) || !data.physical || typeof data.physical.ntpEnabled !== 'boolean') return 'interrupted';
+			const observed = await observeNativeDarwinTime(data.physical, data.changes, data.darwinTime, 15000);
+			return observed.original || observed.target ? 'completed' : 'interrupted';
+		}
+		if ((record.recoveryData as { platform?: string } | null)?.platform === 'win32') {
+			const data = record.recoveryData as unknown as WindowsTimeRecoveryData;
+			if (data.kind !== 'time' || !data.changes || validateSystemTimeChanges(data.changes) || !data.physical?.zone || !data.physical.mode || !data.physical.registry) return 'interrupted';
+			const observed = await observeNativeWindowsTime(data.physical, data.changes, data.windowsTime, 15000);
+			return observed.original || observed.target ? 'completed' : 'interrupted';
+		}
 		const data = record.recoveryData as unknown as TimeRecovery;
 		if (!data || data.kind !== 'time' || !data.changes || typeof data.changes !== 'object' || Array.isArray(data.changes) || !data.original || typeof data.original.timezone !== 'string' || (data.original.ntpEnabled !== null && typeof data.original.ntpEnabled !== 'boolean') || (data.original.ntpServer !== null && typeof data.original.ntpServer !== 'string') || !data.physical || !timezoneSource(data.physical.timezone) || !Number.isFinite(data.physical.utcMs) || !Number.isFinite(data.physical.hostUptimeMs)) return 'interrupted';
-		const metadata = this.helperRecovery.get(record.operationId) ?? data.time;
+		const metadata = data.time;
 		const changes = data.changes;
 		if (validateSystemTimeChanges(changes) || (changes.ntpEnabled !== undefined && typeof changes.ntpEnabled !== 'boolean')) return 'interrupted';
 		const hash = (value: unknown): boolean => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -118,9 +176,13 @@ export class NativeTimeChanges {
 		} else if (!originalZone) return 'interrupted';
 		const desiredNtp = changes.ntpEnabled ?? data.original.ntpEnabled;
 		if (checkNtp && (desiredNtp === null || !nativeNtpStateMatches(ntp!, desiredNtp))) return 'interrupted';
-		if (changes.ntpServer !== undefined && (!metadata?.dropin || !hash(metadata.dropin.targetHash) || current.dropinHash !== metadata.dropin.targetHash || await verifyTimesyncdServer(changes.ntpServer) !== null)) return 'interrupted';
+		if (changes.ntpServer !== undefined && (!metadata?.dropin || !hash(metadata.dropin.targetHash) || current.dropinHash !== metadata.dropin.targetHash || (await verifyTimesyncdServer(changes.ntpServer)) !== null)) return 'interrupted';
 		return 'completed';
 	}
 
-	close(): boolean { return this.reader.close(); }
+	async close(): Promise<boolean> {
+		this.stopping = true;
+		await this.recovery;
+		return this.reader.close();
+	}
 }

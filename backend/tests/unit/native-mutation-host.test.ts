@@ -12,6 +12,55 @@ import { NativeMutationJournal } from '../../src/native/mutation-journal.ts';
 const entry = new URL('../helpers/native-blocking-worker.ts', import.meta.url).href;
 const options: NativeMutationOptions = { domain: 'network', operation: 'ipv4', requestHash: 'b'.repeat(64), recoveryData: { original: '192.0.2.1' }, timeoutMs: 3000 };
 
+test.each([false, true])('recovery retains helper metadata after a failed read (new boot: %s)', async newBoot => {
+	await fixture(async (host, directory) => {
+		const call = NativeWorkerChannel.prototype.call;
+		let receipts = 0;
+		let expectedBoot: string | null | undefined;
+		const mock = spyOn(NativeWorkerChannel.prototype, 'call').mockImplementation(async function <T>(this: NativeWorkerChannel, request: Parameters<typeof call>[0], timeoutMs?: number): Promise<T> {
+			if (request.method === 'helper.receipt') {
+				receipts++;
+				expect((request.args as { expectedBootId: string | null }).expectedBootId).toBe(expectedBoot!);
+				return { recoveryData: { target: '192.0.2.2' } } as T;
+			}
+			return call.call(this, request, timeoutMs) as Promise<T>;
+		});
+		try {
+			await host.run(
+				options,
+				context => context.pending({ kind: 'helper', operationId: context.operationId, requestHash: 'b'.repeat(64), cancelPath: join(directory, 'cancel'), launcher: null }),
+				async () => 'completed'
+			);
+			await expectWorkerRejection(
+				host.recover(
+					'network',
+					async record => {
+						expectedBoot = record.bootId;
+						return { ...observation(record), ...(newBoot ? { bootId: 'another-host-boot' } : {}), helper: { operationId: record.operationId, requestHash: record.requestHash, state: 'ended' } };
+					},
+					async record => {
+						expect(record.recoveryData).toEqual({ original: '192.0.2.1', target: '192.0.2.2' });
+						throw new Error('Temporary read failure');
+					}
+				),
+				'Temporary read failure'
+			);
+			await host.recover(
+				'network',
+				async record => observation(record),
+				async record => {
+					expect(record.recoveryData).toEqual({ original: '192.0.2.1', target: '192.0.2.2' });
+					return 'completed';
+				}
+			);
+			expect(receipts).toBe(1);
+			expect(await host.state('network')).toBeUndefined();
+		} finally {
+			mock.mockRestore();
+		}
+	});
+});
+
 test('a returned checkpoint call retains its receiver until scheduled work is settled', async () => {
 	await fixture(async (host, directory) => {
 		const rule = { kind: 'dbus-process' as const, destination: ':1.42', busId: 'a'.repeat(32), process: { pid: 42, started: 'linux-starttime:123' } };
@@ -59,8 +108,7 @@ async function fixture(run: (host: NativeMutationHost, directory: string) => Pro
 	try {
 		await run(host, directory);
 	} finally {
-		expect(host.close()).toBe(true);
-		await Bun.sleep(20);
+		expect(await host.closeAndDrain()).toBe(true);
 		await rm(directory, { recursive: true, force: true });
 	}
 }
@@ -74,12 +122,13 @@ test('a UI timeout leaves the native call alive and prevents another write or ac
 		const worker = new NativeWorkerChannel('mutation', entry);
 		let secondStep = false;
 		let settled = false;
+		const marker = new Int32Array(new SharedArrayBuffer(8));
 		try {
 			await worker.call({ method: 'read', args: {} });
 			const result = await host.run(
-				{ ...options, timeoutMs: 120 },
+				{ ...options, timeoutMs: 1000 },
 				async context => {
-					await context.call({ kind: 'boot' }, async () => ({ known: true, value: await worker.call({ method: 'block', args: { milliseconds: 400 } }) }));
+					await context.call({ kind: 'boot' }, async () => ({ known: true, value: await worker.call({ method: 'block', args: { milliseconds: 1500, marker } }) }));
 					await context.call({ kind: 'executor' }, async () => {
 						secondStep = true;
 						return { known: true, value: 0 };
@@ -91,6 +140,8 @@ test('a UI timeout leaves the native call alive and prevents another write or ac
 				}
 			);
 			expect(result.state).toBe('pending');
+			expect(Atomics.load(marker, 0)).toBe(1);
+			expect(Atomics.load(marker, 1)).toBe(0);
 			expect(await host.state('network')).toMatchObject({ state: 'pending' });
 			await expectWorkerRejection(
 				host.run(
@@ -162,7 +213,7 @@ test('a live unknown provider cannot be unlocked by repeated state reads or anot
 			);
 			expect(await reopened.state('network')).toBeUndefined();
 		} finally {
-			expect(reopened.close()).toBe(true);
+			expect(await reopened.closeAndDrain()).toBe(true);
 		}
 	});
 });
@@ -226,7 +277,7 @@ test('another backend cannot take recovery from a live settlement', async () => 
 		} finally {
 			finish();
 			await work;
-			peer.close();
+			await peer.closeAndDrain();
 		}
 	});
 });
@@ -282,6 +333,7 @@ test('a slow durable begin returns pending within the UI budget and never starts
 			);
 			await began;
 			expect((await run).state).toBe('pending');
+			expect(await host.state('network')).toMatchObject({ state: 'pending', operation: options.operation });
 			expect(host.close()).toBe(false);
 			release();
 			const deadline = performance.now() + 3000;
@@ -387,7 +439,7 @@ test('a local completion proof cannot take over a newer recovery revision', asyn
 		} finally {
 			release();
 			await recovery;
-			peer.close();
+			await peer.closeAndDrain();
 		}
 	});
 });

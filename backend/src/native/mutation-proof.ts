@@ -4,7 +4,7 @@ export interface NativeProcessIdentity {
 	readonly started: string;
 }
 
-export type NativeEndRule = { readonly kind: 'executor' } | { readonly kind: 'boot' } | { readonly kind: 'dbus-process'; readonly busId: string; readonly destination: string; readonly process: NativeProcessIdentity };
+export type NativeEndRule = { readonly kind: 'executor' } | { readonly kind: 'boot' } | { readonly kind: 'helper'; readonly operationId: string; readonly requestHash: string; readonly cancelPath: string; readonly launcher: NativeProcessIdentity | null } | { readonly kind: 'dbus-process'; readonly busId: string; readonly destination: string; readonly process: NativeProcessIdentity };
 
 export interface NativeProcessObservation {
 	readonly identity: NativeProcessIdentity;
@@ -16,6 +16,7 @@ export interface NativeEndObservation {
 	readonly executor: NativeProcessObservation;
 	readonly busId?: string;
 	readonly service?: NativeProcessObservation;
+	readonly helper?: { readonly operationId: string; readonly requestHash: string; readonly state: 'ended' | 'pending' | 'unknown' };
 }
 
 export interface NativePendingExecution {
@@ -35,6 +36,7 @@ export function hasNativeExecutionEnded(execution: NativePendingExecution, obser
 	if (!execution.executorReturned && !hasEnded(execution.executor, observation.executor)) return false;
 	if (execution.endRule.kind === 'executor') return true;
 	if (execution.endRule.kind === 'boot') return false;
+	if (execution.endRule.kind === 'helper') return observation.helper?.state === 'ended' && observation.helper.operationId === execution.endRule.operationId && observation.helper.requestHash === execution.endRule.requestHash;
 	return execution.endRule.busId === observation.busId && hasEnded(execution.endRule.process, observation.service);
 }
 

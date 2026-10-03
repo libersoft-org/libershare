@@ -19,7 +19,7 @@ try {
 	console.log(JSON.stringify({ platform: process.platform, arch: process.arch, nativeIdentity: true, durableMutation: true }));
 } finally {
 	reader.close();
-	if (!host.close()) throw new Error('Compiled mutation remains active');
-	await Bun.sleep(20);
+	if (!(await host.closeAndDrain())) throw new Error('Compiled mutation remains active');
+	await reader.waitUntilClosed();
 	await rm(directory, { recursive: true, force: true });
 }

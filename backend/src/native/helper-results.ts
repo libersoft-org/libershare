@@ -45,10 +45,10 @@ export function nativeHelperObservationDeps(): HelperObservationDeps {
 	return { read: id => store.read(id), cancel: createHelperCancellation, bootId: getNativeBootId, process: observeNativeProcess, busId: currentBusId, cancelled: helperCancellationExists };
 }
 
-export async function readTrustedHelperResult(rule: Pick<HelperOperationRule, 'operationId' | 'requestHash'>, store: HelperResultStore = new HelperResultStore()): Promise<HelperResultRecord | null> {
+export async function readTrustedHelperResult(rule: Pick<HelperOperationRule, 'operationId' | 'requestHash'> & { readonly expectedBootId?: string | null }, store: HelperResultStore = new HelperResultStore()): Promise<HelperResultRecord | null> {
 	const record = await store.read(rule.operationId);
 	if (!record) return null;
-	const bootId = getNativeBootId();
+	const bootId = rule.expectedBootId === undefined ? getNativeBootId() : rule.expectedBootId;
 	if (!bootId || record.bootId !== bootId || record.operationId !== rule.operationId || record.requestHash !== rule.requestHash) throw new Error('Helper result does not match this operation and boot');
 	return record;
 }

@@ -1,7 +1,7 @@
 import { expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 
-it('refreshes external time changes without overlapping writes or publishing after stop', async () => {
+it('reads independently of time writes without overlapping reads or publishing after stop', async () => {
 	const script = `
 		import { mock } from 'bun:test';
 		const time = await import('./src/system-time.ts');
@@ -61,8 +61,8 @@ it('refreshes external time changes without overlapping writes or publishing aft
 		expect(result.externalEvent).toMatchObject({ event: 'system:timeChanged', status: { nowMs: 1315000, ntpSynchronized: true } });
 		expect(result.pendingReads).toBe(3);
 		expect(result.overlappingReads).toBe(3);
-		expect(result.writeWhileReading).toBe(false);
-		expect(result.writeOrder).toEqual(['read', 'published', 'write']);
+		expect(result.writeWhileReading).toBe(true);
+		expect(result.writeOrder).toEqual(['read', 'write', 'published']);
 		expect(result.eventsAfterStop).toBe(result.eventsBeforeStop);
 		expect(result.stoppedReads).toBe(4);
 		expect(result.restartedReads).toBe(5);

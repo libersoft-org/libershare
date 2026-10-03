@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
-import { parseWindowsNetworkState, readConnectionAttributes, WINDOWS_STATE_COMMAND } from '../../src/system-network-windows.ts';
+import { parseWindowsNetworkState, readConnectionAttributes } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
 import { assertReadProducedSomething, assertWifiConfigurableInterface, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, runNetworkMutation, type NetworkSnapshot } from '../../src/system-network.ts';
 import { ErrorCodes, type NetInterfaceInfo } from '@shared';
@@ -35,42 +35,6 @@ const byID = (list: NetInterfaceInfo[], id: string): NetInterfaceInfo => {
 	if (!found) throw new Error(`interface ${id} missing from parse result`);
 	return found;
 };
-
-describe('WINDOWS_STATE_COMMAND', () => {
-	it('wraps every collection so a single-row result stays an array', () => {
-		for (const name of ['adapters', 'addresses', 'persistentAddresses', 'interfaces', 'routes', 'persistentRoutes', 'dns']) {
-			expect(WINDOWS_STATE_COMMAND).toContain(`$${name} = @(`);
-		}
-	});
-
-	it('fails the whole read when any required Windows query fails', () => {
-		expect(WINDOWS_STATE_COMMAND).toContain('$ErrorActionPreference = "Stop"');
-		for (const cmdlet of ['Get-NetAdapter', 'Get-NetIPAddress', 'Get-NetIPInterface', 'Get-NetRoute', 'Get-DnsClientServerAddress']) {
-			expect(WINDOWS_STATE_COMMAND).toMatch(new RegExp(`${cmdlet}[^;]+-ErrorAction Stop`));
-		}
-		expect(WINDOWS_STATE_COMMAND).not.toContain('SilentlyContinue');
-	});
-
-	it('allows a successful route query to return no default route', () => {
-		expect(WINDOWS_STATE_COMMAND).toContain("Get-NetRoute -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DestinationPrefix -eq '0.0.0.0/0'");
-		expect(WINDOWS_STATE_COMMAND).not.toContain("Get-NetRoute -DestinationPrefix '0.0.0.0/0'");
-	});
-
-	it('projects the enums it parses to integers so the OS display language cannot matter', () => {
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.NdisPhysicalMedium');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.MediaConnectionState');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.InterfaceOperationalStatus');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.ConnectionState');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.Dhcp');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.AddressState');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.PrefixOrigin');
-		expect(WINDOWS_STATE_COMMAND).toContain('[int]$_.SuffixOrigin');
-	});
-
-	it('only queries — it contains no cmdlet that could change configuration', () => {
-		expect(WINDOWS_STATE_COMMAND).not.toMatch(/\b(Set|New|Remove|Disable|Enable|Restart)-Net/);
-	});
-});
 
 describe('parseWindowsNetworkState', () => {
 	const result = parseWindowsNetworkState(windowsFixture());
@@ -725,6 +689,20 @@ describe('assertReadProducedSomething', () => {
 });
 
 describe('NetworkStateCache invalidation', () => {
+	it('returns the last known snapshot as stale after an invalidated read fails', async () => {
+		const original: NetworkSnapshot = { interfaces: [], detail: 'full', ipv4ProfilesUnavailable: false };
+		let fails = false;
+		const cache = new NetworkStateCache(async () => {
+			if (fails) throw new Error('Network service unavailable');
+			return original;
+		});
+		expect(await cache.read()).toBe(original);
+		cache.reset();
+		fails = true;
+		expect(await cache.read()).toEqual({ ...original, stale: true });
+		fails = false;
+		expect(await cache.read()).toBe(original);
+	});
 	it('retries after a reader failure instead of caching the rejection', async () => {
 		const snapshot = { interfaces: [], detail: 'addressesOnly', ipv4ProfilesUnavailable: false } as NetworkSnapshot;
 		let reads = 0;
@@ -821,7 +799,7 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 		expect(Date.now() - started).toBeLessThan(100);
 	});
 
-	it('waits for a change in progress instead of reading through it', async () => {
+	it('returns a cached read while a change is still running', async () => {
 		// A read that overlapped a multi-step apply could capture the gap between
 		// the old address being removed and the new one being created.
 		let release: () => void = () => {};
@@ -834,7 +812,7 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 		const read = readNetworkState('').then(() => mutationDone);
 		await new Promise(resolve => setTimeout(resolve, 50));
 		release();
-		expect(await read).toBe(true);
+		expect(await read).toBe(false);
 		await mutation;
 	});
 });
