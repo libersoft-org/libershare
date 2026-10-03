@@ -55,6 +55,12 @@ jobs:
         run: |
           TZ=UTC bun test tests/unit/native-darwin-clock.test.ts tests/unit/native-darwin-clock-oracle.test.ts
           TZ=Pacific/Honolulu bun test tests/unit/native-darwin-clock.test.ts tests/unit/native-darwin-clock-oracle.test.ts
+      - name: Verify the compiled macOS clock worker
+        working-directory: backend
+        run: |
+          bun build --compile tests/helpers/native-worker-compiled.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./src/native/worker-runtime.ts"' --outfile worker-smoke
+          TZ=UTC ./worker-smoke
+          TZ=Pacific/Honolulu ./worker-smoke
 
   windows-arm64-native:
     runs-on: windows-11-arm

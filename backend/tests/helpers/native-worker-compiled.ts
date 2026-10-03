@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NativeMutationHost } from '../../src/native/mutation-host.ts';
 import { NativeWorkerChannel } from '../../src/native/worker-host.ts';
+import type { DarwinTimeSnapshot } from '../../src/native/darwin/time-state.ts';
 
 const directory = await mkdtemp(join(tmpdir(), 'lish-native-compiled-'));
 const host = new NativeMutationHost(directory);
@@ -16,6 +17,16 @@ try {
 		async () => 'completed'
 	);
 	if (result.state !== 'completed' || (await host.state('network'))) throw new Error('Compiled journal did not finish');
+	if (process.platform === 'darwin') {
+		const { prepareDarwinClock } = await import('../../src/native/darwin/time-native.ts');
+		const inherited = process.env['TZ'];
+		const clock = { hours: 12, minutes: 34, seconds: 56 };
+		const expected = prepareDarwinClock(clock);
+		const snapshot = await reader.call<DarwinTimeSnapshot>({ method: 'darwin.time.snapshot', args: { clock } }, 15000);
+		if (snapshot.targetClock?.targetUtcMs !== expected.targetUtcMs || snapshot.bootId !== expected.reference.bootId) throw new Error('Compiled clock worker disagrees with the host conversion');
+		if (process.env['TZ'] !== inherited) throw new Error('Compiled clock worker changed the inherited timezone');
+		console.log(JSON.stringify({ compiledClock: true, inheritedTimezoneUnchanged: true }));
+	}
 	console.log(JSON.stringify({ platform: process.platform, arch: process.arch, nativeIdentity: true, durableMutation: true }));
 } finally {
 	reader.close();
