@@ -123,12 +123,14 @@ describe('native Wi-Fi transactions', () => {
 	test('a Wi-Fi rollback that never goes quiet stays pending instead of rolled back', async () => {
 		const f = wifiFixture({ flags: 1, active: true });
 		f.state.failure = 'original-activation';
-		const mutate = f.deps.mutate;
-		f.deps.mutate = async (context, endpoint, request) => {
-			if (request.member === 'CheckpointRollback') f.state.rollbackBusy = Number.MAX_SAFE_INTEGER;
-			return mutate(context, endpoint, request);
+		const deps: typeof f.deps = {
+			...f.deps,
+			mutate: async (context, endpoint, request) => {
+				if (request.member === 'CheckpointRollback') f.state.rollbackBusy = Number.MAX_SAFE_INTEGER;
+				return f.deps.mutate(context, endpoint, request);
+			},
 		};
-		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toBeInstanceOf(NativeMutationUnknown);
+		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, deps)).rejects.toBeInstanceOf(NativeMutationUnknown);
 		expect(f.state.pending).toBe(true);
 		expect(f.records.some(record => record.phase === 'rolled-back')).toBe(false);
 	});
