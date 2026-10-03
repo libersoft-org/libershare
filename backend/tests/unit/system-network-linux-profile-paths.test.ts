@@ -47,7 +47,8 @@ async function runPath(mode: 'read' | 'apply' | 'ovs' | 'ovs-incomplete'): Promi
 		native.state.ovs = withOvs;
 		native.state.malformedProfile = mode === 'ovs-incomplete';
 		const nativeCalls = [];
-		mock.module('./src/native/worker-host.ts', () => ({ NativeWorkerChannel: class {
+		const workerModule = { ...(await import('./src/native/worker-host.ts')) };
+		mock.module('./src/native/worker-host.ts', () => ({ ...workerModule, NativeWorkerChannel: class {
 			constructor(kind) { if (kind !== 'read') throw new Error('Expected read worker'); }
 			call(request, timeoutMs) {
 				if (request.method !== 'linux.network.snapshot') throw new Error('Unexpected native request');
@@ -76,13 +77,10 @@ test('the production Linux reader obtains 150 profiles through its read worker w
 	expect(dbusCalls.every((call: any) => call.kind === 'read')).toBe(true);
 });
 
-test('the production IPv4 mutation refuses incomplete profile details before modify or reapply', async () => {
+test('the production IPv4 mutation refuses execution without durable ownership', async () => {
 	const { result, calls } = await runPath('apply');
-	expect(result.name).toBe('IncompleteProfileReadError');
-	expect(result.message).toContain('connection.multi-connect');
-	expect(calls.some((call: any) => call.args.includes('modify') || call.args.includes('reapply') || call.args.includes('up'))).toBe(false);
-	expect(calls.some((call: any) => call.args.includes('CheckpointRollback'))).toBe(true);
-	expect(calls.some((call: any) => call.args.includes('CheckpointDestroy'))).toBe(false);
+	expect(result.message).toContain('durable ownership');
+	expect(calls).toHaveLength(0);
 });
 
 test('an OVS bridge without IPv4 leaves the ordinary connection editable in the same batch', async () => {

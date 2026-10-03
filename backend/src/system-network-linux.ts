@@ -1,6 +1,7 @@
 import { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
 export { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
-import { readNmcliProfileBlocks } from './system-network-linux-profiles.ts';
+import { applyNativeLinuxIPv4 } from './native/linux/network-mutation.ts';
+import { requireNativeMutationContext } from './native/mutation-context.ts';
 import { execFile, spawn } from 'node:child_process';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import type { NativeNetworkSources } from './native/linux/network-reader.ts';
@@ -25,8 +26,6 @@ export const C_LOCALE_ENV: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', LA
 
 /** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
 const EXEC_TIMEOUT_MS = 5000;
-/** `ip` lives in sbin, which is not on a service account's PATH on every distro. */
-const IP_CANDIDATES = ['/usr/sbin/ip', '/sbin/ip', 'ip'];
 const networkReader = new NativeWorkerChannel('read');
 /** IFA_F_PERMANENT lifetime sentinel — a manually configured address never expires. */
 const LIFETIME_PERMANENT = 4294967295;
@@ -557,37 +556,6 @@ export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, live: LiveIPv
 	return live === null || live.leased || live.address.startsWith('169.254.');
 }
 
-/** Detail blocks of `uuids` through the shared runner, bounded as one operation. */
-function readProfileBlocks(uuids: readonly string[]): Promise<Map<string, string>> {
-	return readNmcliProfileBlocks(uuids, { run: (args, signal) => runFirst(NMCLI_CANDIDATES, args, EXEC_TIMEOUT_MS, signal), signal: AbortSignal.timeout(EXEC_TIMEOUT_MS) });
-}
-
-async function readNmcliIPv4Profile(uuid: string, device: string, activeInstances: number): Promise<NmcliIPv4Profile> {
-	const block = (await readProfileBlocks([uuid])).get(uuid);
-	if (block === undefined) throw new Error(`NetworkManager profile ${uuid} could not be read`);
-	return parseNmcliIPv4Profile(block, device, activeInstances);
-}
-
-/** Fresh active-profile lookup shared by the read and apply paths. */
-async function activeConnections(): Promise<Map<string, string>> {
-	return parseNmcliActiveConnections(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'UUID,DEVICE', 'connection', 'show', '--active']));
-}
-
-/**
- * UUID of the NetworkManager profile currently active on a device.
- *
- * Modifying the active profile (rather than creating a new one) is what makes an
- * edit idempotent: applying twice leaves one profile, not two competing ones.
- */
-async function editableActiveConnection(device: string): Promise<string> {
-	const connections = await activeConnections();
-	const uuid = connections.get(device);
-	if (!uuid) throw new Error(`no NetworkManager profile is active on ${device}`);
-	const instances = [...connections.values()].filter(activeUUID => activeUUID === uuid).length;
-	if (!(await readNmcliIPv4Profile(uuid, device, instances)).safe) throw new Error(`NetworkManager profile on ${device} is not bound exclusively to that device`);
-	return uuid;
-}
-
 /**
  * Build the `nmcli connection modify` arguments for a desired IPv4 config.
  *
@@ -708,35 +676,15 @@ async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>)
 
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
-	await withDeviceCheckpoint(device, async () => {
-		const connectionUUID = await editableActiveConnection(device);
-		if (config.dns?.some(isIPv6)) assertIPv6DnsAllowed(await runFirst(NMCLI_CANDIDATES, ['-g', 'ipv6.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns);
-		await runFirst(NMCLI_CANDIDATES, nmcliModifyArgs(connectionUUID, config, addressingChanged), NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
-		// Switching to DHCP with the carrier down is a change to the saved profile,
-		// not something that can be activated: NetworkManager cannot complete IP
-		// configuration without a link and fails the activation. The profile is the
-		// whole change; NetworkManager acts on it when the carrier returns.
-		if (!requireLease && config.mode === 'dhcp') {
-			// Everything this branch wrote still gets read back, resolvers included —
-			// they are saved to the profile whether or not the link is up, and a
-			// change that is never verified is a change nobody knows happened. Only
-			// the live side is skipped: with no carrier the device reports none.
-			const [method, profileDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), config.dns === undefined ? Promise.resolve('') : runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID])]);
-			assertLinuxIPv4Method(config, method);
-			assertLinuxDnsApplied(config, profileDns, null, device);
-			return;
-		}
-		const activate = addressingChanged ? nmcliActivateArgs(connectionUUID, device) : ['device', 'reapply', device];
-		await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...activate], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
-		assertNmcliActiveConnection(await activeConnections(), device, connectionUUID);
-		if (addressingChanged) {
-			const [method, addr, route] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-g', 'ipv4.method', 'connection', 'show', 'uuid', connectionUUID]), runFirst(IP_CANDIDATES, ['-j', 'addr', 'show', 'dev', device]), runFirst(IP_CANDIDATES, ['-j', 'route', 'show', 'default', 'dev', device])]);
-			assertLinuxIPv4Applied(config, method, addr, route, requireLease);
-		}
-		if (config.dns !== undefined) {
-			const [profileDns, liveDns] = await Promise.all([runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'ipv4.dns,ipv4.ignore-auto-dns,ipv6.dns,ipv6.ignore-auto-dns', 'connection', 'show', 'uuid', connectionUUID]), runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'GENERAL.DEVICE,IP4.DNS,IP6.DNS', 'device', 'show', device])]);
-			assertLinuxDnsApplied(config, profileDns, liveDns, device);
-		}
+	await applyNativeLinuxIPv4(requireNativeMutationContext(), device, config, {
+		addressingChanged,
+		requireLease,
+		readTimeoutMs: EXEC_TIMEOUT_MS,
+		updateTimeoutMs: NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS,
+		activationTimeoutMs: NETWORK_MANAGER_MUTATION_TIMEOUT_MS,
+		rollbackTimeoutMs: NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS,
+		checkpointSafetyMs: NETWORK_MANAGER_CHECKPOINT_SAFETY_MS,
+		checkpointTimeoutSeconds: NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS,
 	});
 }
 
