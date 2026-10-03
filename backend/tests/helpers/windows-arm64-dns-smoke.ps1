@@ -108,7 +108,7 @@ try {
         Start-Sleep -Seconds 1
     }
     if ($address.AddressState -ne 'Preferred') { throw 'The isolated fixture address is not usable' }
-    $env:WINDOWS_DNS_FIXTURE_GUID = $adapter.InterfaceGuid.ToString('B')
+    $env:WINDOWS_DNS_FIXTURE_GUID = ([Guid]$adapter.InterfaceGuid).ToString('B')
     $env:WINDOWS_DNS_FIXTURE_INSTANCE = $fixture.InstanceId
     & bun (Join-Path $PSScriptRoot 'windows-arm64-dns-smoke.ts')
     if ($LASTEXITCODE -ne 0) { throw "Native DNS smoke failed with exit code $LASTEXITCODE" }
