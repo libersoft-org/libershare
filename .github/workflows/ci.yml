@@ -69,9 +69,9 @@ jobs:
         run: sh app/build.sh --os macos --target universal --format dmg zip --compress min
       - name: Verify both macOS architectures
         run: |
-          lipo -verify_arch x86_64 arm64 backend/build/lish-backend
-          lipo -verify_arch x86_64 arm64 backend/build/lish-network-helper
-          lipo -verify_arch x86_64 arm64 app/build/universal-apple-darwin/release/bundle/macos/LiberShare.app/Contents/MacOS/LiberShare
+          lipo backend/build/lish-backend -verify_arch x86_64 arm64
+          lipo backend/build/lish-network-helper -verify_arch x86_64 arm64
+          lipo app/build/universal-apple-darwin/release/bundle/macos/LiberShare.app/Contents/MacOS/LiberShare -verify_arch x86_64 arm64
 
   windows-arm64-native:
     runs-on: windows-11-arm
