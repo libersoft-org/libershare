@@ -13,11 +13,9 @@ import { createProcessShutdown } from './shutdown.ts';
 import { startMemoryTrace } from './monitoring/memory-trace.ts';
 import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
 import { runTimeAccessProbeArgument } from './native/linux/time-access-probe.ts';
-import { runDarwinClockProbeArgument } from './native/darwin/time-clock-probe.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-if (args[0] === '--clock-probe') process.exit(args.length === 2 ? await runDarwinClockProbeArgument(args[1]!) : 3);
 if (args[0] === '--access-probe') {
 	const status = args.length === 2 ? await runTimeAccessProbeArgument(args[1]!).catch(() => 3) : 3;
 	process.exit(status);

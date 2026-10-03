@@ -7,7 +7,6 @@ const root = resolve(import.meta.dir, '../../src');
 const allowed = new Map([
 	['network-helper-client.ts:runTrackedHelper', 'spawn'],
 	['native/linux/time-access-probe.ts:probeNativeTimeServiceAccess', 'Bun.spawn'],
-	['native/darwin/time-clock-probe.ts:runDarwinClockProbeChild', 'Bun.spawn'],
 ]);
 
 function owner(node: ts.Node): string {

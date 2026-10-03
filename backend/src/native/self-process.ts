@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Compiled workers share their app/helper executable; source workers use a real CLI entry. */
-export function selfProcessCommand(flag: '--access-probe' | '--clock-probe', argument: string): string[] {
+export function selfProcessCommand(flag: '--access-probe', argument: string): string[] {
 	const modulePath = import.meta.path.replaceAll('\\', '/');
 	if (modulePath.includes('/$bunfs/') || modulePath.includes('/~BUN/')) return [process.execPath, flag, argument];
 	const app = fileURLToPath(new URL('../app.ts', import.meta.url));

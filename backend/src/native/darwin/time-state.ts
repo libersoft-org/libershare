@@ -3,8 +3,7 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import type { SystemTimeChanges } from '@shared';
 import { parseTzif, tzifOffsetAt } from '../tzif.ts';
 import { getNativeBootId } from '../process-identity.ts';
-import { darwinHostUptimeMs, openDarwinCoreTime, type DarwinClockParts } from './time-native.ts';
-import { prepareDarwinClockSafely } from './time-clock-probe.ts';
+import { darwinHostUptimeMs, openDarwinCoreTime, prepareDarwinClock, type DarwinClockParts } from './time-native.ts';
 import { darwinNtpFingerprint, readDarwinNtpFile } from './time-files.ts';
 import { parseNtpConfServer, parseZoneinfoLink } from '../../system-time-macos.ts';
 
@@ -84,7 +83,7 @@ export async function readDarwinTimeSnapshot(request: DarwinTimeSnapshotRequest 
 		file = readDarwinNtpFile(),
 		coreTime = openDarwinCoreTime();
 	try {
-		const conversion = request.clock ? await prepareDarwinClockSafely(request.clock) : undefined;
+		const conversion = request.clock ? prepareDarwinClock(request.clock) : undefined;
 		const utcMs = Date.now(),
 			hostUptimeMs = darwinHostUptimeMs(),
 			bootId = getNativeBootId();

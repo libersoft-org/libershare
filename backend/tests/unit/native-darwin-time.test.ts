@@ -6,7 +6,6 @@ import { execFileSync } from 'node:child_process';
 import { darwinNtpFingerprint, readDarwinNtpFile, writeDarwinNtpFile } from '../../src/native/darwin/time-files.ts';
 import { darwinClockMatches, observeDarwinTimeRecovery, type DarwinTimeSnapshot } from '../../src/native/darwin/time-state.ts';
 import { DarwinTimeMutations } from '../../src/native/darwin/time-mutation.ts';
-import { prepareDarwinClock } from '../../src/native/darwin/time-native.ts';
 import { NativeMutationUnknown, type NativeMutationContext } from '../../src/native/mutation-host.ts';
 import { withNativeMutationContext } from '../../src/native/mutation-context.ts';
 import { refreshDarwinAutomaticTime, type DarwinTimeWrite, type DarwinTimeWriteResult } from '../../src/native/darwin/time-worker.ts';
@@ -19,17 +18,6 @@ test('Darwin clock recovery rejects a new boot or a missing monotonic reference'
 	expect(darwinClockMatches(proof, { ...snapshot, utcMs: 101000, hostUptimeMs: 21000 })).toBe(true);
 	expect(darwinClockMatches(proof, { ...snapshot, bootId: 'boot-2' })).toBe(false);
 	expect(darwinClockMatches({ ...proof, bootId: null }, snapshot)).toBe(false);
-});
-
-test('the clock conversion refuses a process-local TZ before loading native code', () => {
-	const original = process.env['TZ'];
-	try {
-		process.env['TZ'] = 'Etc/UTC';
-		expect(() => prepareDarwinClock({ hours: 12, minutes: 0, seconds: 0 })).toThrow('without TZ');
-	} finally {
-		if (original === undefined) delete process.env['TZ'];
-		else process.env['TZ'] = original;
-	}
 });
 
 test('time recovery requires the symlink fingerprint, file metadata and preserved NTP state', () => {

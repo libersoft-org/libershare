@@ -142,6 +142,8 @@ function timeTypeAt(zone: TzifZone, epochSeconds: number): TzifTimeType {
 	return zone.types[zone.transitionTypes[lo]!]!;
 }
 
+export { timeTypeAt as tzifTimeTypeAt };
+
 /** Returns seconds east of UTC, including historical offsets with second precision. */
 export function tzifOffsetAt(zone: TzifZone, epochSeconds: number): number {
 	checkTimestamp(epochSeconds);

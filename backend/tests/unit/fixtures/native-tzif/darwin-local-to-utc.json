@@ -1,0 +1,140 @@
+{
+	"source": "Darwin mktime, macOS 15.7.4 arm64, recorded 2026-10-03",
+	"rows": [
+		{
+			"zone": "Europe/Prague",
+			"label": "winter",
+			"local": [2026, 1, 15, 12, 34, 56],
+			"utcMs": 1768476896000,
+			"isdst": 0,
+			"gmtoff": 3600,
+			"normalized": [2026, 1, 15, 12, 34, 56]
+		},
+		{
+			"zone": "Europe/Prague",
+			"label": "summer",
+			"local": [2026, 7, 15, 12, 34, 56],
+			"utcMs": 1784111696000,
+			"isdst": 1,
+			"gmtoff": 7200,
+			"normalized": [2026, 7, 15, 12, 34, 56]
+		},
+		{
+			"zone": "Europe/Prague",
+			"label": "gap",
+			"local": [2026, 3, 29, 2, 30, 0],
+			"utcMs": 1774747800000,
+			"isdst": 1,
+			"gmtoff": 7200,
+			"normalized": [2026, 3, 29, 3, 30, 0]
+		},
+		{
+			"zone": "Europe/Prague",
+			"label": "fold",
+			"local": [2026, 10, 25, 2, 30, 0],
+			"utcMs": 1792888200000,
+			"isdst": 1,
+			"gmtoff": 7200,
+			"normalized": [2026, 10, 25, 2, 30, 0]
+		},
+		{
+			"zone": "America/New_York",
+			"label": "winter",
+			"local": [2026, 1, 15, 12, 34, 56],
+			"utcMs": 1768498496000,
+			"isdst": 0,
+			"gmtoff": -18000,
+			"normalized": [2026, 1, 15, 12, 34, 56]
+		},
+		{
+			"zone": "America/New_York",
+			"label": "summer",
+			"local": [2026, 7, 15, 12, 34, 56],
+			"utcMs": 1784133296000,
+			"isdst": 1,
+			"gmtoff": -14400,
+			"normalized": [2026, 7, 15, 12, 34, 56]
+		},
+		{
+			"zone": "America/New_York",
+			"label": "gap",
+			"local": [2026, 3, 8, 2, 30, 0],
+			"utcMs": 1772955000000,
+			"isdst": 1,
+			"gmtoff": -14400,
+			"normalized": [2026, 3, 8, 3, 30, 0]
+		},
+		{
+			"zone": "America/New_York",
+			"label": "fold",
+			"local": [2026, 11, 1, 1, 30, 0],
+			"utcMs": 1793511000000,
+			"isdst": 1,
+			"gmtoff": -14400,
+			"normalized": [2026, 11, 1, 1, 30, 0]
+		},
+		{
+			"zone": "Australia/Lord_Howe",
+			"label": "summer",
+			"local": [2026, 1, 15, 12, 34, 56],
+			"utcMs": 1768440896000,
+			"isdst": 1,
+			"gmtoff": 39600,
+			"normalized": [2026, 1, 15, 12, 34, 56]
+		},
+		{
+			"zone": "Australia/Lord_Howe",
+			"label": "winter",
+			"local": [2026, 7, 15, 12, 34, 56],
+			"utcMs": 1784081096000,
+			"isdst": 0,
+			"gmtoff": 37800,
+			"normalized": [2026, 7, 15, 12, 34, 56]
+		},
+		{
+			"zone": "Australia/Lord_Howe",
+			"label": "gap",
+			"local": [2026, 10, 4, 2, 15, 0],
+			"utcMs": 1791042300000,
+			"isdst": 1,
+			"gmtoff": 39600,
+			"normalized": [2026, 10, 4, 2, 45, 0]
+		},
+		{
+			"zone": "Australia/Lord_Howe",
+			"label": "fold",
+			"local": [2026, 4, 5, 1, 45, 0],
+			"utcMs": 1775315700000,
+			"isdst": 0,
+			"gmtoff": 37800,
+			"normalized": [2026, 4, 5, 1, 45, 0]
+		},
+		{
+			"zone": "UTC",
+			"label": "ordinary",
+			"local": [2026, 1, 15, 12, 34, 56],
+			"utcMs": 1768480496000,
+			"isdst": 0,
+			"gmtoff": 0,
+			"normalized": [2026, 1, 15, 12, 34, 56]
+		},
+		{
+			"zone": "UTC",
+			"label": "gap-control",
+			"local": [2026, 3, 29, 2, 30, 0],
+			"utcMs": 1774751400000,
+			"isdst": 0,
+			"gmtoff": 0,
+			"normalized": [2026, 3, 29, 2, 30, 0]
+		},
+		{
+			"zone": "UTC",
+			"label": "fold-control",
+			"local": [2026, 10, 25, 2, 30, 0],
+			"utcMs": 1792895400000,
+			"isdst": 0,
+			"gmtoff": 0,
+			"normalized": [2026, 10, 25, 2, 30, 0]
+		}
+	]
+}

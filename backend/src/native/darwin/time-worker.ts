@@ -2,8 +2,7 @@ import { lchmodSync, lchownSync, renameSync, symlinkSync, unlinkSync } from 'nod
 import { randomUUID } from 'node:crypto';
 import { isValidNtpServer, type OperationOutcome } from '../../system-time-common.ts';
 import { DARWIN_LOCALTIME, prepareDarwinTimeZone, readDarwinTimeZone, type DarwinClockProof } from './time-state.ts';
-import { darwinHostUptimeMs, notifyDarwinTimezone, openDarwinCoreTime, readDarwinClockReference, setDarwinClock, type DarwinClockParts, type DarwinClockReference } from './time-native.ts';
-import { prepareDarwinClockSafely, sameDarwinClockReference, type DarwinClockProbeReply } from './time-clock-probe.ts';
+import { darwinHostUptimeMs, notifyDarwinTimezone, openDarwinCoreTime, prepareDarwinClock, readDarwinClockReference, sameDarwinClockReference, setDarwinClock, type DarwinClockConversion, type DarwinClockParts, type DarwinClockReference } from './time-native.ts';
 import { readDarwinNtpFile, syncDarwinTimeDirectory, writeDarwinNtpFile } from './time-files.ts';
 
 export type DarwinTimeWrite = { readonly kind: 'clock'; readonly clock: DarwinClockParts; readonly zoneFingerprint: string | null } | { readonly kind: 'timezone'; readonly timezone: string; readonly zoneFingerprint: string | null; readonly targetFingerprint: string } | { readonly kind: 'server'; readonly server: string; readonly fileFingerprint: string | null; readonly fileIdentity: string | null; readonly enabled: boolean } | { readonly kind: 'enabled'; readonly enabled: boolean };
@@ -16,7 +15,7 @@ export interface DarwinClockWriteDeps {
 	zoneFingerprint(): string | null;
 	reference(): DarwinClockReference;
 	ntpEnabled(): boolean;
-	convert(clock: DarwinClockParts): Promise<DarwinClockProbeReply>;
+	convert(clock: DarwinClockParts): DarwinClockConversion | Promise<DarwinClockConversion>;
 	uptime(): number;
 	set(utcMs: number): number;
 }
@@ -33,7 +32,7 @@ export async function executeDarwinClockWrite(request: Extract<DarwinTimeWrite, 
 				coreTime.close();
 			}
 		},
-		convert: prepareDarwinClockSafely,
+		convert: prepareDarwinClock,
 		uptime: darwinHostUptimeMs,
 		set: setDarwinClock,
 	};
