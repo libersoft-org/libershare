@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { type ChunkID, type IStoredLISH, type LISHid, ErrorCodes, expectedChunkLength } from '@shared';
+import { type ChunkID, type IStoredLISH, type LISHid, CodedError, ErrorCodes, expectedChunkLength } from '@shared';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { LISHClient, type HaveChunks } from './lish-protocol.ts';
 import { downloadLimiter } from './speed-limiter.ts';
@@ -9,6 +9,8 @@ import { PeerManager } from './peer-manager.ts';
 import { PauseController } from './pause-controller.ts';
 import { ProgressReporter, type FileProgressEntry } from './progress-reporter.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
+import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
+import { DatasetWriteScope } from '../lish/dataset-write-scope.ts';
 export interface RetryInfo {
 	errorCode: string;
 	errorDetail?: string;
@@ -25,6 +27,7 @@ export interface RetryInfo {
 export interface ChunkDownloaderDeps {
 	readonly lishID: LISHid;
 	readonly downloadDir: string;
+	readonly datasetRoot?: DatasetRoot | string;
 	/** Aborted on Downloader.destroy() — forwarded to long-running FileAllocator ops. */
 	readonly abortSignal: AbortSignal;
 	readonly dataServer: DataServer;
@@ -97,6 +100,15 @@ export class ChunkDownloader {
 	 * orchestrator (doWork) decides what to do on partial completion.
 	 */
 	async run(): Promise<void> {
+		const writes = new DatasetWriteScope();
+		try {
+			await this.runWithWrites(writes);
+		} finally {
+			await writes.close();
+		}
+	}
+
+	private async runWithWrites(writes: DatasetWriteScope): Promise<void> {
 		const { lishID, downloadDir, dataServer, peerManager, pauseController, progressReporter, fileAllocator } = this.deps;
 		// Snapshot lish once per run — manifest is only mutated by the orchestrator in doWork Phase 1 BEFORE run() is called.
 		const lish = this.deps.getLish();
@@ -206,10 +218,13 @@ export class ChunkDownloader {
 		const writeChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<void> => {
 			const targets = dupTargets.get(c.chunkID);
 			if (!targets) {
-				await dataServer.writeChunk(downloadDir, lish, c.fileIndex, c.chunkIndex, payload);
+				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, c.fileIndex, c.chunkIndex, payload, writes);
 				return;
 			}
-			for (const t of targets) await dataServer.writeChunk(downloadDir, lish, t.fileIndex, t.chunkIndex, payload);
+			for (const t of targets) {
+				if (this.deps.isDestroyed() || this.deps.isDisabled()) return;
+				await dataServer.writeChunk(this.deps.datasetRoot ?? downloadDir, lish, t.fileIndex, t.chunkIndex, payload, writes);
+			}
 		};
 
 		const writeRetainedChunkToAllSlots = async (c: MissingChunk, payload: Uint8Array): Promise<boolean> => {
@@ -245,6 +260,10 @@ export class ChunkDownloader {
 			// notifications/onSetError report the live cause even if it switches, e.g. EACCES→ENOSPC).
 			// File vanished (ENOENT) → 'requeue' into the existing recovery. Anything else → fail real.
 			const classify = (retryErr: any): 'retry' | 'requeue' | 'abort' => {
+				if (retryErr instanceof CodedError && retryErr.code === ErrorCodes.LISH_UNSAFE_PATH) {
+					this.deps.onSetError(retryErr.code, retryErr.detail);
+					return 'abort';
+				}
 				const rc = retryErr?.code;
 				if (rc === 'ENOSPC' || rc === 'EACCES' || rc === 'EPERM' || rc === 'EROFS') {
 					code = rc === 'ENOSPC' ? ErrorCodes.DISK_FULL : ErrorCodes.DIRECTORY_ACCESS_DENIED;
@@ -508,6 +527,10 @@ export class ChunkDownloader {
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 					} catch (err: any) {
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
+						if (err instanceof CodedError && err.code === ErrorCodes.LISH_UNSAFE_PATH) {
+							this.deps.onSetError(err.code, err.detail);
+							break;
+						}
 						if (err.code === 'ENOENT') {
 							// File deleted \u2014 pause ALL peers, verify ALL files, re-allocate missing, reset chunks, resume
 							if (this.fileReallocInProgress.size > 0) {
@@ -617,7 +640,8 @@ export class ChunkDownloader {
 								console.log(`[DL] Recovery complete: ${downloadedCount}/${allTotal} verified, ${allMissing.length} to download`);
 							} catch (allocErr: any) {
 								console.error(`[DL] File recovery failed: ${allocErr.message}`);
-								this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
+								if (allocErr instanceof CodedError && (allocErr.code === ErrorCodes.DISK_FULL || allocErr.code === ErrorCodes.DISK_SPACE_UNAVAILABLE || allocErr.code === ErrorCodes.LISH_UNSAFE_PATH)) this.deps.onSetError(allocErr.code, allocErr.detail);
+								else this.deps.onSetError(ErrorCodes.IO_NOT_FOUND, downloadDir);
 								aborted = true;
 								break;
 							} finally {
@@ -647,7 +671,7 @@ export class ChunkDownloader {
 							break;
 						}
 					}
-					if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
+					if (this.deps.abortSignal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
 					dataServer.markChunkDownloaded(lishID, chunk.chunkID);
 					dataServer.incrementDownloadedBytes(lishID, data.length);
 					recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);

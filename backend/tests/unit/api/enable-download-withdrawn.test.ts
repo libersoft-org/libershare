@@ -43,6 +43,7 @@ describe('enableDownload — withdrawn while starting', () => {
 			// `directory: null` keeps the start on the no-pre-flight path, so the only
 			// thing between entry and registration is the downloader init below.
 			get: (): any => ({ id: LISH_ID, name: 'x', directory: null, files: [] }),
+			getDatasetRoot: (): null => null,
 			getAllChunkCount: (): number => 4,
 			isCompleteLISH: (): boolean => false,
 			getMissingChunks: (): string[] => {
@@ -68,6 +69,7 @@ describe('enableDownload — withdrawn while starting', () => {
 			clearError: (): void => {},
 			setError: (): void => {},
 			get: (): any => ({ id: LISH_ID, name: 'x', directory: null, files: [] }),
+			getDatasetRoot: (): null => null,
 			getAllChunkCount: (): number => 4,
 			isCompleteLISH: (): boolean => false,
 			getMissingChunks: (): string[] => ['chunk-0'],

@@ -1,7 +1,9 @@
-import { mkdir, open } from 'fs/promises';
-import { dirname, resolve, sep } from 'path';
-import type { IStoredLISH } from '@shared';
+import { type IStoredLISH } from '@shared';
 import { trace } from '../logger.ts';
+import { openDataset, datasetPath, validateDatasetNamespace, type DatasetRoot, type SafeDataset } from '../lish/safe-dataset-files.ts';
+import { checkDatasetSpace } from '../lish/dataset-space.ts';
+import { datasetCopyBytes } from '../lish/dataset-transfer.ts';
+import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 
 /**
  * Progress event emitted while zero-filling files.
@@ -38,8 +40,8 @@ const PROGRESS_EMIT_INTERVAL = 50 * 1024 * 1024; // emit progress every 50MB
  * there is no per-download mutable state. Every operation takes the manifest
  * as an argument and is independently cancellable via AbortSignal.
  *
- * Path-traversal protection: every path is resolved relative to downloadDir
- * and rejected if it escapes (see safePath()).
+ * Filesystem operations are relative to held directory handles. The complete
+ * manifest is checked before any allocation, including recovery of one file.
  *
  * Cancellation: on aborted signal, operations return/resolve silently (no
  * exception) — matches the Downloader's prior "silent early return on destroy"
@@ -47,19 +49,13 @@ const PROGRESS_EMIT_INTERVAL = 50 * 1024 * 1024; // emit progress every 50MB
  */
 export class FileAllocator {
 	private readonly downloadDir: string;
+	private readonly root: DatasetRoot | string;
+	private readonly linkBindings: () => readonly DatasetLinkBinding[];
 
-	constructor(downloadDir: string) {
-		this.downloadDir = downloadDir;
-	}
-
-	/**
-	 * Resolve a manifest-relative path to an absolute path inside downloadDir.
-	 * Throws if the resolved path escapes downloadDir (path-traversal attempt).
-	 */
-	private safePath(relativePath: string): string {
-		const resolved = resolve(this.downloadDir, relativePath);
-		if (!resolved.startsWith(resolve(this.downloadDir) + sep)) throw new Error(`Path traversal blocked: ${relativePath}`);
-		return resolved;
+	constructor(root: DatasetRoot | string, linkBindings: () => readonly DatasetLinkBinding[] = () => []) {
+		this.root = root;
+		this.downloadDir = datasetPath(root);
+		this.linkBindings = linkBindings;
 	}
 
 	/**
@@ -68,18 +64,30 @@ export class FileAllocator {
 	 */
 	async findMissingFiles(lish: IStoredLISH): Promise<number[]> {
 		if (!lish.files || lish.files.length === 0) return [];
-		const missing: number[] = [];
-		for (let i = 0; i < lish.files.length; i++) {
-			const file = lish.files[i]!;
-			const filePath = this.safePath(file.path);
-			const f = Bun.file(filePath);
-			const exists = await f.exists();
-			if (!exists || f.size !== file.size) {
-				trace(`[FA] missing: ${file.path} exists=${exists} size=${f.size} expected=${file.size}`);
-				missing.push(i);
-			}
+		validateDatasetNamespace(lish);
+		let dataset: SafeDataset;
+		try {
+			dataset = await openDataset(this.root);
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') return lish.files.map((_, index) => index);
+			throw error;
 		}
-		return missing;
+		try {
+			await dataset.prepare(lish);
+			await this.ensureSpaceFor(dataset, lish, []);
+			const missing: number[] = [];
+			for (let i = 0; i < lish.files.length; i++) {
+				const file = lish.files[i]!;
+				const info = await dataset.statFile(file.path);
+				if (!info || info.size !== file.size) {
+					trace(`[FA] missing: ${file.path} exists=${info !== null} size=${info?.size} expected=${file.size}`);
+					missing.push(i);
+				}
+			}
+			return missing;
+		} finally {
+			await dataset.close();
+		}
 	}
 
 	/**
@@ -92,27 +100,18 @@ export class FileAllocator {
 	 */
 	async allocateStructure(lish: IStoredLISH, onProgress?: (p: AllocationProgress) => void, signal?: AbortSignal): Promise<IAllocationResult> {
 		const startTime = Date.now();
-		if (lish.directories) {
-			for (const dir of lish.directories) {
-				if (signal?.aborted) return { created: 0, skipped: 0 };
-				await mkdir(this.safePath(dir.path), { recursive: true });
-			}
-		}
-		if (!lish.files || lish.files.length === 0) {
-			console.log(`[FA] Allocated structure: 0 files in ${this.downloadDir} (${Date.now() - startTime}ms)`);
-			return { created: 0, skipped: 0 };
-		}
+
 		const allIndexes: number[] = [];
-		for (let i = 0; i < lish.files.length; i++) allIndexes.push(i);
+		for (let i = 0; i < (lish.files?.length ?? 0); i++) allIndexes.push(i);
 		const result = await this.allocateFilesInternal(lish, allIndexes, onProgress, signal);
-		console.log(`[FA] Allocated structure: ${lish.files.length} files in ${this.downloadDir} (created=${result.created}, skipped=${result.skipped}, ${Date.now() - startTime}ms)`);
+		console.log(`[FA] Allocated structure: ${lish.files?.length ?? 0} files in ${this.downloadDir} (created=${result.created}, skipped=${result.skipped}, ${Date.now() - startTime}ms)`);
 		return result;
 	}
 
 	/**
 	 * Allocate a specific subset of files (mid-download recovery when some files
-	 * are detected missing). Creates parent directories as needed; does NOT
-	 * recreate `lish.directories` entries (assumed to exist from initial alloc).
+	 * are detected missing). Validate and reserve the complete manifest first,
+	 * so aliases outside this subset cannot redirect an allocation.
 	 */
 	async allocateFiles(lish: IStoredLISH, fileIndexes: readonly number[], onProgress?: (p: AllocationProgress) => void, signal?: AbortSignal): Promise<void> {
 		if (fileIndexes.length === 0) return;
@@ -128,89 +127,105 @@ export class FileAllocator {
 		const file = lish.files?.[fileIndex];
 		if (!file) return;
 		if (signal?.aborted) return;
-		const filePath = this.safePath(file.path);
-		await mkdir(dirname(filePath), { recursive: true });
-		const existing = Bun.file(filePath);
-		if ((await existing.exists()) && existing.size === file.size) return;
-		await this.zeroFillFile(filePath, file.size, signal);
-		console.log(`[FA] Re-allocated file: ${file.path} (${file.size} bytes)`);
+		const result = await this.allocateFilesInternal(lish, [fileIndex], undefined, signal);
+		if (result.created > 0) console.log(`[FA] Re-allocated file: ${file.path} (${file.size} bytes)`);
 	}
 
 	// ======== internals ========
 
+	/**
+	 * Refuse with DISK_FULL before writing anything when the declared sizes of the files still to
+	 * allocate do not fit in the space free under the download directory — zero-filling first
+	 * would run the disk full and leave a half-allocated dataset. A replaced file counts in full:
+	 * its logical size does not tell us how many blocks a sparse file occupies. Completion must also fit.
+	 */
+	private async ensureSpaceFor(dataset: SafeDataset, lish: IStoredLISH, fileIndexes: readonly number[]): Promise<void> {
+		let needed = 0n;
+		for (const fi of fileIndexes) {
+			const file = lish.files?.[fi];
+			if (!file) continue;
+			const existing = await dataset.statFile(file.path);
+			const current = existing?.size ?? 0;
+			if (current !== file.size) needed += BigInt(file.size);
+		}
+		const root: DatasetRoot = typeof this.root === 'string' ? { kind: 'explicit', path: this.downloadDir } : this.root;
+		const bindings = lish.finalDirectory ? this.linkBindings() : [];
+		const completion = lish.finalDirectory ? { path: lish.finalDirectory, bytes: datasetCopyBytes(lish, root, bindings), ...(process.platform !== 'win32' ? { sameFilesystemBytes: datasetCopyBytes(lish, root, bindings, true) } : {}) } : undefined;
+		await checkDatasetSpace(this.downloadDir, needed, completion);
+	}
+
 	private async allocateFilesInternal(lish: IStoredLISH, fileIndexes: readonly number[], onProgress: ((p: AllocationProgress) => void) | undefined, signal: AbortSignal | undefined): Promise<IAllocationResult> {
 		let created = 0;
 		let skipped = 0;
-		if (!lish.files) return { created, skipped };
-		// Aggregate totals across the requested subset — allows per-batch progress
-		// percentage irrespective of how many files the caller picked.
-		let totalBytes = 0;
-		for (const fi of fileIndexes) totalBytes += lish.files[fi]?.size ?? 0;
-		let totalBytesWritten = 0;
-		let nextProgressAt = PROGRESS_EMIT_INTERVAL;
-		for (const fi of fileIndexes) {
-			if (signal?.aborted) return { created, skipped };
-			const file = lish.files[fi];
-			if (!file) continue;
-			const filePath = this.safePath(file.path);
-			await mkdir(dirname(filePath), { recursive: true });
-			const existing = Bun.file(filePath);
-			if ((await existing.exists()) && existing.size === file.size) {
-				totalBytesWritten += file.size;
-				skipped++;
-				continue;
+		if (signal?.aborted) return { created, skipped };
+		validateDatasetNamespace(lish);
+		const dataset = await openDataset(this.root, true);
+		try {
+			await dataset.prepare(lish, signal ? { signal } : {});
+			// Aggregate totals across the requested subset — allows per-batch progress
+			// percentage irrespective of how many files the caller picked.
+			let totalBytes = 0;
+			for (const fi of fileIndexes) totalBytes += lish.files?.[fi]?.size ?? 0;
+			await this.ensureSpaceFor(dataset, lish, fileIndexes);
+			const present = new Set<string>();
+			for (const fi of fileIndexes) {
+				const file = lish.files?.[fi];
+				if (file && (await dataset.statFile(file.path))) present.add(file.path);
 			}
-			const fd = await open(filePath, 'w');
-			try {
-				let remaining = file.size;
-				let fileBytesWritten = 0;
-				while (remaining > 0) {
+			await dataset.prepare(lish, signal ? { reserve: true, signal } : { reserve: true });
+			let totalBytesWritten = 0;
+			let nextProgressAt = PROGRESS_EMIT_INTERVAL;
+			for (const fi of fileIndexes) {
+				if (signal?.aborted) return { created, skipped };
+				const file = lish.files?.[fi];
+				if (!file) continue;
+				const fd = await dataset.openFile(file.path, 'write');
+				try {
 					if (signal?.aborted) return { created, skipped };
-					const writeSize = Math.min(remaining, ZERO_BUFFER.length);
-					await fd.write(ZERO_BUFFER.subarray(0, writeSize));
-					remaining -= writeSize;
-					fileBytesWritten += writeSize;
-					totalBytesWritten += writeSize;
-					if (totalBytesWritten >= nextProgressAt || remaining === 0) {
-						nextProgressAt = totalBytesWritten + PROGRESS_EMIT_INTERVAL;
-						if (onProgress) {
-							onProgress({
-								filePath: file.path,
-								fileBytesWritten,
-								fileSize: file.size,
-								totalBytesWritten,
-								totalBytes,
-							});
-							// Yield to the event loop so concurrent peerLoops (or UI) can run
-							await new Promise(r => setTimeout(r, 0));
+					if (present.has(file.path) && (await fd.stat()).size === file.size) {
+						totalBytesWritten += file.size;
+						skipped++;
+						continue;
+					}
+					if (signal?.aborted) return { created, skipped };
+					await fd.truncate(0);
+					let remaining = file.size;
+					let fileBytesWritten = 0;
+					while (remaining > 0) {
+						if (signal?.aborted) return { created, skipped };
+						const writeSize = Math.min(remaining, ZERO_BUFFER.length);
+						const bytesWritten = await fd.write(ZERO_BUFFER.subarray(0, writeSize), fileBytesWritten);
+						if (bytesWritten <= 0) throw Object.assign(new Error('File allocation made no progress'), { code: 'EIO' });
+						remaining -= bytesWritten;
+						fileBytesWritten += bytesWritten;
+						totalBytesWritten += bytesWritten;
+						if (totalBytesWritten >= nextProgressAt || remaining === 0) {
+							nextProgressAt = totalBytesWritten + PROGRESS_EMIT_INTERVAL;
+							if (onProgress) {
+								onProgress({
+									filePath: file.path,
+									fileBytesWritten,
+									fileSize: file.size,
+									totalBytesWritten,
+									totalBytes,
+								});
+								// Yield to the event loop so concurrent peerLoops (or UI) can run
+								await new Promise(r => setTimeout(r, 0));
+							}
 						}
 					}
+				} finally {
+					await fd.close();
 				}
-			} finally {
-				await fd.close();
+				created++;
+				trace(`[FA] created file: ${file.path} (${file.size}B)`);
 			}
-			created++;
-			trace(`[FA] created file: ${file.path} (${file.size}B)`);
-		}
-		return { created, skipped };
-	}
-
-	/**
-	 * Zero-fill a file of the given size. No progress, no yielding — used by
-	 * allocateFile() for the "re-allocate one file" hot path.
-	 */
-	private async zeroFillFile(filePath: string, size: number, signal: AbortSignal | undefined): Promise<void> {
-		const fd = await open(filePath, 'w');
-		try {
-			let remaining = size;
-			while (remaining > 0) {
-				if (signal?.aborted) return;
-				const writeSize = Math.min(remaining, ZERO_BUFFER.length);
-				await fd.write(ZERO_BUFFER.subarray(0, writeSize));
-				remaining -= writeSize;
-			}
+			return { created, skipped };
+		} catch (error) {
+			if (signal?.aborted) return { created, skipped };
+			throw error;
 		} finally {
-			await fd.close();
+			await dataset.close();
 		}
 	}
 }
