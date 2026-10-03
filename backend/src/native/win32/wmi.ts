@@ -5,7 +5,7 @@ import { classifyWmiMutation } from '../mutation-proof.ts';
 import { comCall, guidBytes, releaseCom, withBstr, withComVariant } from './com.ts';
 import { decodeWmiVariant, encodeWmiInput, type WmiInput, type WmiProperty, type WmiRow } from './wmi-values.ts';
 
-export type WmiContext = Readonly<Record<string, string | boolean>>;
+export type WmiContext = Readonly<Record<string, string | boolean | readonly string[]>>;
 export interface WmiMutationResult {
 	readonly hresult: number;
 	readonly returnValue: number | null;
@@ -49,6 +49,17 @@ export function classifyWmiNext(hresult: number, count: number, hasObject: boole
 
 function mutationResult(hresult: number, returnValue: number | null = null): WmiMutationResult {
 	return { hresult, returnValue, outcome: classifyWmiMutation(hresult, returnValue) };
+}
+
+function preparedMutation(action: (sending: () => void) => WmiMutationResult): WmiMutationResult {
+	let mayHaveRun = false;
+	try {
+		return action(() => {
+			mayHaveRun = true;
+		});
+	} catch (error) {
+		throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mayHaveRun });
+	}
 }
 
 export function wmiMethodResult(hresult: number, output: WmiProperty | null): WmiMutationResult {
@@ -104,7 +115,7 @@ class Connection implements WmiConnection {
 			for (const [name, value] of Object.entries(values)) {
 				const key = wide(name);
 				withComVariant(variant => {
-					encodeWmiInput(variant, typeof value === 'boolean' ? { type: 'boolean', value } : { type: 'string', value });
+					encodeWmiInput(variant, typeof value === 'boolean' ? { type: 'boolean', value } : typeof value === 'string' ? { type: 'string', value } : { type: 'strings', value });
 					check(comCall(context, 8, [FFIType.ptr, FFIType.i32, FFIType.ptr], [ptr(key), 0, ptr(variant)]), 'IWbemContext.SetValue');
 				});
 			}
@@ -140,7 +151,7 @@ class Connection implements WmiConnection {
 						for (;;) {
 							const item = new BigUint64Array(1),
 								count = new Uint32Array(1);
-							const hr = comCall(enumerator, 4, [FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.ptr], [-1, 1, ptr(item), ptr(count)]);
+							const hr = comCall(enumerator, 4, [FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.ptr], [5000, 1, ptr(item), ptr(count)]);
 							if (classifyWmiNext(hr, count[0]!, item[0] !== 0n) === 'end') return result;
 							const object = pointer(item);
 							try {
@@ -162,59 +173,72 @@ class Connection implements WmiConnection {
 	}
 
 	put(relativePath: string, values: Readonly<Record<string, WmiInput>>, context: WmiContext = {}): WmiMutationResult {
-		return this.use(context, (service, ctx) =>
-			this.object(service, relativePath, ctx, object => {
-				putProperties(object, values);
-				// WBEM_FLAG_UPDATE_ONLY: an absent instance must not be recreated during rollback.
-				return mutationResult(comCall(service, 14, [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], [object, 1, ctx, null]));
-			})
+		return preparedMutation(sending =>
+			this.use(context, (service, ctx) =>
+				this.object(service, relativePath, ctx, object => {
+					putProperties(object, values);
+					// WBEM_FLAG_UPDATE_ONLY: an absent instance must not be recreated during rollback.
+					sending();
+					return mutationResult(comCall(service, 14, [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], [object, 1, ctx, null]));
+				})
+			)
 		);
 	}
 
 	delete(relativePath: string, context: WmiContext = {}): WmiMutationResult {
-		return this.use(context, (service, ctx) => withBstr(relativePath, path => mutationResult(comCall(service, 16, [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], [path, 0, ctx, null]))));
+		return preparedMutation(sending =>
+			this.use(context, (service, ctx) =>
+				withBstr(relativePath, path => {
+					sending();
+					return mutationResult(comCall(service, 16, [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], [path, 0, ctx, null]));
+				})
+			)
+		);
 	}
 
 	execMethod(objectPath: string, method: string, parameters: Readonly<Record<string, WmiInput>>, context: WmiContext = {}): WmiMutationResult {
-		return this.use(context, (service, ctx) =>
-			this.object(service, objectPath, ctx, target => {
-				const className = property(target, '__CLASS').value;
-				if (typeof className !== 'string') throw new Error('WMI object has no class name');
-				// GetMethod is only valid on a class definition, not an instance.
-				return this.object(service, className, ctx, definition => {
-					const signatureOut = new BigUint64Array(1);
-					const methodName = wide(method);
-					check(comCall(definition, 19, [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], [ptr(methodName), 0, ptr(signatureOut), null]), 'IWbemClassObject.GetMethod');
-					const signature = signatureOut[0] === 0n ? null : pointer(signatureOut);
-					let input: Pointer | null = null;
-					try {
-						if (signature !== null) {
-							const instance = new BigUint64Array(1);
-							check(comCall(signature, 15, [FFIType.i32, FFIType.ptr], [0, ptr(instance)]), 'IWbemClassObject.SpawnInstance');
-							input = pointer(instance);
-							putProperties(input, parameters);
-						} else if (Object.keys(parameters).length) throw new Error('WMI method has no input parameters');
-						return withBstr(objectPath, path =>
-							withBstr(method, name => {
-								const out = new BigUint64Array(1);
-								const hr = comCall(service, 24, [FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], [path, name, 0, ctx, input, ptr(out), null]);
-								if (hr !== 0 || out[0] === 0n) return mutationResult(hr);
-								const output = pointer(out);
-								try {
-									return wmiMethodResult(hr, property(output, 'ReturnValue'));
-								} catch {
-									return { hresult: hr, returnValue: null, outcome: 'unknown', observationError: 'Cannot read WMI method ReturnValue' };
-								} finally {
-									releaseCom(output);
-								}
-							})
-						);
-					} finally {
-						if (input !== null) releaseCom(input);
-						if (signature !== null) releaseCom(signature);
-					}
-				});
-			})
+		return preparedMutation(sending =>
+			this.use(context, (service, ctx) =>
+				this.object(service, objectPath, ctx, target => {
+					const className = property(target, '__CLASS').value;
+					if (typeof className !== 'string') throw new Error('WMI object has no class name');
+					// GetMethod is only valid on a class definition, not an instance.
+					return this.object(service, className, ctx, definition => {
+						const signatureOut = new BigUint64Array(1);
+						const methodName = wide(method);
+						check(comCall(definition, 19, [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr], [ptr(methodName), 0, ptr(signatureOut), null]), 'IWbemClassObject.GetMethod');
+						const signature = signatureOut[0] === 0n ? null : pointer(signatureOut);
+						let input: Pointer | null = null;
+						try {
+							if (signature !== null) {
+								const instance = new BigUint64Array(1);
+								check(comCall(signature, 15, [FFIType.i32, FFIType.ptr], [0, ptr(instance)]), 'IWbemClassObject.SpawnInstance');
+								input = pointer(instance);
+								putProperties(input, parameters);
+							} else if (Object.keys(parameters).length) throw new Error('WMI method has no input parameters');
+							return withBstr(objectPath, path =>
+								withBstr(method, name => {
+									const out = new BigUint64Array(1);
+									sending();
+									const hr = comCall(service, 24, [FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], [path, name, 0, ctx, input, ptr(out), null]);
+									if (hr !== 0 || out[0] === 0n) return mutationResult(hr);
+									const output = pointer(out);
+									try {
+										return wmiMethodResult(hr, property(output, 'ReturnValue'));
+									} catch {
+										return { hresult: hr, returnValue: null, outcome: 'unknown', observationError: 'Cannot read WMI method ReturnValue' };
+									} finally {
+										releaseCom(output);
+									}
+								})
+							);
+						} finally {
+							if (input !== null) releaseCom(input);
+							if (signature !== null) releaseCom(signature);
+						}
+					});
+				})
+			)
 		);
 	}
 

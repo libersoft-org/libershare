@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isUnambiguousWifiTarget, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
-import { isWindowsInterfaceID, parseElevation, windowsApplyIPv4Command } from '../../src/system-network-windows.ts';
+import { isWindowsInterfaceID } from '../../src/system-network-windows.ts';
 import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, resolveJoinTarget, runNetworkMutation } from '../../src/system-network.ts';
 
 describe('isIPv4', () => {
@@ -345,13 +345,14 @@ describe('network mutation serialization', () => {
 		const second = runNetworkMutation(async () => {
 			events.push('second:start');
 			events.push('second:end');
-		});
+		}).catch(error => error);
 		await Promise.resolve();
 		expect(events).toEqual(['first:start']);
 
 		releaseFirst();
-		await Promise.all([first, second]);
-		expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+		await first;
+		expect((await second).code).toBe('NETCONFIG_BUSY');
+		expect(events).toEqual(['first:start', 'first:end']);
 	});
 });
 
@@ -792,139 +793,6 @@ describe('isWindowsInterfaceID', () => {
 	});
 });
 
-describe('windowsApplyIPv4Command', () => {
-	const guid = '{2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B}';
-
-	it('resolves the adapter by GUID rather than by its renameable name', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain(`$_.InterfaceGuid -eq '${guid}'`);
-	});
-
-	it('clears the old address and route before applying either mode', () => {
-		for (const config of [{ mode: 'dhcp' } as NetIPv4Config, { mode: 'static', address: '192.0.2.10', prefixLength: 24 } as NetIPv4Config]) {
-			const command = windowsApplyIPv4Command(guid, config);
-			expect(command).toContain('$oldAddresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i })');
-			expect(command).toContain('$oldAddresses | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop');
-			expect(command).toContain("$oldRoutes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.InterfaceIndex -eq $i -and $_.DestinationPrefix -eq '0.0.0.0/0' })");
-			expect(command).toContain('$oldRoutes | Remove-NetRoute -Confirm:$false -ErrorAction Stop');
-			expect(command).not.toContain('Remove-NetIPAddress -InterfaceIndex');
-			expect(command).not.toContain('Remove-NetRoute -InterfaceIndex');
-		}
-	});
-
-	it('enables DHCP without touching resolvers by default', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		const apply = command.split('} catch {')[0]!;
-		expect(command).toContain('-Dhcp Enabled');
-		expect(apply).not.toContain('Set-DnsClientServerAddress');
-		expect(apply).not.toContain('New-NetIPAddress');
-	});
-
-	it('supports explicit automatic or custom DNS in DHCP mode', () => {
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: [] })).toContain('-ResetServerAddresses');
-		const custom = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
-		expect(custom).toContain("-ServerAddresses '2001:db8::53','127.0.0.1'");
-	});
-
-	it('changes only DNS when addressing is unchanged', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: ['192.0.2.53'] }, false);
-		expect(command).toContain('Set-DnsClientServerAddress');
-		expect(command).not.toContain('Remove-NetIPAddress');
-		expect(command).not.toContain('Remove-NetRoute');
-		expect(command).not.toContain('Set-NetIPInterface');
-		expect(command).toContain('$oldDns4');
-		expect(command).toContain('Compare-Object');
-		expect(command).toContain('Set-DnsClientServerAddress -InputObject $oldDns4');
-	});
-
-	it('verifies the applied lease, route and DNS inside the rollback boundary', () => {
-		const dhcp = windowsApplyIPv4Command(guid, { mode: 'dhcp', dns: [] });
-		expect(dhcp).toContain('DHCP apply did not obtain a usable lease');
-		expect(dhcp).toContain('DNS apply did not restore automatic policy');
-		const fixed = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] });
-		expect(fixed).toContain('$appliedAddresses.Count -ne 1');
-		expect(fixed).toContain('$appliedRoutes.Count -ne 1');
-		expect(fixed).toContain('Compare-Object');
-		expect(fixed.indexOf('$appliedRoutes.Count -ne 1')).toBeLessThan(fixed.indexOf('} catch {'));
-	});
-
-	it('sets the address, prefix and gateway for a static config', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1'] });
-		expect(command).toContain('-Dhcp Disabled');
-		expect(command).toContain('-IPAddress 192.0.2.10 -PrefixLength 24');
-		expect(command).toContain("New-NetRoute -InterfaceIndex $i -DestinationPrefix '0.0.0.0/0' -NextHop 192.0.2.1");
-		expect(command).toContain("$addressState -eq 'Preferred'");
-		expect(command).toContain("throw 'IPv4 address did not become usable'");
-		expect(command).toContain("-ServerAddresses '192.0.2.1'");
-		expect(command).toContain('$routeMetric');
-		expect(command).toContain('-RouteMetric $routeMetric');
-		expect(command).toContain('$applyError');
-	});
-
-	it('waits for a DHCP lease only while the link is up', () => {
-		const withLink = windowsApplyIPv4Command(guid, { mode: 'dhcp' });
-		expect(withLink).toContain('-Dhcp Enabled');
-		expect(withLink).toContain('DHCP apply did not obtain a usable lease');
-		const linkDown = windowsApplyIPv4Command(guid, { mode: 'dhcp' }, true, false);
-		expect(linkDown).toContain('-Dhcp Enabled');
-		expect(linkDown).not.toContain('DHCP apply did not obtain a usable lease');
-		expect(linkDown).toContain('throw "DHCP apply did not enable DHCP"');
-	});
-
-	it('verifies the persistent store as well as the active one after a static apply', () => {
-		// The reader offers an adapter for editing only while both stores agree, so
-		// an apply that left them apart would make the adapter read-only and bring
-		// the old address back after a reboot. That has to fail and roll back.
-		const withGateway = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(withGateway).toContain('$persistedAddresses = @(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue)');
-		expect(withGateway).toContain('$persistedAddresses[0].IPAddress -ne \'192.0.2.10\' -or $persistedAddresses[0].PrefixLength -ne 24) { throw "IPv4 apply did not persist the requested address" }');
-		expect(withGateway).toContain('$persistedRoutes.Count -ne 1 -or $persistedRoutes[0].NextHop -ne \'192.0.2.1\') { throw "IPv4 apply did not persist the requested gateway" }');
-		expect(withGateway.indexOf('$persistedRoutes.Count -ne 1')).toBeLessThan(withGateway.indexOf('} catch {'));
-		const withoutGateway = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(withoutGateway).toContain('if ($persistedRoutes.Count -ne 0) { throw "IPv4 apply left a persistent default route" }');
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).not.toContain('$persistedAddresses');
-	});
-
-	it('restores automatic and manual DNS independently for IPv4 and IPv6', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: ['192.0.2.53'] });
-		expect(command).toContain('Tcpip\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
-		expect(command).toContain('Tcpip6\\Parameters\\Interfaces\\$($adapter.InterfaceGuid)');
-		expect(command).toContain('$oldDns4 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction Stop)');
-		expect(command).toContain('$oldDns6 = @(Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv6 -ErrorAction Stop)');
-		expect(command).toContain('$oldDnsAutomatic4 = [string]::IsNullOrWhiteSpace($oldDnsNameServer4)');
-		expect(command).toContain('$oldDnsAutomatic6 = [string]::IsNullOrWhiteSpace($oldDnsNameServer6)');
-		expect(command).toContain('if ($oldDnsAutomatic4) { Set-DnsClientServerAddress -InputObject $oldDns4 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns4 -ServerAddresses $oldDnsServers4 }');
-		expect(command).toContain('if ($oldDnsAutomatic6) { Set-DnsClientServerAddress -InputObject $oldDns6 -ResetServerAddresses } else { Set-DnsClientServerAddress -InputObject $oldDns6 -ServerAddresses $oldDnsServers6 }');
-		expect(command).not.toContain('$oldDnsAutomatic =');
-	});
-
-	it('waits for restored static addresses before recreating routes', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' });
-		expect(command).toContain('$restoredState -eq "Duplicate"');
-		expect(command).toContain('$restoredState -ne "Preferred"');
-		expect(command.indexOf('$restoredState -ne "Preferred"')).toBeLessThan(command.indexOf('foreach ($route in $oldRoutes)'));
-	});
-
-	it('confirms a previously usable DHCP lease and route during rollback', () => {
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).toContain('$oldDhcpNeedsAddress');
-		expect(command).toContain('$oldDhcpNeedsRoute');
-		expect(command).toContain('DHCP rollback did not restore a usable lease');
-	});
-
-	it('omits the gateway parameter entirely when there is none', () => {
-		// Passing an empty -DefaultGateway is a parameter binding error, not a no-op.
-		const command = windowsApplyIPv4Command(guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24 });
-		expect(command).not.toContain('-DefaultGateway');
-		expect(command.split('} catch {')[0]).not.toContain('Set-DnsClientServerAddress');
-	});
-
-	it('stops on the first failing step', () => {
-		// Without this a failed Set-NetIPInterface would be followed by a
-		// New-NetIPAddress that silently lands on the wrong configuration.
-		expect(windowsApplyIPv4Command(guid, { mode: 'dhcp' })).toContain('$ErrorActionPreference = "Stop"');
-	});
-});
-
 describe('parseProcNetWireless', () => {
 	// Captured verbatim from an associated brcmfmac adapter on Debian 12/arm64.
 	// Only the interface name and levels matter; the trailing counters vary per host.
@@ -1029,18 +897,6 @@ describe('firstLine', () => {
 	it('yields an empty string for nothing at all, so the caller can fall back', () => {
 		expect(firstLine(undefined)).toBe('');
 		expect(firstLine('   \n  \n')).toBe('');
-	});
-});
-
-describe('parseElevation', () => {
-	it('accepts the PowerShell boolean in either case, with trailing CRLF', () => {
-		expect(parseElevation('True\r\n')).toBe(true);
-		expect(parseElevation('true')).toBe(true);
-	});
-
-	it('treats anything else as not elevated', () => {
-		expect(parseElevation('False\r\n')).toBe(false);
-		expect(parseElevation('')).toBe(false);
 	});
 });
 

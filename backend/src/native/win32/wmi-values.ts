@@ -1,6 +1,6 @@
 import { FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi';
 import { loadSystemLibrary } from '../library.ts';
-import { allocBstr, readBstr } from './com.ts';
+import { allocBstr, readBstr, withBstr } from './com.ts';
 
 export type WmiScalar = string | number | bigint | boolean | null;
 export interface WmiVariant {
@@ -12,7 +12,7 @@ export interface WmiProperty extends WmiVariant {
 	readonly cimType: number;
 }
 export type WmiRow = Record<string, WmiProperty>;
-export type WmiInput = { readonly type: 'string'; readonly value: string } | { readonly type: 'boolean'; readonly value: boolean } | { readonly type: 'uint8' | 'uint16' | 'uint32' | 'sint16' | 'sint32'; readonly value: number } | { readonly type: 'uint64'; readonly value: bigint } | { readonly type: 'sint64'; readonly value: bigint };
+export type WmiInput = { readonly type: 'string'; readonly value: string } | { readonly type: 'strings'; readonly value: readonly string[] } | { readonly type: 'boolean'; readonly value: boolean } | { readonly type: 'uint8' | 'uint16' | 'uint32' | 'sint16' | 'sint32'; readonly value: number } | { readonly type: 'uint64'; readonly value: bigint } | { readonly type: 'sint64'; readonly value: bigint };
 
 function scalar(type: number, data: DataView, at: number): WmiScalar {
 	switch (type) {
@@ -127,6 +127,26 @@ export function decodeWmiVariant(variant: Uint8Array): WmiVariant {
 /** The target must be a fresh VARIANT owned by withComVariant. */
 export function encodeWmiInput(variant: Uint8Array, input: WmiInput): void {
 	const view = new DataView(variant.buffer, variant.byteOffset, variant.byteLength);
+	if (input.type === 'strings') {
+		const library = loadSystemLibrary('oleaut32.dll', { SafeArrayCreateVector: { args: [FFIType.u16, FFIType.i32, FFIType.u32], returns: FFIType.ptr }, SafeArrayPutElement: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 } } as const);
+		try {
+			const array = library.symbols.SafeArrayCreateVector(8, 0, input.value.length);
+			if (!array) throw new Error('Cannot allocate WMI string array');
+			// VariantClear owns the SAFEARRAY and all copied BSTRs from this point.
+			view.setUint16(0, 0x2008, true);
+			view.setBigUint64(8, BigInt(array), true);
+			for (const [index, value] of input.value.entries()) {
+				const subscript = new Int32Array([index]);
+				withBstr(value, text => {
+					const result = library.symbols.SafeArrayPutElement(Number(array) as Pointer, ptr(subscript), text);
+					if (result !== 0) throw new Error(`Cannot encode WMI string array: ${result}`);
+				});
+			}
+		} finally {
+			library.close();
+		}
+		return;
+	}
 	if (input.type === 'string') {
 		const text = allocBstr(input.value);
 		view.setUint16(0, 8, true);

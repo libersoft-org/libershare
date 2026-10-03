@@ -52,6 +52,15 @@ describe('WMI scalar types', () => {
 });
 
 describe.skipIf(process.platform !== 'win32')('WMI SAFEARRAY memory (live)', () => {
+	test('encodes string-array operation options with native COM ownership', () => {
+		for (const value of [[], ['192.0.2.53', '2001:db8::53', '東京\0tail']]) {
+			const copied = withComVariant(bytes => {
+				encodeWmiInput(bytes, { type: 'strings', value });
+				return decodeWmiVariant(bytes);
+			});
+			expect(copied).toEqual({ variantType: 0x2008, value, lowerBound: 0 });
+		}
+	});
 	test('copies BSTR arrays and preserves a nonzero lower bound through VariantClear', () => {
 		const library = loadSystemLibrary('oleaut32.dll', {
 			SafeArrayCreateVector: { args: [FFIType.u16, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
