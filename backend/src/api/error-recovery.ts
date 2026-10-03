@@ -22,7 +22,7 @@ interface RecoveryDeps {
 	 * or a reset supersedes this attempt; the callback must check it right before each side
 	 * effect, since the attempt spends most of its time awaiting.
 	 */
-	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean, isCurrentAttempt: () => boolean) => Promise<boolean>;
+	attemptRecover: (lishID: string, downloadWasEnabled: boolean, uploadWasEnabled: boolean, isCurrentAttempt: () => boolean) => Promise<boolean | 'deferred'>;
 	broadcast: (event: string, data: any) => void;
 	getLISH: (lishID: string) => RecoveryLISHRef | null;
 	checkAccess: (path: string) => Promise<void>;
@@ -46,6 +46,7 @@ export class ErrorRecovery {
 	private readonly cumulativeRetries = new Map<string, number>(); // persists across stop/restart cycles
 	private readonly lishGenerations = new Map<string, number>();
 	private generation = 0;
+	private paused = false;
 	private readonly inFlightAttempts = new Set<Promise<void>>();
 	private readonly deps: RecoveryDeps;
 
@@ -60,8 +61,13 @@ export class ErrorRecovery {
 
 	start(lishID: string, errorCode: string, prev: { downloadEnabled: boolean; uploadEnabled: boolean }): void {
 		if (!RECOVERABLE_CODES.has(errorCode as any)) return;
-		// Re-entrancy guard: if recovery already active, don't restart (retryCount would reset)
-		if (this.entries.has(lishID)) return;
+		// Independent failures share a retry without losing either direction's intent.
+		const pending = this.entries.get(lishID);
+		if (pending) {
+			pending.downloadWasEnabled ||= prev.downloadEnabled;
+			pending.uploadWasEnabled ||= prev.uploadEnabled;
+			return;
+		}
 		// Check cumulative retry limit (persists across stop/restart cycles)
 		const cumulative = this.cumulativeRetries.get(lishID) ?? 0;
 		if (cumulative >= MAX_RECOVERY_ATTEMPTS) {
@@ -90,6 +96,18 @@ export class ErrorRecovery {
 		this.removeEntry(lishID);
 	}
 
+	/** Completing one direction must not discard the other direction's pending retry. */
+	completeDirection(lishID: string, direction: 'download' | 'upload'): void {
+		const pending = this.entries.get(lishID);
+		if (!pending) return;
+		if (direction === 'download') pending.downloadWasEnabled = false;
+		else pending.uploadWasEnabled = false;
+		if (!pending.downloadWasEnabled && !pending.uploadWasEnabled) {
+			this.stop(lishID);
+			this.cumulativeRetries.delete(lishID);
+		}
+	}
+
 	private removeEntry(lishID: string): void {
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
@@ -109,6 +127,23 @@ export class ErrorRecovery {
 		while (this.inFlightAttempts.size > 0) await Promise.allSettled([...this.inFlightAttempts]);
 	}
 
+	/** Retain retry intent while network maintenance drains admitted attempts. */
+	async pauseAllAndDrain(): Promise<void> {
+		this.paused = true;
+		for (const entry of this.entries.values()) {
+			if (entry.timer) clearTimeout(entry.timer);
+			entry.timer = null;
+		}
+		while (this.inFlightAttempts.size > 0) await Promise.allSettled([...this.inFlightAttempts]);
+	}
+
+	/** Restart retained timers only after transfer admission opens again. */
+	resumeAll(): void {
+		if (!this.paused) return;
+		this.paused = false;
+		for (const [lishID, entry] of this.entries) this.schedule(lishID, Math.max(0, entry.nextRetryDelay - (Date.now() - entry.scheduledAt)));
+	}
+
 	getState(lishID: string): RecoveryState | undefined {
 		return this.entries.get(lishID);
 	}
@@ -118,6 +153,7 @@ export class ErrorRecovery {
 		if (!entry) return;
 		entry.scheduledAt = Date.now();
 		entry.nextRetryDelay = delay;
+		if (this.paused) return;
 		const generation = this.generation;
 		const lishGeneration = this.lishGenerations.get(lishID) ?? 0;
 		entry.timer = setTimeout(() => this.launchAttempt(lishID, generation, lishGeneration), delay);
@@ -138,9 +174,10 @@ export class ErrorRecovery {
 	}
 
 	private async attempt(lishID: string, generation: number, lishGeneration: number): Promise<void> {
-		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
+		if (this.paused || !this.isCurrent(lishID, generation, lishGeneration)) return;
 		const entry = this.entries.get(lishID);
 		if (!entry) return;
+		const retriesBeforeAttempt = entry.retryCount;
 		entry.retryCount++;
 		this.cumulativeRetries.set(lishID, entry.retryCount);
 		entry.timer = null;
@@ -170,19 +207,26 @@ export class ErrorRecovery {
 			if (!this.isCurrent(lishID, generation, lishGeneration)) return;
 		}
 
-		// Check if directory is accessible
+		let accessFailed = false;
 		try {
 			await this.deps.checkAccess(lish.directory);
 		} catch {
-			if (!this.isCurrent(lishID, generation, lishGeneration)) return;
+			accessFailed = true;
+		}
+		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
+		if (this.paused) {
+			// Maintenance interrupted this attempt before it could restore any work.
+			entry.retryCount = retriesBeforeAttempt;
+			this.cumulativeRetries.set(lishID, retriesBeforeAttempt);
+			return;
+		}
+		if (accessFailed) {
 			const nextDelay = getDelay(entry.errorCode, entry.retryCount);
 			console.warn(`[Recovery] ${lishID.slice(0, 8)}: still inaccessible (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS}), retry in ${Math.round(nextDelay / 1000)}s`);
 			this.deps.broadcast('transfer.recovery:scheduled', { lishID, delayMs: nextDelay, retryCount: entry.retryCount });
 			this.schedule(lishID, nextDelay);
 			return;
 		}
-		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
-
 		// Directory accessible — attempt re-enable
 		console.debug(`[Recovery] ${lishID.slice(0, 8)}: directory accessible, attempting recovery (attempt ${entry.retryCount}/${MAX_RECOVERY_ATTEMPTS})`);
 		this.deps.broadcast('transfer.recovery:attempting', { lishID, retryCount: entry.retryCount });
@@ -194,12 +238,14 @@ export class ErrorRecovery {
 
 		const success = await this.deps.attemptRecover(lishID, downloadWasEnabled, uploadWasEnabled, () => this.isCurrent(lishID, generation, lishGeneration));
 		if (!this.isCurrent(lishID, generation, lishGeneration)) return;
-		if (success) {
+		if (success === true) {
 			this.cumulativeRetries.delete(lishID);
 			console.log(`[Recovery] ${lishID.slice(0, 8)}: recovered successfully`);
 			this.deps.broadcast('transfer.recovery:recovered', { lishID });
 		} else {
-			console.warn(`[Recovery] ${lishID.slice(0, 8)}: re-enable failed (attempt will restart via error handler)`);
+			// Verification is temporary contention, not another failed disk recovery.
+			if (success === 'deferred') this.cumulativeRetries.set(lishID, Math.max(0, entry.retryCount - 1));
+			this.start(lishID, entry.errorCode, { downloadEnabled: downloadWasEnabled, uploadEnabled: uploadWasEnabled });
 		}
 	}
 }
