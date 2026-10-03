@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, writeSync } from 'node:fs';
 
 export function setWindowsGuiSubsystem(input: Uint8Array): Uint8Array {
 	const bytes = Buffer.from(input);
@@ -15,5 +15,14 @@ export function setWindowsGuiSubsystem(input: Uint8Array): Uint8Array {
 if (import.meta.main) {
 	const path = process.argv[2];
 	if (!path || process.argv.length !== 3) throw new Error('expected one PE path');
-	writeFileSync(path, setWindowsGuiSubsystem(readFileSync(path)));
+	const file = openSync(path, 'r+');
+	try {
+		const input = readFileSync(file);
+		const bytes = setWindowsGuiSubsystem(input);
+		const subsystemOffset = input.readUInt32LE(0x3c) + 0x5c;
+		// Truncating and rewriting a large Bun executable can stall on Windows.
+		if (writeSync(file, bytes, subsystemOffset, 2, subsystemOffset) !== 2) throw new Error('incomplete PE subsystem write');
+	} finally {
+		closeSync(file);
+	}
 }
