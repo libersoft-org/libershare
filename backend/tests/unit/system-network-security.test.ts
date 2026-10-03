@@ -32,9 +32,15 @@ function attempt(scenario: Scenario): { mutations: number; scans: number; code?:
 		let failure;
 		try {
 			if (input.rpc) {
+				const volume = await import('./src/system-volume.ts');
+				mock.module('./src/system-volume.ts', () => ({ ...volume, getSystemVolumeStatus: async () => null }));
 				const { initSystemHandlers } = await import('./src/api/system.ts');
 				const handlers = initSystemHandlers({ get: () => '' }, () => {}, () => false, true);
-				await handlers.wifiConnect({ interfaceID: 'wlan0', ssid: 'Example', password: input.password, expectedSecurity: input.expectedSecurity });
+				try {
+					await handlers.wifiConnect({ interfaceID: 'wlan0', ssid: 'Example', password: input.password, expectedSecurity: input.expectedSecurity });
+				} finally {
+					await handlers.close();
+				}
 			} else {
 				await connectWifi('wlan0', 'Example', input.password, '', null, input.expectedSecurity);
 			}
