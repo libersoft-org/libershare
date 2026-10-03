@@ -171,10 +171,14 @@ test.skipIf(process.platform !== 'win32')('native Windows fold, gap and disabled
 	const cases: [string, string, string, boolean?][] = [
 		['Europe/Prague', '2026-03-29T02:30:00Z', '2026-03-29T01:30:00Z'],
 		['Europe/Prague', '2026-10-25T02:30:00Z', '2026-10-25T01:30:00Z'],
+		['Europe/Prague', '2026-10-25T01:30:00Z', '2026-10-24T23:30:00Z'],
 		['Europe/Prague', '2026-07-01T12:00:00Z', '2026-07-01T10:00:00Z'],
 		['Australia/Lord_Howe', '2026-04-05T01:45:00Z', '2026-04-04T15:15:00Z'],
 		['Australia/Lord_Howe', '2026-10-04T02:15:00Z', '2026-10-03T15:45:00Z'],
+		['Australia/Lord_Howe', '2026-07-01T12:00:00Z', '2026-07-01T01:30:00Z'],
 		['Australia/Sydney', '2026-04-05T02:30:00Z', '2026-04-04T16:30:00Z'],
+		['Australia/Sydney', '2026-10-04T02:30:00Z', '2026-10-03T16:30:00Z'],
+		['Australia/Sydney', '2026-01-15T12:00:00Z', '2026-01-15T01:00:00Z'],
 		['Europe/Prague', '2026-07-01T12:00:00Z', '2026-07-01T11:00:00Z', true],
 		['Europe/Prague', '2026-10-25T02:30:00Z', '2026-10-25T01:30:00Z', true],
 	];
