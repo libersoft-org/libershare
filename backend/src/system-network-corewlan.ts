@@ -1,5 +1,4 @@
-// @ts-expect-error Bun embeds this self-contained JavaScript worker as a file asset.
-import coreWlanWorkerPath from './system-network-corewlan-worker.js' with { type: 'file' };
+declare const LISH_COREWLAN_WORKER_ENTRY: string | undefined;
 import { type NetWifiInfo, type NetWifiNetwork } from '@shared';
 
 export interface MacWifiInterface {
@@ -43,7 +42,8 @@ export function macSsidHex(ssid: string, ssidHex: string | null = null): string 
 function runCoreWlan<T>(request: CoreWlanRequest): Promise<T> {
 	if (pending) return Promise.reject(new Error(NATIVE_BUSY));
 	return new Promise((resolve, reject) => {
-		const worker = new Worker(coreWlanWorkerPath);
+		const entry = typeof LISH_COREWLAN_WORKER_ENTRY === 'string' ? new URL(LISH_COREWLAN_WORKER_ENTRY, import.meta.url).href : new URL('./system-network-corewlan-worker.js', import.meta.url).href;
+		const worker = new Worker(entry);
 		const current = { worker, phase: new Int32Array(new SharedArrayBuffer(4)), mutationUnsettled: false };
 		pending = current;
 		let result: { error?: Error; value?: T } | undefined;

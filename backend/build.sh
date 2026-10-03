@@ -61,25 +61,25 @@ if [ -n "$BUN_TARGET" ]; then
 			mv "$1.signed" "$1"
 			osslsigncode verify -in "$1" >/dev/null
 		}
-		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-network-helper.exe
+		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-network-helper.exe --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"'
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-helper.exe
 		sign_windows_binary build/lish-network-helper.exe
 		HELPER_HASH=$(hash_file build/lish-network-helper.exe)
 		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper-windows-launcher.ts --outfile build/lish-network-launcher.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun scripts/set-windows-gui-subsystem.ts build/lish-network-launcher.exe
 		sign_windows_binary build/lish-network-launcher.exe
-		bun build --compile --target "$BUN_TARGET" src/app.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-backend.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun build --compile --target "$BUN_TARGET" src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-backend.exe --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\"" --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"'
 		bun scripts/set-windows-gui-subsystem.ts build/lish-backend.exe
 		sign_windows_binary build/lish-backend.exe
 		;;
 	*)
-		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-network-helper
+		bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target "$BUN_TARGET" src/network-helper.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-network-helper --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"'
 		HELPER_HASH=$(hash_file build/lish-network-helper)
-		bun build --compile --target "$BUN_TARGET" src/app.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-backend --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+		bun build --compile --target "$BUN_TARGET" src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-backend --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\"" --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"'
 		;;
 	esac
 else
-	bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig src/network-helper.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-network-helper
+	bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig src/network-helper.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-network-helper --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"'
 	HELPER_HASH=$(hash_file build/lish-network-helper)
-	bun build --compile src/app.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-backend --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
+	bun build --compile src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --outfile build/lish-backend --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\"" --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"'
 fi
