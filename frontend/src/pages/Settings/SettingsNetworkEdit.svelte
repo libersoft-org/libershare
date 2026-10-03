@@ -685,7 +685,7 @@
 		</header>
 
 		{#if $networkState.mutation}
-			<div class="message" role="status" aria-live="polite">{$t('settings.systemMutation.' + $networkState.mutation.state)}</div>
+			<div class="message" role="status" aria-live="polite">{$t('settings.systemMutation.' + ($networkState.mutation.state === 'interrupted' && $networkState.mutation.operation === 'wifiPasswordChanged' ? 'wifiPasswordChanged' : $networkState.mutation.state))}</div>
 		{/if}
 		{#if $networkState.stale}<p class="note warning" role="status">{$t('settings.systemMutation.stale')}</p>{/if}
 

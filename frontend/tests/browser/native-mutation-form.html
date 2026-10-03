@@ -177,6 +177,13 @@
 					assert(calls.length === count, 'Mutation state started automatic polling');
 				});
 			}
+			await test('network: a verified password without restored connection is explained', 'network', 'interrupted', async () => {
+				networkState.update(value => ({ ...value, mutation: { ...value.mutation, operation: 'wifiPasswordChanged' } }));
+				await settle();
+				assert(target.textContent.includes(label('settings.systemMutation.wifiPasswordChanged')), 'Changed password is not explained');
+				assert(disabled(button('common.save')), 'Partial Wi-Fi change unlocked Save');
+				assert(!!button('settings.systemMutation.acknowledge'), 'Partial Wi-Fi change cannot be acknowledged');
+			});
 			await test('network: a pending response is not reported as applied', 'network', undefined, async () => {
 				pendingWrite = true;
 				button('common.save').click();
@@ -219,7 +226,7 @@
 			if (component) await unmount(component);
 			Object.assign(api, original);
 			window.nativeMutationTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

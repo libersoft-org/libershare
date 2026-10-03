@@ -573,6 +573,7 @@
 		},
 		"language": "Jazyk",
 		"systemMutation": {
+			"wifiPasswordChanged": "Heslo bylo změněno a ověřeno, ale připojení k Wi-Fi se neobnovilo. Zkontrolujte stav a potvrďte, zda chcete nové nastavení ponechat.",
 			"pending": "Změna ještě není dokončená. Do ověření jejího konce jsou další změny zablokované. Může být nutný restart počítače.",
 			"settling": "Změna skončila. Ověřujeme aktuální nastavení.",
 			"interrupted": "Změna skončila, ale nastavení neodpovídá původnímu ani požadovanému stavu. Zkontrolujte aktuální údaje a potvrďte, zda je chcete ponechat.",
