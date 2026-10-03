@@ -53,13 +53,17 @@ export function executeWindowsTimeWrite(request: WindowsTimeWrite): WindowsTimeW
 		}
 		return { outcome: { kind: 'ok', output: '' } };
 	} catch (error) {
-		const output = error instanceof Error ? error.message : String(error);
-		if (error instanceof WindowsTimeNativeError) {
-			if (error.mayHaveRun) return { outcome: { kind: 'unknown', output, endRule: { kind: 'boot' } } };
-			const code = error.code & 0xffff;
-			return { outcome: [5, 1300, 1314].includes(code) ? { kind: 'denied', output, stateMayHaveChanged: false } : { kind: 'failed', code, output, stateMayHaveChanged: false } };
-		}
-		if (error instanceof Error && error.name === 'NativeLibraryUnavailable') return { outcome: { kind: 'missing' } };
-		return { outcome: entered ? { kind: 'unknown', output, endRule: { kind: 'boot' } } : { kind: 'failed', code: null, output, stateMayHaveChanged: false } };
+		return { outcome: windowsTimeWriteFailure(error, entered) };
 	}
+}
+
+export function windowsTimeWriteFailure(error: unknown, entered: boolean): OperationOutcome {
+	const output = error instanceof Error ? error.message : String(error);
+	if (error instanceof WindowsTimeNativeError) {
+		if (error.mayHaveRun) return { kind: 'unknown', output, endRule: { kind: 'boot' } };
+		const code = error.code & 0xffff;
+		return [5, 1300, 1314].includes(code) ? { kind: 'denied', output, stateMayHaveChanged: false } : { kind: 'failed', code, output, stateMayHaveChanged: false };
+	}
+	if (error instanceof Error && error.name === 'NativeLibraryUnavailable') return { kind: 'missing' };
+	return entered ? { kind: 'unknown', output, endRule: { kind: 'boot' } } : { kind: 'failed', code: null, output, stateMayHaveChanged: false };
 }

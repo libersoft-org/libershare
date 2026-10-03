@@ -1,7 +1,7 @@
 import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget, withReadBudget, remainingSaveBudget } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
-import { w32tm, w32tmNotifying, windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
-import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn } from './system-time-linux.ts';
+import { windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
+import { readLinuxStatus, TIMESYNCD_DROPIN_PATH } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -13,185 +13,23 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-// ---------------------------------------------------------------------------
-// Command builders (pure)
-// ---------------------------------------------------------------------------
-
-/**
- * Commands that set the wall clock to `when`. Every field is a validated integer,
- * so the formatted date string cannot carry anything but digits and separators.
- *
- * Only Windows is given the date. macOS `-settime` takes the time alone, and on Linux the
- * host supplies today itself — see the note on each branch. So `when`'s date fields exist
- * for the one platform whose command cannot do without them.
- */
+/** Compatibility commands for the remaining POSIX adapters and their injected tests. */
 export function buildSetClockCommands(platform: SystemPlatform, when: Pick<LocalDateTime, 'hours' | 'minutes' | 'seconds'>): SystemCommand[] {
 	const time = `${pad2(when.hours)}:${pad2(when.minutes)}:${pad2(when.seconds)}`;
-	// Time only, and deliberately no date: systemd resolves a bare `HH:MM:SS` against the
-	// HOST's own idea of today (measured with `systemd-analyze timestamp '01:00:00'`, which
-	// normalises to the current local date). A date computed here would come from this
-	// process's offset instead, and on Linux that offset is not the host's - nothing in
-	// `timedatectl show` reports one, so it falls back to this runtime's ICU database. Two
-	// databases that disagree by an hour put the computed date on the wrong day for anything
-	// within an hour of midnight, so "set the clock to 01:00" would also move the calendar
-	// day. Letting systemd supply the date removes the disagreement instead of narrowing it.
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-time', time] }];
-	if (platform === 'darwin') return [macSystemsetup(['-settime', time])];
-	// The DAY comes from `Get-Date` inside the command, not from a date computed here, and for
-	// the same reason the Linux branch leaves it to systemd. `Set-Date -Date` sets the date as
-	// well as the time, so a day carried in from the status read is written too - and between
-	// that read and this command there is another read and a PowerShell start. Traced: status
-	// read on the 13th at 23:59:59, command run on the 14th at 00:00:01, requested 00:05:00,
-	// and the calendar goes back to the 13th. Resolving it in the shell puts the decision at
-	// the moment of the write, which is the only moment that can be right.
-	//
-	// powershell.exe otherwise collapses native errors to exit 1 and localized text.
-	// The encoding is pinned first: PowerShell writes through `[Console]::OutputEncoding`,
-	// which follows whatever console it inherited, so the same script emits UTF-8 when
-	// started from a UTF-8 terminal and the OEM code page when started with no console at
-	// all. Both were measured on one host. Reading it therefore needs a known encoding
-	// rather than a guessed one, and `run` reads this command as UTF-8 on that promise.
-	// Explicitly BOM-less: a preamble would land in the middle of the captured output.
-	const script = `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
-	try { Set-Date -Date (Get-Date -Hour ${when.hours} -Minute ${when.minutes} -Second ${when.seconds} -Millisecond 0) -ErrorAction Stop | Out-Null } catch {
-		[Console]::Error.WriteLine($_.Exception.Message)
-		$failure = $_.Exception
-		$nativeCode = 1
-		while ($null -ne $failure) {
-			if ($failure -is [System.ComponentModel.Win32Exception] -and $failure.NativeErrorCode -ne 0) { $nativeCode = $failure.NativeErrorCode; break }
-			if ($failure -is [System.UnauthorizedAccessException]) { $nativeCode = 5; break }
-			$failure = $failure.InnerException
-		}
-		[Console]::Error.WriteLine('LISH_TIME_WIN32_ERROR=' + $nativeCode)
-		exit 1
-	}`;
-	return [{ cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', script] }];
+	return platform === 'darwin' ? [macSystemsetup(['-settime', time])] : [];
 }
-
-/**
- * Commands that set the system timezone. `windowsId` is the converted identifier
- * from {@link ianaToWindowsTimezoneId} and is required on Windows only; passing null
- * there yields an empty list, meaning "this change cannot be expressed on this host"
- * — the caller reports that as unsupported rather than running anything.
- */
-export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: string, windowsId: string | null, daylightDisabled = false): SystemCommand[] {
+export function buildSetTimezoneCommands(platform: SystemPlatform, timezone: string): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-timezone', timezone] }];
-	if (platform === 'darwin') return [macSystemsetup(['-settimezone', timezone])];
-	return windowsId ? [{ cmd: 'tzutil', args: ['/s', windowsId + (daylightDisabled ? '_dstoff' : '')] }] : [];
+	return platform === 'darwin' ? [macSystemsetup(['-settimezone', timezone])] : [];
 }
-
-/**
- * Commands that apply a new NTP server. On Linux the address itself lives in the
- * timesyncd drop-in ({@link buildTimesyncdDropIn}) and only the daemon restart is a
- * command — a reload is not enough for timesyncd to pick the file up. Windows needs
- * an explicit resync afterwards, otherwise the new peer is not contacted until the
- * next poll interval (which defaults to hours).
- *
- * `syncRunning` is the service's actual running state, not its start policy. When it is
- * off there is deliberately nothing to run on Linux: `systemctl restart` STARTS a
- * stopped unit, so restarting here would switch the sync daemon back on behind the
- * user's back and let it step the clock they are about to set by hand. The drop-in
- * is on disk either way and is read the next time the daemon starts.
- *
- * Windows drops only the `/resync`, and it goes by `syncEnabled` — whether
- * synchronisation is CONFIGURED on, which comes from the registry and is always readable.
- * Forcing a sync while the user has just switched synchronisation off would do the one
- * thing they asked not to happen.
- *
- * `/update` is sent either way, and "the service is not running" is not treated as a
- * failure of it (see {@link w32tmNotifying}). It used to be conditional on seeing the
- * service run, which was wrong twice over: a state that could not be read - a standard
- * user cannot open W32Time through the SCM at all - or a service still starting was taken
- * for "stopped", so a RUNNING service was never told about the new peer and kept using the
- * old one while the save reported success. Measured on Windows 11: against a stopped
- * service `w32tm /config ... /update` writes the peer list into the registry anyway and
- * prints only "The service has not been started. (0x80070426)", exiting 38.
- */
-export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, daemonRunning: boolean, syncEnabled: boolean = daemonRunning): SystemCommand[] {
-	// `daemonRunning` is a LINUX fact: whether to restart timesyncd, which is the whole
-	// change there. Windows reads `syncEnabled` instead - whether synchronisation is
-	// configured on - and deliberately nothing about its service's runtime state.
-	const syncRunning = daemonRunning;
-	if (platform === 'linux') return syncRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
-	if (platform === 'darwin') return [macSystemsetup(['-setnetworktimeserver', server])];
-	// 0x8 is the plain client flag. 0x9 would add 0x1 (SpecialInterval), which makes the
-	// peer poll at SpecialPollInterval — a standalone host defaults that to 604800s, so
-	// the peer would be contacted weekly instead of on the normal poll interval.
-	const peers = `/manualpeerlist:${server},0x8`;
-	// `/update` goes out ALWAYS, and "the service is not running" is not a failure of it.
-	// Editing a peer list must preserve Type=NoSync; only the explicit enable operation
-	// changes it, and `/update` does not touch it.
-	// `/resync` still depends on synchronisation being CONFIGURED on, which comes from the
-	// registry and is always readable: forcing a sync on a host whose user has just switched
-	// synchronisation off would be doing the one thing they asked not to happen.
-	return [w32tmNotifying('/config', peers, '/update'), ...(syncEnabled ? [w32tmNotifying('/resync')] : [])];
+export function buildSetNtpServerCommands(platform: SystemPlatform, server: string, daemonRunning: boolean): SystemCommand[] {
+	if (platform === 'linux') return daemonRunning ? [{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }] : [];
+	return platform === 'darwin' ? [macSystemsetup(['-setnetworktimeserver', server])] : [];
 }
-
-/**
- * Commands that switch automatic time synchronisation on or off. Windows has no
- * single switch: the sync type lives in the service start mode plus the running
- * state, so both are set and the service is resynced once it is up.
- *
- * `sc` rather than `net` for the service control: `sc` exits with the underlying
- * Win32 error code (5 for access denied), while `net` exits 2 for every problem and
- * only says which one in a localized message we must not parse.
- *
- * Those two service steps carry {@link SystemCommand.benignCodes}, because a service
- * that is already in the requested run state makes `sc` exit non-zero. Aborting there
- * would skip the steps that carry the actual change — the sync type on the way on, the
- * start mode on the way off — and the toggle would report a failure while leaving the
- * host half-configured. A real refusal still surfaces: the following steps hit the same
- * permission and fail with it.
- *
- * `mode` is the host's CURRENT Windows time source and decides whether the source is
- * rewritten at all. It defaults to `unknown`, which rewrites nothing — the safe default
- * for a caller that could not determine it.
- */
-export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean, mode: WindowsSyncMode = 'unknown', ntpClientEnabled = true): SystemCommand[] {
+export function buildSetNtpEnabledCommands(platform: SystemPlatform, enabled: boolean): SystemCommand[] {
 	if (platform === 'linux') return [{ cmd: 'timedatectl', args: ['set-ntp', enabled ? 'true' : 'false'] }];
-	if (platform === 'darwin') return [macSystemsetup(['-setusingnetworktime', enabled ? 'on' : 'off'])];
-	if (enabled) {
-		return [
-			// Only when Windows says the provider is off. Switching synchronisation on has to
-			// switch on the thing that does it: the service can be running and the source can be
-			// a peer list while this separate flag keeps the client from ever asking anyone.
-			...(ntpClientEnabled ? [] : [{ cmd: 'reg', args: ['add', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled', '/t', 'REG_DWORD', '/d', '1', '/f'] }]),
-			// `delayed-auto`, not `auto`: Windows ships W32Time as auto-start DELAYED, and the
-			// flag saying so lives in its own registry value that `sc config start= disabled`
-			// above wipes. Measured on Windows 11 - shipped DelayedAutostart=1, after the OFF
-			// step 0, and plain `auto` leaves it 0 - so switching synchronisation off and back
-			// on permanently moved the service earlier in the boot sequence. Enabling
-			// synchronisation must not also change WHEN the service starts.
-			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'delayed-auto'] },
-			{ cmd: 'sc', args: ['start', 'w32time'], benignOutput: SC_ALREADY_RUNNING_RE },
-			// ONLY for a host with no time source at all (Type=NoSync), which is the one
-			// case where "switch synchronisation on" has to invent one. On every other
-			// mode this REPLACES the source: run unconditionally on a domain member it
-			// switches Type from NT5DS to a manual peer list, detaching the machine from
-			// the Active Directory time hierarchy — which is what Kerberos ticket
-			// validity depends on. Enabling synchronisation must never mean "and also
-			// change where the time comes from".
-			...(mode === 'none' ? [w32tm('/config', '/syncfromflags:manual', '/update')] : []),
-			// The registry write above is on disk; the RUNNING service is still working from
-			// what it read at startup. `/config /update` is what makes it re-read - documented
-			// by Microsoft as the alternative to restarting it - and `/resync` is not a
-			// substitute: that asks for a synchronisation now, using the configuration the
-			// service already has, which is the one with the client switched off.
-			//
-			// It came for free on a `none` host, because inventing a source there already ends
-			// in `/update`. Everywhere else the service was left never told, `sc start` was
-			// correctly benign on a service that was already up, and switching synchronisation
-			// on reported success while the client stayed off. Skipped when nothing was written
-			// to tell it about, and `/syncfromflags` stays out of it: notifying the service must
-			// never also move the host's time source.
-			...(!ntpClientEnabled && mode !== 'none' ? [w32tmNotifying('/config', '/update')] : []),
-			w32tm('/resync'),
-		];
-	}
-	return [
-		{ cmd: 'sc', args: ['stop', 'w32time'], benignOutput: SC_NOT_ACTIVE_RE },
-		{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
-	];
+	return platform === 'darwin' ? [macSystemsetup(['-setusingnetworktime', enabled ? 'on' : 'off'])] : [];
 }
 
 /**
@@ -628,7 +466,7 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 		// Only the time of day is sent. Every platform resolves "today" at the moment of the
 		// write - systemd for a bare `HH:MM:SS`, `systemsetup -settime`, and `Get-Date` inside
 		// the PowerShell command - so no date computed here can be stale by the time it lands.
-		if (exec === runWrite && platform === 'win32') return runWindowsTimeOperation(api => api.clock({ hours, minutes, seconds }));
+		if (platform === 'win32') return runWindowsTimeOperation(api => api.clock({ hours, minutes, seconds }));
 		return platform === 'linux' && exec === runWrite ? runLinuxTimeOperation(api => api.clock({ hours, minutes, seconds })) : runAll(platform, buildSetClockCommands(platform, { hours, minutes, seconds }), exec);
 	});
 }
@@ -666,7 +504,7 @@ export async function setSystemTimezone(timezone: string, exec: CommandRunner = 
 	return withSystemTimeLock(async () => {
 		const currentZone = platform === 'win32' ? readWindowsZone() : null;
 		if (platform === 'win32' && currentZone === null) return result('error', 'cannot read the Windows daylight saving preference, so the timezone was left unchanged');
-		const r = platform === 'win32' && exec === runWrite ? await runWindowsTimeOperation(api => api.timezone(timezone)) : platform === 'linux' && exec === runWrite ? await runLinuxTimeOperation(api => api.timezone(timezone)) : await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId, currentZone?.daylightDisabled ?? false), exec);
+		const r = platform === 'win32' ? await runWindowsTimeOperation(api => api.timezone(timezone)) : platform === 'linux' && exec === runWrite ? await runLinuxTimeOperation(api => api.timezone(timezone)) : await runAll(platform, buildSetTimezoneCommands(platform, timezone), exec);
 		// Only so this process FORMATS in the new zone: writing the OS timezone does not
 		// invalidate a running process's ICU cache. What the status reports is read back
 		// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
@@ -696,20 +534,12 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
 		// has to still be ours at the moment of writing — not merely when the status the
 		// capability came from was read (see checkWindowsWritable).
 		const syncRunning = status.ntpEnabled === true;
-		let syncEnabled = status.ntpEnabled === true;
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
-			if (exec === runWrite) return runWindowsTimeOperation(api => api.server(server));
-			// The service's RUNNING state is deliberately not consulted. It cannot be read
-			// reliably - a service that is starting or stopping reads as neither, and an
-			// unprivileged caller cannot read it at all - and the only thing it used to decide
-			// was whether to send `/update`, which is now sent unconditionally and forgiven
-			// when there is no service to receive it. Guessing "stopped" from an unknown state
-			// is how a RUNNING service was left never told about a new peer.
-			syncEnabled = windowsSyncEnabled(state.mode, state.start, state.ntpClientEnabled) === true;
+			return runWindowsTimeOperation(api => api.server(server));
 		}
-		const commands = buildSetNtpServerCommands(platform, server, syncRunning, syncEnabled);
+		const commands = buildSetNtpServerCommands(platform, server, syncRunning);
 		// A platform whose whole change is the file write above has no command to run, and
 		// runAll would read the empty list as "unsupported on this platform".
 		if (commands.length === 0) return result('ok');
@@ -755,7 +585,7 @@ export function applyTimesyncdDropIn(server: string, syncRunning: boolean, path:
  * `readStatus` and `exec` are injectable so the sequencing and the outcome mapping can
  * be exercised without touching the host's time service.
  */
-export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, waitForService: (running: boolean) => Promise<boolean> = waitForWindowsTimeService, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now(), probeNtpClientKey: () => RegistryWriteState = () => probeLocalMachineKeyWritable(W32TIME_NTP_CLIENT_SUBKEY)): Promise<SystemTimeResult> {
+export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Promise<SystemTimeStatus> = getSystemTimeStatus, exec: CommandRunner = runWrite, readMode: WindowsModeReader = readWindowsMode, pause: (ms: number) => Promise<void> = sleep, now: () => number = () => performance.now(), probeNtpClientKey: () => RegistryWriteState = () => probeLocalMachineKeyWritable(W32TIME_NTP_CLIENT_SUBKEY)): Promise<SystemTimeResult> {
 	const platform = process.platform;
 	if (!isSupportedPlatform(platform)) return result('unsupported', `time synchronisation cannot be switched on ${platform}`);
 	return withSystemTimeLock(async () => {
@@ -766,12 +596,10 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 		// to be re-judged: the capability above came from an earlier snapshot, and stopping
 		// and disabling W32Time on a host that has since become a domain member or gained a
 		// policy is exactly the change this must never make.
-		let mode: WindowsSyncMode = 'unknown';
 		let clientEnabled = true;
 		if (platform === 'win32') {
 			const state = await checkWindowsWritable(readMode);
 			if (state.refusal) return state.refusal;
-			mode = state.mode;
 			clientEnabled = state.ntpClientEnabled !== false;
 			// Asked before the first command, because this is the one path that begins with a
 			// REGISTRY write - switching the NTP client provider back on - and `reg.exe` cannot
@@ -781,43 +609,30 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			if (enabled && !clientEnabled && probeNtpClientKey() === 'denied') return result('permission-denied', 'the NTP client provider is switched off and this application may not write it; the change needs administrator rights');
 		}
 		if (platform === 'linux' && exec === runWrite) return runLinuxTimeOperation(api => api.ntpEnabled(enabled));
-		if (platform === 'win32' && exec === runWrite) return runWindowsTimeOperation(api => api.ntpEnabled(enabled));
-		const commands = buildSetNtpEnabledCommands(platform, enabled, mode, clientEnabled);
-		if (platform !== 'win32') {
-			const outcome = await runAll(platform, commands, exec);
-			// `timedatectl set-ntp` exits 0 even when the provider it tried to start was SKIPPED.
-			// A container blocks systemd-timesyncd through `ConditionVirtualization=!container`,
-			// and this reported `ok` while the service stayed inactive and the clock was never
-			// synchronised — measured in a privileged systemd container, which is a shape this
-			// application is deployed in.
-			//
-			// Confirmed here and deliberately NOT on Windows: there a toggle is a sequence touching
-			// the source mode, the start mode, the peer list and the synchronisation itself, and one
-			// boolean cannot speak for all four (see the comment above). Here the command and the
-			// boolean are the same thing, so reading it back adds a fact instead of hiding three.
-			if (!outcome.success) return outcome;
-			// Polled, not read once. `timedatectl set-ntp` returns as soon as timedated has
-			// ACCEPTED the request, and the NTP property flips - and the sync service actually
-			// stops or starts - a moment later. Measured on arm64 Ubuntu 24.04 with
-			// systemd-timesyncd running: the immediate read after a successful `set-ntp false`
-			// still answered `NTP=yes`, so a write that had in fact worked was reported as
-			// "the host accepted the request but synchronisation is still on". The very next
-			// call succeeded. The wait is the same shape as the Windows one
-			// ({@link waitForWindowsTimeService}) and for the same reason.
-			if (await settlesToNtpEnabled(enabled, readStatus, pause, now)) return outcome;
-			return { ...result('error', `the host accepted the request but automatic time synchronisation is still ${enabled ? 'off' : 'on'}; its time service may be unable to run here`), changed: true, stateMayHaveChanged: true };
-		}
-		return runAll(platform, commands, async (cmd, args, timeoutMs) => {
-			// `timeoutMs` is what `runAll` has LEFT of the budget, so it has to be passed on:
-			// dropping it here handed every command a fresh 90 s of its own, which is exactly
-			// the accounting the budget exists to prevent.
-			const outcome = await exec(cmd, args, timeoutMs);
-			if (cmd !== 'sc' || args[0] !== (enabled ? 'start' : 'stop')) return outcome;
-			// The reason is read out of the output: `sc` keeps it there, not in its exit status.
-			const accepted = outcome.kind === 'ok' || (outcome.kind === 'failed' && (enabled ? SC_ALREADY_RUNNING_RE : SC_NOT_ACTIVE_RE).test(outcome.output));
-			if (!accepted || (await waitForService(enabled))) return outcome;
-			return { kind: 'failed', code: null, output: `Windows Time did not reach the ${enabled ? 'running' : 'stopped'} state in the time this save had left; the service transition may still be in progress` };
-		});
+		if (platform === 'win32') return runWindowsTimeOperation(api => api.ntpEnabled(enabled));
+		const commands = buildSetNtpEnabledCommands(platform, enabled);
+		const outcome = await runAll(platform, commands, exec);
+		// `timedatectl set-ntp` exits 0 even when the provider it tried to start was SKIPPED.
+		// A container blocks systemd-timesyncd through `ConditionVirtualization=!container`,
+		// and this reported `ok` while the service stayed inactive and the clock was never
+		// synchronised — measured in a privileged systemd container, which is a shape this
+		// application is deployed in.
+		//
+		// Confirmed here and deliberately NOT on Windows: there a toggle is a sequence touching
+		// the source mode, the start mode, the peer list and the synchronisation itself, and one
+		// boolean cannot speak for all four (see the comment above). Here the command and the
+		// boolean are the same thing, so reading it back adds a fact instead of hiding three.
+		if (!outcome.success) return outcome;
+		// Polled, not read once. `timedatectl set-ntp` returns as soon as timedated has
+		// ACCEPTED the request, and the NTP property flips - and the sync service actually
+		// stops or starts - a moment later. Measured on arm64 Ubuntu 24.04 with
+		// systemd-timesyncd running: the immediate read after a successful `set-ntp false`
+		// still answered `NTP=yes`, so a write that had in fact worked was reported as
+		// "the host accepted the request but synchronisation is still on". The very next
+		// call succeeded. The wait is the same shape as the Windows one
+		// ({@link waitForWindowsTimeService}) and for the same reason.
+		if (await settlesToNtpEnabled(enabled, readStatus, pause, now)) return outcome;
+		return { ...result('error', `the host accepted the request but automatic time synchronisation is still ${enabled ? 'off' : 'on'}; its time service may be unable to run here`), changed: true, stateMayHaveChanged: true };
 	});
 }
 
@@ -886,4 +701,4 @@ export { syncDirectory, type RollbackResult, writeFileAtomically } from './syste
 
 export { parseSystemsetupValue, parseSystemsetupOnOff, MAC_NEEDS_ROOT_RE, macSystemsetup } from './system-time-macos.ts';
 
-export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, probeLocalMachineKeyWritable, windowsProcessElevated, ianaToWindowsTimezoneId, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, w32tmNotifying, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';
+export { W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, scFailureOutput, probeLocalMachineKeyWritable, windowsProcessElevated, ianaToWindowsTimezoneId, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, type WindowsServiceState, parseWindowsServiceState, readWindowsTimeServiceState, readWindowsMode, windowsServiceRunning, windowsClockRefusal, parseRegValue, parseWindowsNtpServer, type WindowsSyncMode, type WindowsStartMode, parseWindowsSyncMode, parseWindowsStartMode, windowsSyncIsOurs, windowsSyncEnabled, parseWindowsSyncStatus, rememberWindowsZone, windowsToIanaTimezone, parseTzutilZone, readWindowsPolicyManaged, type WindowsModeState, type WindowsModeReader } from './system-time-windows.ts';

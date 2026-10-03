@@ -1,4 +1,3 @@
-import { loadSystemLibrary } from './native/library.ts';
 import { requireNativeMutationContext } from './native/mutation-context.ts';
 import type { NativeEndRule } from './native/mutation-proof.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -6,7 +5,6 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { win32, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
-import { FFIType, ptr } from 'bun:ffi';
 import { SYSTEM_TIME_READ_TIMEOUT_MS, type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
 
 const execFileAsync = promisify(execFile);
@@ -188,106 +186,16 @@ const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
 };
 
 /** Resolve a privileged helper without consulting PATH. Unknown relative names fail closed. */
-export function resolveSystemExecutable(platform: string, command: string, systemRoot: string | undefined = process.env['SystemRoot']): string | null {
-	if (platform === 'win32') {
-		if (win32.isAbsolute(command)) return command;
-		const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
-		const system32 = win32.join(root, 'System32');
-		const executables: Readonly<Record<string, string>> = {
-			powershell: win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-			tzutil: win32.join(system32, 'tzutil.exe'),
-			w32tm: win32.join(system32, 'w32tm.exe'),
-			sc: win32.join(system32, 'sc.exe'),
-			reg: win32.join(system32, 'reg.exe'),
-		};
-		return executables[command] ?? null;
-	}
+export function resolveSystemExecutable(platform: string, command: string): string | null {
+	if (platform === 'win32') return win32.isAbsolute(command) ? command : null;
 	if (isAbsolute(command)) return command;
 	return platform === 'linux' ? (LINUX_EXECUTABLES[command] ?? null) : null;
 }
 
 export { windowsSystemLibraryPath } from './native/library.ts';
 
-interface ConsoleTextApi {
-	GetConsoleOutputCP: () => number;
-	GetOEMCP: () => number;
-	MultiByteToWideChar: (codePage: number, flags: number, input: number, inputLength: number, output: number, outputLength: number) => number;
-}
-
-// null means "tried and unavailable" — the probe runs at most once either way.
-let consoleText: ConsoleTextApi | null | undefined;
-
-function getConsoleText(): ConsoleTextApi | null {
-	if (consoleText === undefined) {
-		try {
-			consoleText = loadSystemLibrary('kernel32.dll', {
-				GetConsoleOutputCP: { args: [], returns: FFIType.u32 },
-				GetOEMCP: { args: [], returns: FFIType.u32 },
-				MultiByteToWideChar: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-			}).symbols as unknown as ConsoleTextApi;
-		} catch {
-			consoleText = null;
-		}
-	}
-	return consoleText;
-}
-
-/**
- * Turn the raw bytes a child process wrote into text.
- *
- * UTF-8 everywhere but Windows, where the console tools this module runs —
- * `w32tm`, `sc`, `tzutil` — emit their LOCALIZED messages in the console's OEM code
- * page, not in UTF-8. Read as UTF-8 those bytes are not valid sequences at all, so
- * every accented character became U+FFFD: a Czech host reported "P<?><?>stup byl
- * odep<?>en" where the OS had said "Přístup byl odepřen". Nothing decides anything on
- * that text — {@link classifyFailure} matches exit codes and the ASCII HRESULT — but it
- * is the only concrete detail a refused write gives the operator, and it arrived
- * unreadable on every host whose Windows is not English.
- *
- * The code page is asked of Windows rather than assumed: it is cp852 on this author's
- * Czech host, cp866 on a Russian one, cp437 on a US one. `GetOEMCP` is the one to ask,
- * NOT `GetConsoleOutputCP`: the child's output here is a PIPE, and the console code page
- * describes a terminal this process may not even have. Measured on the Czech host —
- * `GetConsoleOutputCP` answered 65001 while `w32tm` was in fact emitting cp852, which is
- * exactly what `GetOEMCP` answers. Conversion goes through Windows' own
- * `MultiByteToWideChar`, so no code-page table is carried here.
- *
- * Falls back to UTF-8 whenever the call cannot be made or does not answer, which is
- * also every non-Windows host: those already run with `LC_ALL=C` and speak UTF-8.
- *
- * NOT for our own PowerShell script, which is why {@link run} exempts it. PowerShell has
- * no fixed output encoding: it writes through `[Console]::OutputEncoding`, which follows
- * the console it inherited. Measured both ways on the same host - started from a UTF-8
- * terminal it emitted UTF-8, started with no console it emitted cp852 - so an OEM
- * conversion is right for one of them and mangles the other. The script pins the encoding
- * instead and is read as what it pinned.
- *
- * `readCodePage` is injectable so the conversion can be exercised for a code page other
- * than the one the test host happens to have.
- */
-export function decodeCommandOutput(bytes: Uint8Array, platform: string = process.platform, readCodePage?: () => number): string {
-	if (platform !== 'win32' || bytes.byteLength === 0) return Buffer.from(bytes).toString('utf8');
-	const api = readCodePage ? null : getConsoleText();
-	if (!readCodePage && !api) return Buffer.from(bytes).toString('utf8');
-	try {
-		const codePage = readCodePage ? readCodePage() : api!.GetOEMCP() || api!.GetConsoleOutputCP();
-		// 65001 is UTF-8 itself; nothing to convert, and the fast path is also the one a
-		// host whose OEM code page is already UTF-8 takes.
-		if (!codePage || codePage === 65001) return Buffer.from(bytes).toString('utf8');
-		const source = new Uint8Array(bytes);
-		const convert = api ?? getConsoleText();
-		if (!convert) return Buffer.from(bytes).toString('utf8');
-		const needed = convert.MultiByteToWideChar(codePage, 0, ptr(source), source.length, 0 as unknown as number, 0);
-		if (needed <= 0) return Buffer.from(bytes).toString('utf8');
-		const wide = new Uint16Array(needed);
-		if (convert.MultiByteToWideChar(codePage, 0, ptr(source), source.length, ptr(wide), wide.length) !== needed) return Buffer.from(bytes).toString('utf8');
-		// Chunked: spreading a long message into String.fromCharCode blows the argument limit.
-		let text = '';
-		for (let index = 0; index < wide.length; index += 8192) text += String.fromCharCode(...wide.subarray(index, index + 8192));
-		return text;
-	} catch {
-		return Buffer.from(bytes).toString('utf8');
-	}
+export function decodeCommandOutput(bytes: Uint8Array): string {
+	return Buffer.from(bytes).toString('utf8');
 }
 
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
@@ -625,15 +533,6 @@ export async function runOperations(platform: SystemPlatform, operations: readon
  * interpreted as a command. `LC_ALL=C` pins the child's messages to English, which
  * is what {@link classifyFailure} matches on for Linux and macOS.
  */
-/**
- * Read one command's output. Every Windows console tool goes through the OEM conversion
- * except our own PowerShell script, which pins its output encoding to UTF-8 itself (see
- * buildSetClockCommands) and would be corrupted by converting it as anything else.
- */
-function decode(cmd: string, bytes: Uint8Array): string {
-	return cmd === 'powershell' ? Buffer.from(bytes).toString('utf8') : decodeCommandOutput(bytes);
-}
-
 export async function run(cmd: string, args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<RunOutcome> {
 	try {
 		const executable = resolveSystemExecutable(process.platform, cmd);
@@ -647,16 +546,13 @@ export async function run(cmd: string, args: string[], timeoutMs: number = EXEC_
 		delete environment['TZ'];
 		// SIGKILL: the promise settles only after the child actually exits, so a
 		// wedged helper ignoring the default SIGTERM would hang the caller forever.
-		// `encoding: 'buffer'` because the bytes are not UTF-8 on a localized Windows
-		// console — see decodeCommandOutput.
 		const { stdout } = await execFileAsync(executable, args, { timeout: limit, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
-		return { kind: 'ok', output: decode(cmd, stdout) };
+		return { kind: 'ok', output: decodeCommandOutput(stdout) };
 	} catch (err) {
 		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: Uint8Array; stderr?: Uint8Array; message?: string };
 		if (e.killed || e.signal) return { kind: 'timeout' };
 		if (e.code === 'ENOENT') return { kind: 'missing' };
-		// w32tm prints its errors to stdout, timedatectl to stderr — read both.
-		const output = `${e.stdout ? decode(cmd, e.stdout) : ''}\n${e.stderr ? decode(cmd, e.stderr) : ''}`.trim() || (e.message ?? '');
+		const output = `${e.stdout ? decodeCommandOutput(e.stdout) : ''}\n${e.stderr ? decodeCommandOutput(e.stderr) : ''}`.trim() || (e.message ?? '');
 		return { kind: 'failed', code: typeof e.code === 'number' ? e.code : null, output };
 	}
 }

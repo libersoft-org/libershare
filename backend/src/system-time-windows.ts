@@ -1,5 +1,5 @@
 import { loadSystemLibrary } from './native/library.ts';
-import { type SystemCommand, processTimezone, listSystemTimezones, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
+import { processTimezone, listSystemTimezones, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
 
 import { FFIType, ptr } from 'bun:ffi';
 import { readWindowsTimeSnapshotAsync } from './native/win32/time-reader.ts';
@@ -436,24 +436,6 @@ export const W32TM_ERROR_RE: RegExp = /0x8[0-9A-Fa-f]{7}/;
  * 38. The registry part - the whole persistent change - had succeeded.
  */
 export const W32TM_SERVICE_INACTIVE_RE: RegExp = /0x8007(?:0426|06B5)/i;
-
-/** A `w32tm` step, with the output check that its zero exit code makes necessary. */
-export function w32tm(...args: string[]): SystemCommand {
-	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE };
-}
-
-/**
- * A `w32tm` step whose only job beyond the registry write is to NOTIFY the running
- * service, so "the service is not running" is nothing to report.
- *
- * This is what lets the caller stop asking whether the service is up. The state read
- * cannot answer it reliably anyway - a service that is starting or stopping reads as
- * neither - and guessing "stopped" from an unreadable or transitional state is how a
- * running service was left never told about a new peer.
- */
-export function w32tmNotifying(...args: string[]): SystemCommand {
-	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE };
-}
 
 /** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
 export const SC_ALREADY_RUNNING = 1056;

@@ -639,7 +639,6 @@ describe('switching the Windows NTP client provider back on', () => {
 					return { kind: 'ok', output: '' };
 				},
 				async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: false }),
-				async () => true,
 				async () => {},
 				() => 0,
 				() => 'denied'
@@ -648,27 +647,6 @@ describe('switching the Windows NTP client provider back on', () => {
 			expect(outcome.message).toContain('administrator rights');
 			// Nothing ran: the refusal is decided before the first command.
 			expect(commands).toBe(0);
-		});
-	});
-
-	it('proceeds when the key is writable', async () => {
-		await onWindows(async () => {
-			const calls: string[] = [];
-			const outcome = await setSystemNtpEnabled(
-				true,
-				async () => statusFixture(),
-				async (cmd, args) => {
-					calls.push([cmd, ...args].join(' '));
-					return { kind: 'ok', output: '' };
-				},
-				async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: false }),
-				async () => true,
-				async () => {},
-				() => 0,
-				() => 'writable'
-			);
-			expect(outcome.success).toBe(true);
-			expect(calls[0]).toContain('reg add');
 		});
 	});
 
@@ -681,7 +659,6 @@ describe('switching the Windows NTP client provider back on', () => {
 				async () => statusFixture(),
 				async () => ({ kind: 'ok', output: '' }),
 				async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: true }),
-				async () => true,
 				async () => {},
 				() => 0,
 				() => {
