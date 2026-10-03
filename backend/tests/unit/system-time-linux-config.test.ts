@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type CommandRunner, buildTimesyncdDropIn, parseTimesyncConfig, resolveSystemExecutable } from '../../src/system-time.ts';
+import { buildTimesyncdDropIn, parseTimesyncConfig } from '../../src/system-time.ts';
 import { parseUtcOffsetMinutes } from '../../src/system-time-common.ts';
 import { verifyTimesyncdServer } from '../../src/system-time-linux.ts';
-import { applyTimesyncdFixture as applyTimesyncdDropIn, timesyncConfigOutput } from '../helpers/system-time-timesyncd.ts';
+import { applyTimesyncdFixture as applyTimesyncdDropIn, timesyncConfigOutput, configurationOperations } from '../helpers/system-time-timesyncd.ts';
 import { nativeTimeFixture, type TimeStatusScenario } from './fixtures/native-time-reader.ts';
 import { readNativeLinuxTimeStatus } from '../../src/native/linux/time-reader.ts';
 
@@ -59,14 +59,6 @@ describe('effective timesyncd configuration', () => {
 	it('rejects malformed section headers and embedded NULs', () => {
 		expect(parseTimesyncConfig('[Time\nNTP=ntp.example.org\n')).toBeNull();
 		expect(parseTimesyncConfig('[Time]\nNTP=ntp.example.org\0\n')).toBeNull();
-	});
-
-	it('resolves systemd-analyze through the trusted system path', () => {
-		expect(resolveSystemExecutable('linux', 'systemd-analyze')).toBe('/usr/bin/systemd-analyze');
-	});
-
-	it('resolves date through the trusted system path', () => {
-		expect(resolveSystemExecutable('linux', 'date')).toBe('/usr/bin/date');
 	});
 });
 
@@ -302,66 +294,68 @@ describe('verification of a published timesyncd drop-in', () => {
 
 	it.each([false, true])('checks the published file before success with synchronization running=%s', async running => {
 		const calls: string[] = [];
-		const exec: CommandRunner = async (command, args) => {
-			calls.push(command);
-			if (command === 'systemd-analyze') {
+		const exec = configurationOperations(
+			async () => {
+				calls.push('read');
 				expect(await readFile(file, 'utf8')).toBe(buildTimesyncdDropIn(requested));
-				return { kind: 'ok', output: await timesyncConfigOutput(file) };
+				return timesyncConfigOutput(file);
+			},
+			async () => {
+				calls.push('restart');
+				return { success: true, outcome: 'ok', message: null };
 			}
-			expect([command, ...args]).toEqual(['systemctl', 'restart', 'systemd-timesyncd']);
-			return { kind: 'ok', output: '' };
-		};
+		);
 		expect((await applyTimesyncdDropIn(requested, running, file, exec)).success).toBe(true);
-		expect(calls).toEqual(running ? ['systemd-analyze', 'systemctl'] : ['systemd-analyze']);
+		expect(calls).toEqual(running ? ['read', 'restart'] : ['read']);
 	});
 
 	it.each([false, true])('does not activate or accept a server overridden by a later file with synchronization running=%s', async running => {
 		const calls: string[] = [];
 		const higherFile = join(dir, '99-local.conf');
 		await writeFile(higherFile, laterReset);
-		const exec: CommandRunner = async command => {
-			calls.push(command);
-			return { kind: 'ok', output: await timesyncConfigOutput(file, await readFile(higherFile, 'utf8')) };
-		};
+		const exec = configurationOperations(async () => {
+			calls.push('read');
+			return timesyncConfigOutput(file, await readFile(higherFile, 'utf8'));
+		});
 		const result = await applyTimesyncdDropIn(requested, running, file, exec);
 		expect(result.success).toBe(false);
 		expect(result.message).toContain('effective');
 		expect(await readFile(file, 'utf8')).toBe(original);
 		expect(await readFile(higherFile, 'utf8')).toBe(laterReset);
-		expect(calls).toEqual(['systemd-analyze']);
+		expect(calls).toEqual(['read']);
 	});
 
 	it.each([false, true].flatMap(running => (['missing', 'read-error', 'timeout', 'invalid', 'throw'] as const).map(failure => ({ running, failure }))))('rolls back without restarting when verification fails: %j', async ({ running, failure }) => {
 		const calls: string[] = [];
-		const exec: CommandRunner = async command => {
-			calls.push(command);
+		const exec = configurationOperations(async () => {
+			calls.push('read');
 			if (failure === 'throw') throw new Error('read failed');
-			if (failure === 'missing') return { kind: 'missing' };
-			if (failure === 'timeout') return { kind: 'timeout' };
-			if (failure === 'read-error') return { kind: 'failed', code: 1, output: 'read denied' };
-			return { kind: 'ok', output: '[Time]\nNTP="invalid.example.org"\n' };
-		};
+			if (failure === 'missing') throw Object.assign(new Error('missing file'), { code: 'ENOENT' });
+			if (failure === 'timeout') throw new Error('native read timeout');
+			if (failure === 'read-error') throw Object.assign(new Error('read denied'), { code: 'EACCES' });
+			return '[Time]\nNTP="invalid.example.org"\n';
+		});
 		const result = await applyTimesyncdDropIn(requested, running, file, exec);
 		expect(result.success).toBe(false);
 		expect(await readFile(file, 'utf8')).toBe(original);
-		expect(calls).toEqual(['systemd-analyze']);
+		expect(calls).toEqual(['read']);
 	});
 
 	it.each([false, true])('preserves a concurrent edit while undoing verification failure (file existed=%s)', async existed => {
 		if (!existed) await rm(file);
 		const external = '[Time]\nNTP=external.example.org\n';
 		const calls: string[] = [];
-		const exec: CommandRunner = async command => {
-			calls.push(command);
+		const exec = configurationOperations(async () => {
+			calls.push('read');
 			await writeFile(file, external);
-			return { kind: 'ok', output: await timesyncConfigOutput(file) };
-		};
+			return timesyncConfigOutput(file);
+		});
 		const result = await applyTimesyncdDropIn(requested, true, file, exec);
 		expect(result.success).toBe(false);
 		expect(result.changed).toBe(true);
 		expect(result.message).toContain('could not be restored');
 		expect(await readFile(file, 'utf8')).toBe(external);
-		expect(calls).toEqual(['systemd-analyze']);
+		expect(calls).toEqual(['read']);
 	});
 
 	it('removes only its newly created file when a later override prevents verification', async () => {
@@ -369,18 +363,18 @@ describe('verification of a published timesyncd drop-in', () => {
 		const higherFile = join(dir, '99-local.conf');
 		await writeFile(higherFile, laterReset);
 		const calls: string[] = [];
-		const exec: CommandRunner = async command => {
-			calls.push(command);
-			return { kind: 'ok', output: await timesyncConfigOutput(file, await readFile(higherFile, 'utf8')) };
-		};
+		const exec = configurationOperations(async () => {
+			calls.push('read');
+			return timesyncConfigOutput(file, await readFile(higherFile, 'utf8'));
+		});
 		expect((await applyTimesyncdDropIn(requested, false, file, exec)).success).toBe(false);
 		await expect(readFile(file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 		expect(await readFile(higherFile, 'utf8')).toBe(laterReset);
-		expect(calls).toEqual(['systemd-analyze']);
+		expect(calls).toEqual(['read']);
 	});
 
 	it.each(['[Time]\nNTP=requested.example.org other.example.org\n', '[Time]\nNTP=\nFallbackNTP=requested.example.org\n'])('does not verify a single-server pin from only the first or fallback entry', async configuration => {
-		const failure = await verifyTimesyncdServer(requested, async () => ({ kind: 'ok', output: configuration }));
+		const failure = await verifyTimesyncdServer(requested, async () => configuration);
 		expect(failure).toContain('differs');
 	});
 });

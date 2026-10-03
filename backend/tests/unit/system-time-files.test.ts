@@ -1,8 +1,9 @@
+import type { FixtureRunner } from '../helpers/system-time-fixtures.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { syncDirectory, type OperationOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
 import { applyTimesyncdFixture as applyTimesyncdDropIn, withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
 import { serviceAccountAccessForOperation, serviceAccountGroups, serviceAccountProbe, type ServiceAccountIdentity } from '../../src/system-time-files.ts';
@@ -734,7 +735,7 @@ describe('applyTimesyncdDropIn', () => {
 		const { exec, calls } = fakeRunner([]);
 		expect(await applyTimesyncdDropIn('ntp.example.org', true, path, withTimesyncConfigRead(path, exec))).toEqual({ success: true, outcome: 'ok', message: null });
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=ntp.example.org\n');
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart']);
 	});
 
 	it('writes the drop-in without restarting while synchronisation is off', async () => {
@@ -755,7 +756,7 @@ describe('applyTimesyncdDropIn', () => {
 		expect(r.success).toBe(false);
 		expect(r.outcome).toBe('error');
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart', 'restart']);
 		// The undo is complete, so the host is as it was found. Carrying the `changed` flags
 		// the stopped sequence set had the UI warn that part of the save might still be
 		// applied — about a state that no longer exists anywhere.
@@ -779,12 +780,12 @@ describe('applyTimesyncdDropIn', () => {
 		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
 		const calls: string[] = [];
 		let clock = 0;
-		const exec: CommandRunner = async (cmd, args) => {
-			calls.push([cmd, ...args].join(' '));
-			if (calls.length > 1) return { kind: 'ok', output: '' };
+		const exec: FixtureRunner = async operation => {
+			calls.push(operation.kind);
+			if (calls.length > 1) return { success: true, outcome: 'ok', message: null };
 			// The whole save's budget goes on this one failing restart.
 			clock = SAVE_BUDGET_MS + 1;
-			return { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
+			return { success: false, outcome: 'error', message: 'Job for systemd-timesyncd.service failed.\n' };
 		};
 		const r = await withSaveBudget(
 			async () => applyTimesyncdDropIn('new.example.org', true, path, withTimesyncConfigRead(path, exec)),
@@ -793,7 +794,7 @@ describe('applyTimesyncdDropIn', () => {
 		expect(r.success).toBe(false);
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
 		// Two restarts: the one that failed, and the one that puts the daemon back.
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart', 'restart']);
 		// A complete undo, so nothing of the save is still applied anywhere.
 		expect(r.changed).not.toBe(true);
 		expect(r.message).not.toContain('could not be restarted');
@@ -801,7 +802,7 @@ describe('applyTimesyncdDropIn', () => {
 
 	it('says so when the daemon could not be restarted onto the restored drop-in', async () => {
 		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
-		const failure: RunOutcome = { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
+		const failure: OperationOutcome = { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
 		const { exec } = fakeRunner([failure, failure]);
 		const r = await applyTimesyncdDropIn('new.example.org', true, path, withTimesyncConfigRead(path, exec));
 		expect(r.success).toBe(false);
@@ -821,7 +822,7 @@ describe('applyTimesyncdDropIn', () => {
 		const r = await applyTimesyncdDropIn('new.example.org', true, path, withTimesyncConfigRead(path, exec), failFlushOf(dir, 'EIO', 1));
 		expect(r.success).toBe(false);
 		expect(await readFile(path, 'utf8')).toBe('[Time]\nNTP=\nNTP=old.example.org\n');
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart', 'restart']);
 		expect(r.message).toContain('was restored');
 		expect(r.message).toContain('may not survive');
 		expect(r.message).not.toContain('still holds the new server');
@@ -833,7 +834,7 @@ describe('applyTimesyncdDropIn', () => {
 		const r = await applyTimesyncdDropIn('new.example.org', true, path, withTimesyncConfigRead(path, exec), failFlushOf(dir, 'ENOSPC', 1));
 		expect(r.success).toBe(false);
 		expect(await readdir(dir)).toEqual([]);
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd', 'systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart', 'restart']);
 		expect(r.message).not.toContain('still holds the new server');
 	});
 
@@ -850,15 +851,15 @@ describe('applyTimesyncdDropIn', () => {
 	it('does not restart the daemon again when the drop-in could not be restored', async () => {
 		await writeFile(path, '[Time]\nNTP=\nNTP=old.example.org\n', 'utf8');
 		const calls: string[] = [];
-		const exec: CommandRunner = async (cmd, args) => {
-			calls.push([cmd, ...args].join(' '));
+		const exec: FixtureRunner = async operation => {
+			calls.push(operation.kind);
 			await rm(path, { force: true });
 			await mkdir(path);
-			return { kind: 'failed', code: 1, output: 'Job for systemd-timesyncd.service failed.\n' };
+			return { success: false, outcome: 'error', message: 'Job for systemd-timesyncd.service failed.\n' };
 		};
 		const r = await applyTimesyncdDropIn('new.example.org', true, path, withTimesyncConfigRead(path, exec));
 		expect(r.success).toBe(false);
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart']);
 		expect(r.message).toContain('could not be restored');
 	});
 
@@ -866,10 +867,10 @@ describe('applyTimesyncdDropIn', () => {
 		await writeFile(path, '[Time]\nNTP=old.example.org\n');
 		const external = '[Time]\nNTP=external.example.org\n';
 		let restarts = 0;
-		const exec: CommandRunner = async () => {
+		const exec: FixtureRunner = async () => {
 			restarts++;
 			await writeFile(path, external);
-			return { kind: 'failed', code: 1, output: 'daemon restart failed' };
+			return { success: false, outcome: 'error', message: 'daemon restart failed' };
 		};
 		const result = await applyTimesyncdDropIn('requested.example.org', true, path, withTimesyncConfigRead(path, exec));
 		expect(result.success).toBe(false);
@@ -893,12 +894,12 @@ describe('applyTimesyncdDropIn', () => {
 	 */
 	it('keeps two concurrent writes from interleaving', async () => {
 		const seenAtRestart: string[] = [];
-		const exec: CommandRunner = async () => {
+		const exec: FixtureRunner = async () => {
 			// Wide enough that an unserialized second write would land first — both
 			// writes finish in well under a millisecond.
 			await new Promise(resolve => setTimeout(resolve, 10));
 			seenAtRestart.push(await readFile(path, 'utf8'));
-			return { kind: 'ok', output: '' };
+			return { success: true, outcome: 'ok', message: null };
 		};
 		const [a, b] = await Promise.all([applyTimesyncdDropIn('a.example.org', true, path, withTimesyncConfigRead(path, exec)), applyTimesyncdDropIn('b.example.org', true, path, withTimesyncConfigRead(path, exec))]);
 		expect([a.success, b.success]).toEqual([true, true]);
@@ -917,7 +918,7 @@ describe('applyTimesyncdDropIn', () => {
 		const { exec, calls } = fakeRunner([]);
 		const r = await withSystemTimeLock(async () => applyTimesyncdDropIn('ntp.example.org', true, path, withTimesyncConfigRead(path, exec)));
 		expect(r.success).toBe(true);
-		expect(calls).toEqual(['systemctl restart systemd-timesyncd']);
+		expect(calls).toEqual(['restart']);
 	});
 
 	/** And still serializes afterwards: the nesting must release the lock, not leak it. */

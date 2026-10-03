@@ -1,5 +1,6 @@
+import type { TimesyncdOperations } from '../../src/native/linux/time-mutation-dropin.ts';
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, settlesToNtpEnabled, waitForWindowsTimeService, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type WindowsModeState } from '../../src/system-time.ts';
 import { applyTimesyncdFixture as applyTimesyncdDropIn } from '../helpers/system-time-timesyncd.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_HELPER_BUDGET_MS, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
@@ -22,104 +23,6 @@ const status: SystemTimeStatus = {
 };
 const readStatus = async () => status;
 const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'on-demand', membership: 'standalone', service: 'stopped' });
-
-describe('Windows Time service transitions', () => {
-	it.each([true, false])('bounds an unconfirmed transition to 15 seconds: enabled=%s', async enabled => {
-		let now = 0,
-			reads = 0;
-		expect(
-			await waitForWindowsTimeService(
-				enabled,
-				() => {
-					reads++;
-					return null;
-				},
-				async ms => {
-					now += ms;
-				},
-				() => now
-			)
-		).toBe(false);
-		expect(now).toBe(15000);
-		expect(reads).toBe(61);
-	});
-
-	/**
-	 * Inside a save the wait is held to what the save has left, not to a fresh 15 s of its own.
-	 *
-	 * The command before it and the command after it are both held to the save's remaining
-	 * time, but the wait sat between them on its own clock. In the privileged Windows helper
-	 * that gap was the whole reserve: a 45 s budget against a launcher that terminates the
-	 * helper at 60 s, so a start accepted at 44.9 s still waited until 59.9 s and the helper
-	 * could be killed with its "this may already be applied" answer unsent.
-	 */
-	it.each([true, false])('bounds an unconfirmed transition to what the save has left: enabled=%s', async enabled => {
-		let clock = 0,
-			reads = 0;
-		const reached = await withSaveBudget(
-			() =>
-				waitForWindowsTimeService(
-					enabled,
-					() => {
-						reads++;
-						return null;
-					},
-					async ms => {
-						clock += ms;
-					},
-					() => clock
-				),
-			() => clock,
-			100
-		);
-		expect(reached).toBe(false);
-		expect(clock).toBe(100);
-		expect(reads).toBe(2);
-	});
-
-	it('waits for nothing when the save is already out of time', async () => {
-		let reads = 0;
-		const reached = await withSaveBudget(
-			() =>
-				waitForWindowsTimeService(
-					true,
-					() => {
-						reads++;
-						return null;
-					},
-					async () => {
-						throw new Error('paused with no time left');
-					},
-					() => 0
-				),
-			() => 0,
-			0
-		);
-		expect(reached).toBe(false);
-		expect(reads).toBe(0);
-	});
-
-	/** The Linux settle after `set-ntp` is the same wait, and was held to the same fresh 15 s. */
-	it.each([true, false])('holds the linux settle to what the save has left too: enabled=%s', async enabled => {
-		let clock = 0;
-		const stillOpposite = async () => ({ ...(await readStatus()), ntpEnabled: !enabled });
-		const settled = await withSaveBudget(
-			() =>
-				settlesToNtpEnabled(
-					enabled,
-					stillOpposite,
-					async ms => {
-						clock += ms;
-					},
-					() => clock
-				),
-			() => clock,
-			100
-		);
-		expect(settled).toBe(false);
-		expect(clock).toBe(100);
-	});
-});
 
 /**
  * The budget has to survive the path a real save takes, not just `runAll` in isolation.
@@ -243,9 +146,15 @@ describe('finishing one save', () => {
 		try {
 			const path = join(root, '90-libershare.conf');
 			let ran = 0;
-			const exec: CommandRunner = async () => {
-				ran++;
-				return { kind: 'ok', output: '' };
+			const exec: TimesyncdOperations = {
+				verify: async () => {
+					ran++;
+					return null;
+				},
+				restart: async () => {
+					ran++;
+					return { success: true, outcome: 'ok', message: null };
+				},
 			};
 			// A budget that is already spent: the clock is read once when the budget opens and
 			// again inside, so a clock that has advanced past it leaves nothing.
@@ -275,12 +184,12 @@ describe('finishing one save', () => {
 			await chmod(root, 0o755);
 			const path = join(root, '90-libershare.conf');
 			const limits: Array<number | undefined> = [];
-			const exec: CommandRunner = async (cmd, _args, timeoutMs) => {
-				limits.push(timeoutMs);
-				// The verification reads the effective configuration; answer with the server it asked
-				// for so the save reaches its end rather than stopping on a mismatch.
-				if (cmd === 'systemd-analyze') return { kind: 'ok', output: '[Time]\nNTP=ntp.example.org\n' };
-				return { kind: 'ok', output: '' };
+			const exec: TimesyncdOperations = {
+				verify: async (_server, timeoutMs) => {
+					limits.push(timeoutMs);
+					return null;
+				},
+				restart: async () => ({ success: true, outcome: 'ok', message: null }),
 			};
 			let clock = 0;
 			await withSaveBudget(
@@ -306,10 +215,12 @@ describe('finishing one save', () => {
 			await chmod(root, 0o755);
 			const path = join(root, '90-libershare.conf');
 			const limits: Array<number | undefined> = [];
-			const exec: CommandRunner = async (cmd, _args, timeoutMs) => {
-				limits.push(timeoutMs);
-				if (cmd === 'systemd-analyze') return { kind: 'ok', output: '[Time]\nNTP=ntp.example.org\n' };
-				return { kind: 'ok', output: '' };
+			const exec: TimesyncdOperations = {
+				verify: async (_server, timeoutMs) => {
+					limits.push(timeoutMs);
+					return null;
+				},
+				restart: async () => ({ success: true, outcome: 'ok', message: null }),
 			};
 			expect(remainingSaveBudget()).toBeNull();
 			await applyTimesyncdDropIn('ntp.example.org', false, path, exec);

@@ -122,7 +122,7 @@ it('does not offer clock or timezone writes when the native timezone read failed
 		async () => assembled,
 		async () => {
 			commands++;
-			return { kind: 'ok', output: '' };
+			return { success: true, outcome: 'ok', message: null };
 		}
 	);
 	expect(result.success).toBe(false);

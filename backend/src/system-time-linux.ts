@@ -1,4 +1,4 @@
-import { type CommandRunner, type PlatformStatus, UNREADABLE_STATUS, isValidNtpServer, READ_BUDGET_MS, remainingSaveBudget } from './system-time-common.ts';
+import { type PlatformStatus, UNREADABLE_STATUS, isValidNtpServer, READ_BUDGET_MS, remainingSaveBudget } from './system-time-common.ts';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import { readdir, readFile } from 'node:fs/promises';
 
@@ -87,11 +87,10 @@ export function parseTimesyncConfig(output: string): string | null {
 }
 
 /** A single-server write must survive later overrides before any daemon restart. */
-export async function verifyTimesyncdServer(server: string, exec?: CommandRunner): Promise<string | null> {
+export async function verifyTimesyncdServer(server: string, read?: () => Promise<string>): Promise<string | null> {
 	try {
-		const configuration = exec ? await exec('systemd-analyze', ['--no-pager', 'cat-config', 'systemd/timesyncd.conf']) : { kind: 'ok' as const, output: await nativeTimeRead<string>('linux.time.configuration') };
-		if (configuration.kind !== 'ok') return 'the effective systemd-timesyncd configuration could not be read';
-		const servers = parseTimesyncServerLists(configuration.output);
+		const configuration = read ? await read() : await nativeTimeRead<string>('linux.time.configuration');
+		const servers = parseTimesyncServerLists(configuration);
 		if (servers === null) return 'the effective systemd-timesyncd configuration could not be interpreted safely';
 		if (servers.NTP.length !== 1 || servers.NTP[0] !== server) return 'the effective systemd-timesyncd NTP server list differs from the requested server; another configuration file may override it';
 		return null;
@@ -307,7 +306,6 @@ const NTP_UNITS_DIRS: string[] = ['/etc/systemd/ntp-units.d', '/run/systemd/ntp-
 const NTP_SERVICES_ENV = 'SYSTEMD_TIMEDATED_NTP_SERVICES';
 
 /** The unit whose environment decides the override — timedated's own, not ours. */
-const TIMEDATED_UNIT = 'systemd-timedated.service';
 
 /** The unit types systemd knows; a name whose suffix is not one of them is not a unit name. */
 const UNIT_TYPES: string[] = ['service', 'socket', 'target', 'device', 'mount', 'automount', 'swap', 'timer', 'path', 'slice', 'scope'];
@@ -497,15 +495,16 @@ function splitAssignment(word: string): [string, string] | null {
  * the directory ordering as authoritative, and nothing anywhere would say we had asked about
  * a unit that is not there. Anything but `loaded` is an environment we did not read.
  */
-export async function readTimedatedEnvironment(exec?: CommandRunner): Promise<Record<string, string> | null> {
-	if (!exec) return nativeTimeRead<Record<string, string> | null>('linux.time.environment').catch(() => null);
-	const manager = await exec('systemctl', ['show-environment']);
-	if (manager.kind !== 'ok') return null;
-	const unit = await exec('systemctl', ['show', '-p', 'LoadState', '-p', 'Environment', '-p', 'EnvironmentFiles', '-p', 'PassEnvironment', '-p', 'UnsetEnvironment', TIMEDATED_UNIT]);
-	if (unit.kind !== 'ok') return null;
-	const props = parseUnitProperties(unit.output);
-	if (props.get('LoadState') !== 'loaded') return null;
-	if ((props.get('EnvironmentFiles') ?? '').trim().length > 0) return null;
+export interface TimedatedEnvironmentSources {
+	readonly manager: string;
+	readonly unit: Readonly<Record<string, string>>;
+}
+export async function readTimedatedEnvironment(read?: () => Promise<TimedatedEnvironmentSources | null>): Promise<Record<string, string> | null> {
+	if (!read) return nativeTimeRead<Record<string, string> | null>('linux.time.environment').catch(() => null);
+	const sources = await read();
+	if (!sources) return null;
+	const props = new Map(Object.entries(sources.unit));
+	if (props.get('LoadState') !== 'loaded' || (props.get('EnvironmentFiles') ?? '').trim()) return null;
 	// `show-environment` prints one assignment per line; the unit properties print their
 	// entries whitespace-separated on one. Both are quoted by systemd, so both are read with
 	// systemd's own word parser rather than by splitting on whitespace.
@@ -519,7 +518,7 @@ export async function readTimedatedEnvironment(exec?: CommandRunner): Promise<Re
 		if (read.error) malformed = true;
 		return read.words;
 	};
-	const managerWords = words(manager.output);
+	const managerWords = words(sources.manager);
 	const environment = words(props.get('Environment') ?? '');
 	const pass = words(props.get('PassEnvironment') ?? '');
 	const unset = words(props.get('UnsetEnvironment') ?? '');

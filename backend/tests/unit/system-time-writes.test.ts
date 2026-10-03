@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, MAC_NEEDS_ROOT_RE, run, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
-import { READ_BUDGET_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, remainingSaveBudget, withSaveBudget } from '../../src/system-time-common.ts';
+import { applySystemTimeSettings, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type TimeOperationRunner, type SystemTimeWriters, type WindowsModeState, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
+import { READ_BUDGET_MS, EXEC_TIMEOUT_MS, SEQUENCE_BUDGET_MS, remainingSaveBudget, withSaveBudget } from '../../src/system-time-common.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_READ_TIMEOUT_MS, SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
-
-const AT = { year: 2026, month: 8, day: 14, hours: 23, minutes: 46, seconds: 28 };
 
 /** A host where everything is available and synchronisation is off. */
 function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeStatus {
@@ -24,30 +22,6 @@ function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeSta
 		...overrides,
 	};
 }
-
-describe('buildSetClockCommands', () => {
-	/**
-	 * No date on Linux, on purpose: systemd resolves a bare `HH:MM:SS` against the host's own
-	 * today. A date computed here would come from this process's offset, and on Linux that is
-	 * not the host's - `timedatectl show` reports no offset, so the status falls back to this
-	 * runtime's ICU. Databases an hour apart put the computed day on the wrong side of
-	 * midnight, and "set the clock to 01:00" then moved the calendar day as well.
-	 * Measured on a systemd host: `systemd-analyze timestamp '00:30:00'` normalises to the
-	 * current local date, and `timedatectl set-time "HH:MM:SS"` accepts the form.
-	 */
-	it('sends only the time on linux, leaving the date to the host', () => {
-		expect(buildSetClockCommands('linux', AT)).toEqual([{ cmd: 'timedatectl', args: ['set-time', '23:46:28'] }]);
-	});
-
-	it('sends only the time on macOS, leaving the date alone', () => {
-		expect(buildSetClockCommands('darwin', AT)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settime', '23:46:28'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-
-	it('zero-pads single-digit parts', () => {
-		expect(buildSetClockCommands('linux', { hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('03:04:05');
-		expect(buildSetClockCommands('darwin', { ...AT, hours: 0, minutes: 0, seconds: 0 })[0]?.args[1]).toBe('00:00:00');
-	});
-});
 
 /**
  * The limits of one save have to nest, innermost first.
@@ -83,63 +57,6 @@ describe('the timeouts of one save', () => {
 });
 
 /**
- * Reads have to answer to the save's budget as well.
- *
- * They did not: a write consulted the remainder and a READ took its own 5 s however late the
- * save already was, so the reads before a write could spend the whole allowance. On Windows
- * that is not merely slow - the elevated helper is deliberately held to less than the
- * launcher's wait so it can report where it got to, and reads running past that had it
- * terminated with a timezone already changed and nothing said about it.
- *
- * Measured with a real child rather than by comparing constants, because the failure was that
- * a real child outlived a limit nobody applied to it.
- */
-describe('a child process under a save budget', () => {
-	/** Something that sleeps, spelled the way each platform's own trusted executable does. */
-	const slowChild = (): { cmd: string; args: string[] } => ({ cmd: process.execPath, args: ['--eval', 'await Bun.sleep(10000)'] });
-
-	it('is cut short by what the save has left, not by its own limit', async () => {
-		const { cmd, args } = slowChild();
-		const started = performance.now();
-		// Two seconds left of the save, and a read that would take ten.
-		const outcome = await withSaveBudget(async () => run(cmd, args, EXEC_TIMEOUT_MS), performance.now.bind(performance), 2_000);
-		const spent = performance.now() - started;
-		expect(outcome.kind).toBe('timeout');
-		// Inside the remainder, with room for process startup - and nowhere near the child's
-		// own ten seconds or the 5 s read limit that used to apply regardless.
-		expect(spent).toBeLessThan(5_000);
-	});
-
-	it('is not started at all once the save has nothing left', async () => {
-		const { cmd, args } = slowChild();
-		let clock = 0;
-		const started = performance.now();
-		const outcome = await withSaveBudget(
-			async () => {
-				clock = SAVE_BUDGET_MS + 1;
-				return run(cmd, args, EXEC_TIMEOUT_MS);
-			},
-			() => clock,
-			SAVE_BUDGET_MS
-		);
-		expect(outcome.kind).toBe('timeout');
-		// No process was spawned, so this is immediate rather than a millisecond-long kill.
-		expect(performance.now() - started).toBeLessThan(500);
-	});
-
-	/** Outside a save there is no remainder to consult, and the ordinary read limit stands. */
-	it('keeps its own limit when nothing set a budget', async () => {
-		const { cmd, args } = slowChild();
-		const started = performance.now();
-		const outcome = await run(cmd, args, 1_200);
-		const spent = performance.now() - started;
-		expect(outcome.kind).toBe('timeout');
-		expect(spent).toBeGreaterThan(900);
-		expect(spent).toBeLessThan(6_000);
-	});
-});
-
-/**
  * A read of the host has to fit inside the wait the screen gives it, and that is a ceiling on
  * the TOTAL - not on each command.
  *
@@ -151,30 +68,6 @@ describe('a child process under a save budget', () => {
  * relation between two constants.
  */
 describe('a whole host read under its budget', () => {
-	const slowChild = (): { cmd: string; args: string[] } => ({ cmd: process.execPath, args: ['--eval', 'await Bun.sleep(10000)'] });
-
-	it('stops several individually-patient reads from outlasting it together', async () => {
-		const { cmd, args } = slowChild();
-		const started = performance.now();
-		// Four reads, each of which would happily take its own limit, and 3 s for all of them.
-		const kinds = await withSaveBudget(
-			async () => {
-				const seen: string[] = [];
-				for (let index = 0; index < 4; index++) seen.push((await run(cmd, args, EXEC_TIMEOUT_MS)).kind);
-				return seen;
-			},
-			performance.now.bind(performance),
-			3_000
-		);
-		const spent = performance.now() - started;
-		expect(kinds).toHaveLength(4);
-		// The budget held for all four together, with room for process startup - not four
-		// times the read limit.
-		expect(spent).toBeLessThan(6_000);
-		// And the later ones were not started at all once there was nothing left.
-		expect(kinds.every(kind => kind === 'timeout')).toBe(true);
-	});
-
 	/** The status read opens such a budget; without it the reads inside see no deadline. */
 	it('is what the status read runs its platform reader under', async () => {
 		const seen: Array<number | null> = [];
@@ -277,207 +170,6 @@ describe('a clock another daemon is steering', () => {
 	});
 });
 
-describe('runAll sequence budget', () => {
-	const commands: SystemCommand[] = [
-		{ cmd: 'first', args: [] },
-		{ cmd: 'second', args: [] },
-	];
-
-	it('hands each command only what is left of the budget', async () => {
-		const limits: Array<number | undefined> = [];
-		let clock = 0;
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			clock += 80_000;
-			return { kind: 'ok', output: '' };
-		};
-		const answer = await runAll('linux', commands, exec, () => clock);
-		expect(answer.success).toBe(true);
-		expect(limits[0]).toBe(WRITE_TIMEOUT_MS);
-		// 80 s of the budget is gone, so the second command gets the remainder and not a fresh 90 s.
-		expect(limits[1]).toBe(SEQUENCE_BUDGET_MS - 80_000);
-	});
-
-	/**
-	 * A spawn call takes whole milliseconds and refuses anything else, so the remainder of a
-	 * budget - which comes from `performance.now()` and is fractional - cannot be handed
-	 * straight to it. Measured live on Windows against an elevated save bounded to 45 s:
-	 * `The value of "timeout" is out of range. It must be an unsigned integer. Received
-	 * 44817.258400000006`, reported as a failed `w32tm` step and a host that might be
-	 * half-changed. It stayed hidden while budgets were large, because `Math.min` then returned
-	 * the integer write limit and the fraction never got through.
-	 */
-	it('hands a command a whole number of milliseconds even from a fractional remainder', async () => {
-		const limits: Array<number | undefined> = [];
-		let clock = 0.5;
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			clock += 80_000.2584;
-			return { kind: 'ok', output: '' };
-		};
-		expect((await runAll('linux', commands, exec, () => clock)).success).toBe(true);
-		expect(limits.length).toBe(2);
-		for (const limit of limits) {
-			expect(Number.isInteger(limit)).toBe(true);
-			// Still a real limit: zero would mean no limit at all to the process being spawned.
-			expect(limit!).toBeGreaterThan(0);
-			expect(limit!).toBeLessThanOrEqual(WRITE_TIMEOUT_MS);
-		}
-		// And it is the remainder, floored - not a fresh write limit.
-		expect(limits[1]).toBe(Math.floor(SEQUENCE_BUDGET_MS - 80_000.2584));
-	});
-
-	/**
-	 * Flooring alone is not enough at the very end of a budget. A fraction of a millisecond is
-	 * still time left, so the command is started - and floored to zero it would be started with
-	 * NO limit at all, which is the opposite of what a spent budget should do.
-	 */
-	it('never hands a command a zero limit at the end of the budget', async () => {
-		const limits: Array<number | undefined> = [];
-		let clock = 0;
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			clock = SEQUENCE_BUDGET_MS - 0.4;
-			return { kind: 'ok', output: '' };
-		};
-		expect((await runAll('linux', commands, exec, () => clock)).success).toBe(true);
-		expect(limits.length).toBe(2);
-		expect(limits[1]).toBe(1);
-	});
-
-	/**
-	 * A command starting with nothing left is refused, and `ran: false` is the honest report:
-	 * it was never started, so it cannot have changed anything - while the commands before it
-	 * did, which is what `changed` says.
-	 */
-	it('refuses a command that would start past the deadline', async () => {
-		let clock = 0;
-		const started: string[] = [];
-		const exec: CommandRunner = async cmd => {
-			started.push(cmd);
-			clock += SEQUENCE_BUDGET_MS;
-			return { kind: 'ok', output: '' };
-		};
-		const answer = await runAll('linux', commands, exec, () => clock);
-		expect(started).toEqual(['first']);
-		expect(answer.success).toBe(false);
-		expect(answer.outcome).toBe('error');
-		expect(answer.message).toContain('did not finish within');
-		expect(answer.changed).toBe(true);
-	});
-
-	/** Monotonic, because these are the commands that move the wall clock. */
-	it('is not measured against a clock the commands themselves can move', async () => {
-		const limits: Array<number | undefined> = [];
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			return { kind: 'ok', output: '' };
-		};
-		// A wall clock jumping an hour back mid-sequence would make the deadline unreachable; a
-		// monotonic reading cannot do that, so a fixed clock is the right stand-in here.
-		await runAll('linux', commands, exec, () => 0);
-		expect(limits).toEqual([WRITE_TIMEOUT_MS, WRITE_TIMEOUT_MS]);
-	});
-});
-
-describe('buildSetTimezoneCommands', () => {
-	it('passes the IANA identifier straight through on linux and macOS', () => {
-		expect(buildSetTimezoneCommands('linux', 'Europe/Prague')).toEqual([{ cmd: 'timedatectl', args: ['set-timezone', 'Europe/Prague'] }]);
-		expect(buildSetTimezoneCommands('darwin', 'Europe/Prague')).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settimezone', 'Europe/Prague'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-});
-
-describe('buildSetNtpServerCommands', () => {
-	it('only restarts the daemon on linux, where the address lives in the drop-in', () => {
-		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', true)).toEqual([{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }]);
-	});
-
-	/**
-	 * `systemctl restart` starts a stopped unit. Running it while the user has
-	 * synchronisation switched off would re-arm the daemon and let it step the clock
-	 * they are about to set by hand — the drop-in on disk is the whole change here.
-	 */
-	it('runs nothing on linux while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', false)).toEqual([]);
-	});
-
-	it('sets the single supported server on macOS', () => {
-		expect(buildSetNtpServerCommands('darwin', 'ntp.example.org', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setnetworktimeserver', 'ntp.example.org'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-});
-
-describe('the budget a privileged write gets', () => {
-	/**
-	 * The bug this exists for: every command shared the five-second READ budget, the ones
-	 * that stop and wait for a person included. `timedatectl` and `systemctl` ask polkit,
-	 * which puts an authentication dialog on a desktop session and blocks until it is
-	 * answered - so the write was killed while the user was still reading the prompt. A
-	 * kill arrives as `timeout`, which is a generic error, and the privileged-helper retry
-	 * only follows a PERMISSION refusal, so that did not save it either.
-	 */
-	it('is a human budget, an order of magnitude past the read one', () => {
-		expect(WRITE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
-		expect(WRITE_TIMEOUT_MS).toBeGreaterThan(EXEC_TIMEOUT_MS * 10);
-	});
-
-	/** A real child, so this tests the budget reaching `execFile` rather than a constant. */
-	const sleeper: [string, string[]] = [process.execPath, ['--eval', 'await Bun.sleep(3000)']];
-
-	it('is honoured per call: a short budget kills a child the default would have allowed', async () => {
-		expect((await run(sleeper[0], sleeper[1], 300)).kind).toBe('timeout');
-	}, 20_000);
-
-	it('lets the same child finish on the default read budget', async () => {
-		expect((await run(sleeper[0], sleeper[1])).kind).toBe('ok');
-	}, 20_000);
-
-	it('reports a killed write as a timeout that may have changed the host', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'timeout' });
-		const outcome = await runAll('linux', buildSetNtpEnabledCommands('linux', false), runner);
-		expect(outcome.outcome).toBe('error');
-		expect(outcome.stateMayHaveChanged).toBe(true);
-	});
-});
-
-describe('macOS systemsetup refusal', () => {
-	/**
-	 * The bug this exists for: `systemsetup` refuses every write when it is not root and
-	 * EXITS ZERO anyway. Measured on macOS 15.7.4 - `-settimezone`, `-setnetworktimeserver`,
-	 * `-setusingnetworktime` and `-settime` each printed the administrator-access line, exited
-	 * 0 and changed nothing, and the writers reported `success: true` for all four. The refusal
-	 * has to be read out of the output, so every builder carries the pattern.
-	 */
-	const REFUSAL = 'You need administrator access to run this tool... exiting!\n';
-
-	it('is what every macOS write is checked for', () => {
-		const commands: SystemCommand[] = [...buildSetClockCommands('darwin', AT), ...buildSetTimezoneCommands('darwin', 'Europe/Prague'), ...buildSetNtpServerCommands('darwin', 'ntp.example.org', true), ...buildSetNtpEnabledCommands('darwin', true), ...buildSetNtpEnabledCommands('darwin', false)];
-		expect(commands.length).toBe(5);
-		for (const command of commands) expect(command.failOnOutput?.test(REFUSAL)).toBe(true);
-	});
-
-	it('turns an exit-zero refusal into permission-denied, not success', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'ok', output: REFUSAL });
-		const outcome = await runAll('darwin', buildSetTimezoneCommands('darwin', 'Europe/London'), runner);
-		expect(outcome.success).toBe(false);
-		expect(outcome.outcome).toBe('permission-denied');
-		expect(outcome.message).toContain('administrator access');
-	});
-
-	it('still accepts a write that printed nothing', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'ok', output: '' });
-		expect((await runAll('darwin', buildSetNtpEnabledCommands('darwin', false), runner)).success).toBe(true);
-	});
-});
-
-describe('buildSetNtpEnabledCommands', () => {
-	it('is a single switch on linux and macOS', () => {
-		expect(buildSetNtpEnabledCommands('linux', true)).toEqual([{ cmd: 'timedatectl', args: ['set-ntp', 'true'] }]);
-		expect(buildSetNtpEnabledCommands('linux', false)).toEqual([{ cmd: 'timedatectl', args: ['set-ntp', 'false'] }]);
-		expect(buildSetNtpEnabledCommands('darwin', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'on'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-		expect(buildSetNtpEnabledCommands('darwin', false)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'off'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-});
-
 describe('setSystemNtpEnabled', () => {
 	/** Run `body` with `process.platform` reporting the given host. */
 	async function onPlatform(platform: string, body: () => Promise<void>): Promise<void> {
@@ -506,7 +198,7 @@ describe('setSystemNtpEnabled', () => {
 		await onPlatform('linux', async () => {
 			const { exec, calls } = fakeRunner([]);
 			expect(await setSystemNtpEnabled(true, settlesTo(true), exec)).toEqual({ success: true, outcome: 'ok', message: null });
-			expect(calls).toEqual(['timedatectl set-ntp true']);
+			expect(calls).toEqual(['enabled true']);
 		});
 	});
 
@@ -520,92 +212,16 @@ describe('setSystemNtpEnabled', () => {
 	 * A virtual clock for the settle wait, so a test that deliberately never settles runs
 	 * its whole fifteen-second budget without spending fifteen seconds.
 	 */
-	function instantSettle(): { pause: (ms: number) => Promise<void>; now: () => number } {
-		let elapsed = 0;
-		return {
-			pause: async ms => {
-				elapsed += ms;
-			},
-			now: () => elapsed,
-		};
-	}
 
-	it('does not report success when synchronisation did not actually come up', async () => {
-		await onPlatform('linux', async () => {
-			const { exec, calls } = fakeRunner([]);
-			const stuck = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: false });
-			const clock = instantSettle();
-			const outcome = await setSystemNtpEnabled(true, stuck, exec, undefined, clock.pause, clock.now);
-			expect(outcome).toMatchObject({ success: false, outcome: 'error' });
-			expect(outcome.message).toContain('still off');
-			expect(calls).toEqual(['timedatectl set-ntp true']);
-		});
-	});
-
-	/** An unreadable state stays unreadable; only a definite opposite is a failure. */
-	it('does not call an unreadable state a failed toggle', async () => {
-		await onPlatform('linux', async () => {
-			const { exec } = fakeRunner([]);
-			const unknown = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: null });
-			const clock = instantSettle();
-			expect(await setSystemNtpEnabled(true, unknown, exec, undefined, clock.pause, clock.now)).toEqual({ success: true, outcome: 'ok', message: null });
-		});
-	});
-
-	/**
-	 * The masking this used to do. A re-read afterwards saw `ntpEnabled` matching the
-	 * request and rewrote the whole thing to `ok`, so a step that genuinely refused —
-	 * here the one that carries the change — was reported to the user as saved.
-	 */
 	it('does not turn a refused step into a success because the state happens to match', async () => {
 		await onPlatform('linux', async () => {
 			const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Failed to set ntp: something went wrong\n' }]);
 			// The host reads back exactly as requested, which is what used to erase the error.
 			const readsAsEnabled = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: true });
-			const clock = instantSettle();
-			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec, undefined, clock.pause, clock.now);
+			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec);
 			expect(r.success).toBe(false);
 			expect(r.outcome).toBe('error');
 			expect(r.message).toBe('Failed to set ntp: something went wrong');
-		});
-	});
-
-	/**
-	 * The bug this exists for, measured on arm64 Ubuntu 24.04 with systemd-timesyncd
-	 * running: `timedatectl set-ntp false` returns as soon as timedated ACCEPTS the
-	 * request, and the flag flips a moment later. A single immediate read still answered
-	 * `NTP=yes`, so a write that had worked was reported as "the host accepted the request
-	 * but synchronisation is still on" - and the very next call succeeded. Only real
-	 * hardware shows it: in a container the service can never start, so the flag never
-	 * flips and the same branch is right.
-	 */
-	it('waits for the flag to catch up instead of failing the write that set it', async () => {
-		await onPlatform('linux', async () => {
-			const { exec } = fakeRunner([]);
-			let reads = 0;
-			// Still the old value for the first few polls, exactly as timedated behaves.
-			const lagging = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: ++reads < 4 });
-			const clock = instantSettle();
-			expect(await setSystemNtpEnabled(false, lagging, exec, undefined, clock.pause, clock.now)).toEqual({ success: true, outcome: 'ok', message: null });
-			expect(reads).toBe(4);
-		});
-	});
-
-	it('still gives up on a flag that never catches up', async () => {
-		await onPlatform('linux', async () => {
-			const { exec } = fakeRunner([]);
-			let reads = 0;
-			const stuck = async (): Promise<SystemTimeStatus> => {
-				reads++;
-				return statusFixture({ ntpEnabled: true });
-			};
-			const clock = instantSettle();
-			const outcome = await setSystemNtpEnabled(false, stuck, exec, undefined, clock.pause, clock.now);
-			expect(outcome).toMatchObject({ success: false, outcome: 'error', changed: true });
-			expect(outcome.message).toContain('still on');
-			// Bounded: 15 s of 250 ms polls, not an endless wait.
-			expect(reads).toBeGreaterThan(50);
-			expect(clock.now()).toBe(15000);
 		});
 	});
 
@@ -757,7 +373,7 @@ describe('the write lock covers every writer', () => {
 
 	/** The zone is what a clock reading is interpreted against, so it belongs in the same queue. */
 	it('holds a timezone set behind another write', async () => {
-		const refused: CommandRunner = async () => ({ kind: 'failed', code: 1, output: 'refused' });
+		const refused: TimeOperationRunner = async () => ({ success: false, outcome: 'error', message: 'refused' });
 		expect(await waitsForTheLock(() => setSystemTimezone(listSystemTimezones()[0]!, refused))).toBe(true);
 	});
 

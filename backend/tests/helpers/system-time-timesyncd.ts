@@ -1,5 +1,8 @@
 import { readFile } from 'node:fs/promises';
-import { applyTimesyncdDropIn, type CommandRunner } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn } from '../../src/system-time.ts';
+import { verifyTimesyncdServer } from '../../src/system-time-linux.ts';
+import type { TimesyncdOperations } from '../../src/native/linux/time-mutation-dropin.ts';
+import type { FixtureRunner } from './system-time-fixtures.ts';
 import { unreadableByServiceAccount } from '../../src/system-time-files.ts';
 
 /** Temporary fixture paths use mode checks; the native child only accepts the host drop-in. */
@@ -12,10 +15,15 @@ export async function timesyncConfigOutput(path: string, laterConfiguration = ''
 }
 
 /** Verification reads the actual temporary file; the delegate handles daemon operations. */
-export function withTimesyncConfigRead(path: string, delegate: CommandRunner): CommandRunner {
-	return async (command, args) => {
-		if (command !== 'systemd-analyze') return delegate(command, args);
-		if (args.join('\0') !== ['--no-pager', 'cat-config', 'systemd/timesyncd.conf'].join('\0')) throw new Error('Unexpected timesyncd configuration command');
-		return { kind: 'ok', output: await timesyncConfigOutput(path) };
-	};
+export function withTimesyncConfigRead(path: string, delegate: FixtureRunner): TimesyncdOperations {
+	return { verify: server => verifyTimesyncdServer(server, () => timesyncConfigOutput(path)), restart: timeoutMs => delegate({ kind: 'restart' }, timeoutMs) };
+}
+
+export function configurationOperations(
+	read: () => Promise<string>,
+	restart: TimesyncdOperations['restart'] = async () => {
+		throw new Error('Unexpected restart');
+	}
+): TimesyncdOperations {
+	return { verify: server => verifyTimesyncdServer(server, read), restart };
 }

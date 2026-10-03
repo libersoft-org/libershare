@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
+import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { ianaToWindowsTimezoneId, readWindowsTimeZone, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
@@ -31,19 +31,6 @@ describe('isSupportedPlatform', () => {
 });
 
 describe('trusted system executables', () => {
-	it('maps every privileged helper to an absolute operating-system path', () => {
-		expect(resolveSystemExecutable('linux', 'timedatectl')).toBe('/usr/bin/timedatectl');
-		expect(resolveSystemExecutable('linux', 'systemctl')).toBe('/usr/bin/systemctl');
-		expect(resolveSystemExecutable('darwin', '/usr/sbin/systemsetup')).toBe('/usr/sbin/systemsetup');
-		expect(resolveSystemExecutable('win32', 'w32tm')).toBeNull();
-		expect(resolveSystemExecutable('win32', 'powershell')).toBeNull();
-	});
-
-	it('fails closed for a relative executable outside the allow-list', () => {
-		expect(resolveSystemExecutable('linux', 'sh')).toBeNull();
-		expect(resolveSystemExecutable('win32', 'cmd')).toBeNull();
-	});
-
 	it.skipIf(process.platform !== 'win32')('ignores SystemRoot when locating Windows DLLs', () => {
 		const expected = windowsSystemLibraryPath('icu.dll');
 		const old = process.env['SystemRoot'];
@@ -415,7 +402,7 @@ describe('listSystemTimezones', () => {
 			const result = JSON.parse(stdout);
 			expect(result).toMatchObject({ canonicalIncludesUtc: false, utcResolves: true, utcAvailable: true, result: { success: true, outcome: 'ok' } });
 			expect(result.calls).toHaveLength(1);
-			expect(result.calls[0].args).toContain('UTC');
+			expect(result.calls[0]).toEqual({ kind: 'timezone', timezone: 'UTC' });
 		} finally {
 			clearTimeout(deadline);
 			if (child.exitCode === null) {

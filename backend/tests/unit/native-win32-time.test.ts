@@ -12,17 +12,17 @@ type Writable<T> = { -readonly [K in keyof T]: Writable<T[K]> };
 function snapshot(): Writable<WindowsTimeSnapshot> {
 	return { utcMs: 100000, hostUptimeMs: 5000, bootId: 'boot-test', zone: { windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: false, hash: 'a'.repeat(64), bytes: '' }, mode: { mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped', ntpClientEnabled: false }, policyManaged: false, registry: { type: 'NTP', server: 'time.example.org,0x8', start: 4, delayed: 0, client: 0 }, synchronized: false };
 }
-test.skipIf(process.platform !== 'win32')('Windows writers never fall back to an injected command runner', async () => {
+test.skipIf(process.platform !== 'win32')('Windows setters dispatch typed native operations after their guards', async () => {
 	const status = await getSystemTimeStatus(async () => ({ timezone: 'UTC', ntpEnabled: false, ntpSynchronized: false, ntpServer: 'time.example.org', capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } }));
 	let commands = 0;
 	const exec = async () => {
 		commands++;
-		return { kind: 'ok' as const, output: '' };
+		return { success: true, outcome: 'ok' as const, message: null };
 	};
 	const mode = async () => snapshot().mode;
 	const results = [await setSystemClock(1, 2, 3, async () => status, exec, mode), await setSystemNtpServer('time.example.org', async () => status, mode, exec), await setSystemNtpEnabled(false, async () => status, exec, mode)];
-	expect(results.every(result => result.success === false)).toBe(true);
-	expect(commands).toBe(0);
+	expect(results.every(result => result.success)).toBe(true);
+	expect(commands).toBe(3);
 });
 function fixture(answer: (request: WindowsTimeWrite, index: number) => WindowsTimeWriteResult, state: WindowsTimeSnapshot = snapshot()) {
 	const calls: WindowsTimeWrite[] = [];
