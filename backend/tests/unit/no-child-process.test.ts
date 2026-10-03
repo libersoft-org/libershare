@@ -32,10 +32,17 @@ function processCalls(source: string, file: string): string[] {
 					imported.add(item.name.text);
 				}
 		}
+		if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+			const name = ts.isPropertyAccessExpression(node) ? node.name.text : ts.isStringLiteral(node.argumentExpression) ? node.argumentExpression.text : undefined;
+			if (node.expression.getText(ast) === 'Bun' && (name === 'spawn' || name === 'spawnSync')) {
+				if (!ts.isCallExpression(node.parent) || node.parent.expression !== node) report(node, 'A process launcher cannot be aliased or passed to another function');
+				else if (allowed.get(`${file}:${owner(node)}`) !== `Bun.${name}`) report(node, `Unexpected process launch Bun.${name}`);
+			}
+		}
 		if (ts.isCallExpression(node)) {
 			const expression = node.expression;
 			if ((expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(expression) && expression.text === 'require')) && node.arguments.some(arg => ts.isStringLiteral(arg) && /^(?:node:)?child_process$/.test(arg.text))) report(node, 'Dynamic child-process imports are not allowed');
-			const call = ts.isIdentifier(expression) && imported.has(expression.text) ? 'spawn' : ts.isPropertyAccessExpression(expression) && expression.expression.getText(ast) === 'Bun' && ['spawn', 'spawnSync'].includes(expression.name.text) ? `Bun.${expression.name.text}` : undefined;
+			const call = ts.isIdentifier(expression) && imported.has(expression.text) ? 'spawn' : undefined;
 			if (call && allowed.get(`${file}:${owner(node)}`) !== call) report(node, `Unexpected process launch ${call}`);
 		}
 		if (ts.isIdentifier(node) && imported.has(node.text) && !ts.isImportSpecifier(node.parent) && !(ts.isCallExpression(node.parent) && node.parent.expression === node)) report(node, 'A process launcher cannot be aliased or passed to another function');
@@ -59,4 +66,6 @@ test('the process guard rejects an alias and a launch outside the allowed functi
 	expect(processCalls("import { spawn as launch } from 'node:child_process'; function other() { launch('example'); }", 'network-helper-client.ts')).toHaveLength(1);
 	expect(processCalls("import { spawn } from 'node:child_process'; const launch = spawn;", 'network-helper-client.ts')).toHaveLength(1);
 	expect(processCalls("Bun.spawnSync(['example']);", 'native/example.ts')).toHaveLength(1);
+	expect(processCalls('const launch = Bun.spawn; launch(["example"]);', 'native/example.ts')).toHaveLength(1);
+	expect(processCalls('Bun["spawn"](["example"]);', 'native/example.ts')).toHaveLength(1);
 });
