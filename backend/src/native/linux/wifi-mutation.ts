@@ -114,6 +114,15 @@ async function assertProfile(session: WifiSession, profilePath: string, metadata
 	if (metadata.cloneUuid && (await session.profileByUuid(metadata.cloneUuid)) !== null) throw new Error('Temporary Wi-Fi profile is still present');
 }
 
+/** The personal security method a saved profile actually uses. */
+function savedAuthentication(settings: NativeNetworkSettings): 'open' | 'wpa-psk' | 'sae' {
+	const security = settings['802-11-wireless-security'];
+	if (!security) return 'open';
+	const key = wifiString(security, 'key-mgmt', 's', '');
+	if (key === 'wpa-psk' || key === 'sae') return key;
+	throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'This Wi-Fi authentication method is not supported');
+}
+
 export async function connectNativeLinuxWifi(context: NativeMutationContext, device: string, ssid: string, password: string, bssid: string | null, options: WifiMutationOptions, deps?: WifiMutationDeps): Promise<void> {
 	if (!isValidSSID(ssid) || (bssid !== null && !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(bssid))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Invalid Wi-Fi target');
 	const session = new WifiSession(options, context, deps);
@@ -134,12 +143,11 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 		session.ensureBudget(options.scanTimeoutMs, true);
 		await session.deps.scan(device, Math.min(options.scanTimeoutMs, session.remainingMs()));
 		const ap = await targetAccessPoint(session, path, ssid, bssid);
-		const authentication = wifiPersonalSecurity(ap);
-		if (authentication === null) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'This Wi-Fi authentication method is not supported');
-		if (authentication === 'open' ? password !== '' : !isValidWifiKey((ap.wpa | ap.rsn) & 0x400 ? 'WPA3' : 'WPA2', password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Invalid Wi-Fi password');
+		const offered = wifiPersonalSecurity(ap);
+		if (offered === null) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'This Wi-Fi authentication method is not supported');
+		if (offered === 'open' ? password !== '' : !isValidWifiKey((ap.wpa | ap.rsn) & 0x400 ? 'WPA3' : 'WPA2', password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Invalid Wi-Fi password');
 		metadata.targetSsidHex = Buffer.from(ap.ssid).toString('hex');
 		metadata.targetBssid = ap.bssid;
-		metadata.targetAuthentication = authentication;
 		const currentDevice = await session.all(path, `${NM}.Device`);
 		let selected: NativeNetworkSettings | undefined;
 		for (const candidate of wifiPaths(currentDevice, 'AvailableConnections')) {
@@ -150,6 +158,10 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 				break;
 			}
 		}
+		// What the AP offers only picks the method for a new profile; a saved one keeps its own,
+		// e.g. SAE on a WPA2/WPA3 transition network, and the secret agent must be told that one.
+		const authentication = selected ? savedAuthentication(selected) : offered;
+		metadata.targetAuthentication = authentication;
 		let pskFlags: number | null = null;
 		if (selected) {
 			metadata.selectedProfileUuid = wifiString(selected['connection']!, 'uuid');

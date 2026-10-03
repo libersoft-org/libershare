@@ -173,7 +173,9 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				return reply('a{sv}', {});
 			}
 			if (request.member === 'ActivateConnection') {
-				if (options.flags && !state.secretAgent) throw error(`${NM}.NoSecrets`);
+				// The real agent answers only for the exact profile, key management included.
+				const agentScope = agentScopes[agentScopes.length - 1];
+				if (options.flags && (!state.secretAgent || agentScope?.authentication !== profiles.get(String(request.args![0]))?.['802-11-wireless-security']?.['key-mgmt']?.value)) throw error(`${NM}.NoSecrets`);
 				for (const path of volatile) {
 					profiles.delete(path);
 					secrets.delete(path);

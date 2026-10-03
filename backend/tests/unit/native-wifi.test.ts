@@ -102,6 +102,15 @@ describe('native Wi-Fi transactions', () => {
 			expect(f.state.closed).toBe(true);
 		}
 	});
+	test('a saved SAE profile on a WPA2/WPA3 network hands the agent SAE, not the PSK default for new profiles', async () => {
+		const f = wifiFixture({ flags: 1 });
+		f.profiles.get(PROFILE)!['802-11-wireless-security']!['key-mgmt'] = variant('s', 'sae');
+		f.state.rsn = 0x588;
+		await connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps);
+		expect(f.agentScopes.map(scope => scope.authentication)).toEqual(['sae']);
+		expect(f.state.active).toBe(PROFILE);
+		expect(f.records.every(record => record.targetAuthentication === 'sae')).toBe(true);
+	});
 	test('a known activation failure releases the entered password before restoring an agent-owned profile', async () => {
 		const f = wifiFixture({ flags: 1, active: true });
 		f.state.failure = 'original-activation';
