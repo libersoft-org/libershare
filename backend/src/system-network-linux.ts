@@ -1,16 +1,10 @@
-import { splitNmcliFields } from './system-network-linux-wifi.ts';
-export { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
 import { applyNativeLinuxIPv4 } from './native/linux/network-mutation.ts';
 import { requireNativeMutationContext } from './native/mutation-context.ts';
 import { connectNativeLinuxWifi, disconnectNativeLinuxWifi } from './native/linux/wifi-mutation.ts';
 import type { WifiMutationOptions } from './native/linux/wifi-client.ts';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import type { NativeNetworkSources } from './native/linux/network-reader.ts';
-import { CodedError, ErrorCodes, isIPv4, isIPv6, validateIPv4Config } from '@shared';
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
-
-/** Locale retained for CLI oracle fixtures. */
-export const C_LOCALE_ENV: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
 /** Shared native read budget, in milliseconds. */
 const EXEC_TIMEOUT_MS = 5000;
@@ -108,7 +102,7 @@ export function dbmToQuality(dbm: number): number {
  * Two forms exist: `Not connected.` for an idle adapter, and a `Connected to
  * <bssid>` block with indented `SSID:` / `signal:` lines. A connected adapter
  * whose driver does not report a signal level yields `signal: null` rather than
- * a guessed number — and {@link parseProcNetWireless} then backfills it.
+ * a guessed number.
  *
  * The connected shape is captured from a real associated adapter (brcmfmac on
  * Debian 12/arm64), where this and `/proc/net/wireless` reported the same level
@@ -124,27 +118,6 @@ export function parseIwLink(text: string): { ssid: string | null; signal: number
 		ssid: ssidMatch?.[1] ?? null,
 		signal: signalMatch?.[1] ? dbmToQuality(parseFloat(signalMatch[1])) : null,
 	};
-}
-
-/**
- * Signal levels from `/proc/net/wireless`, keyed by interface.
- *
- * The kernel writes this file whenever a wireless driver is loaded, so it needs
- * no userspace tool at all — which is why it is the fallback for a host that does
- * not ship `iw`. The columns are `status link level noise`; only `level` is used,
- * and only when it is negative, because that is the form drivers report in dBm.
- * A positive level is a driver-relative unit with no documented scale, and
- * turning that into a percentage would be inventing a number.
- */
-export function parseProcNetWireless(text: string): Map<string, number> {
-	const result = new Map<string, number>();
-	for (const line of text.split('\n')) {
-		const match = line.match(/^\s*([a-zA-Z0-9._-]+):\s*[0-9a-f]+\s+(-?\d+)\.?\s+(-?\d+)\.?/);
-		if (!match || !match[1] || !match[3]) continue;
-		const level = parseInt(match[3], 10);
-		if (level < 0) result.set(match[1], dbmToQuality(level));
-	}
-	return result;
 }
 
 /** Map an `ip` entry's operstate/flags to a carrier state. NO-CARRIER wins over an administratively UP flag. */
@@ -314,27 +287,6 @@ export const NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS: number = 2 * NETWORK_M
  */
 export const NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS: number = Math.ceil((Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS) + NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS + NETWORK_MANAGER_CHECKPOINT_SAFETY_MS) / 1000) + 1;
 
-/** The polkit action that persisting a connection change needs. */
-const NM_MODIFY_PERMISSION = 'org.freedesktop.NetworkManager.settings.modify.system';
-const NM_CONTROL_PERMISSION = 'org.freedesktop.NetworkManager.network-control';
-const NM_WIFI_SCAN_PERMISSION = 'org.freedesktop.NetworkManager.wifi.scan';
-const NM_CHECKPOINT_PERMISSION = 'org.freedesktop.NetworkManager.checkpoint-rollback';
-
-/**
- * Read one permission verdict out of `nmcli -t -f PERMISSION,VALUE general permissions`.
- *
- * The values (`yes`, `no`, `auth`) are NOT localized even though the table form
- * of the same command is — verified against a Czech-locale host, where the table
- * printed "ano" and the terse form still printed "yes".
- */
-export function parseNmcliPermission(text: string, permission: string): string | null {
-	for (const line of text.split('\n')) {
-		const fields = splitNmcliFields(line.trim());
-		if (fields[0] === permission) return fields[1] ?? null;
-	}
-	return null;
-}
-
 /**
  * True when NetworkManager is running AND this process may actually persist a
  * change to it.
@@ -354,87 +306,12 @@ export async function readLinuxCapabilities(): Promise<NetCapabilities> {
 	}
 }
 
-/**
- * Parse the per-device blocks of NetworkManager DNS output.
- *
- * Output is one blank-line-separated block per device: a `GENERAL.DEVICE` line
- * followed by zero or more `IP4.DNS[n]` lines. A device with no resolvers still
- * gets an entry with an empty array so callers can distinguish it from a missing
- * read. Whether NetworkManager manages the device is parsed separately.
- */
-export function parseNmcliDns(text: string): Map<string, string[]> {
-	const result = new Map<string, string[]>();
-	let device: string | null = null;
-	for (const line of text.split('\n')) {
-		const fields = splitNmcliFields(line.trim());
-		const key = fields[0];
-		if (!key) continue;
-		// NetworkManager versions disagree on whether ':' inside an IPv6 value is
-		// escaped in terse mode. Rejoining the value fields accepts both forms.
-		const value = fields.slice(1).join(':');
-		if (key === 'GENERAL.DEVICE') {
-			device = value || null;
-			if (device) result.set(device, []);
-		} else if (device && (key.startsWith('IP4.DNS') || key.startsWith('IP6.DNS'))) {
-			if (value) result.get(device)?.push(value);
-		}
-	}
-	return result;
-}
-
-/** Parse the devices NetworkManager owns independently of connection state. */
-export function parseNmcliManagedDevices(text: string): Set<string> {
-	const result = new Set<string>();
-	let device: string | null = null;
-	for (const line of text.split('\n')) {
-		const fields = splitNmcliFields(line.trim());
-		const key = fields[0];
-		const value = fields.slice(1).join(':');
-		if (key === 'GENERAL.DEVICE') device = value || null;
-		else if (key === 'GENERAL.NM-MANAGED' && device && value.trim().toLowerCase() === 'yes') result.add(device);
-	}
-	return result;
-}
-
-/** Parse active NetworkManager profile UUIDs keyed by their device. */
-export function parseNmcliActiveConnections(text: string): Map<string, string> {
-	const result = new Map<string, string>();
-	for (const line of text.split('\n')) {
-		if (!line.trim()) continue;
-		const [uuid, device] = splitNmcliFields(line);
-		if (uuid && device) result.set(device, uuid);
-	}
-	return result;
-}
-
 /** Map only the two NetworkManager methods this editor can preserve exactly. */
 export function parseNmcliIPv4Method(text: string): NetInterfaceInfo['ipv4Mode'] {
 	const method = text.trim().toLowerCase();
 	if (method === 'auto') return 'dhcp';
 	if (method === 'manual') return 'static';
 	return 'unknown';
-}
-
-/** Accept only a plain profile the editor can replace without preserving hidden routing policy. */
-export function parseNmcliIPv4Profile(text: string, expectedDevice: string, activeInstances: number): NmcliIPv4Profile {
-	const values = new Map<string, string>();
-	for (const line of text.split('\n')) {
-		const fields = splitNmcliFields(line.trim());
-		const key = fields[0]?.toLowerCase();
-		if (key) values.set(key, fields.slice(1).join(':').trim());
-	}
-	const method = values.get('ipv4.method') ?? '';
-	const gatewayText = values.get('ipv4.gateway') ?? '';
-	const addresses = values.get('ipv4.addresses') ?? '';
-	const interfaceName = values.get('connection.interface-name') || null;
-	const multiConnectMatch = (values.get('connection.multi-connect') ?? '').match(/^-?\d+/);
-	const multiConnect = multiConnectMatch ? Number(multiConnectMatch[0]) : null;
-	const addressMatch = addresses.match(/^([^/]+)\/(\d{1,2})$/);
-	const simpleManualAddress = !!addressMatch && validateIPv4Config({ mode: 'static', address: addressMatch[1] ?? '', prefixLength: Number(addressMatch[2]), gateway: gatewayText }) === null;
-	const knownMethod = method === 'auto' || method === 'manual';
-	const boundOnce = interfaceName === expectedDevice && (multiConnect === 0 || multiConnect === 1) && activeInstances === 1;
-	const safe = boundOnce && knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
-	return { method, gateway: gatewayText || null, address: simpleManualAddress ? (addressMatch?.[1] ?? null) : null, prefixLength: simpleManualAddress && addressMatch ? Number(addressMatch[2]) : null, safe };
 }
 
 /** The one IPv4 address the kernel holds on a device, and whether it came from a lease. */
@@ -468,96 +345,6 @@ export function nmcliProfileMatchesLive(profile: NmcliIPv4Profile, live: LiveIPv
 	return live === null || live.leased || live.address.startsWith('169.254.');
 }
 
-/**
- * Build the `nmcli connection modify` arguments for a desired IPv4 config.
- *
- * Switching to DHCP clears the manual fields explicitly: NetworkManager keeps a
- * stale `ipv4.addresses` on a profile whose method changed, and that address
- * comes back the moment the user switches to static again.
- */
-function nmcliDnsArgs(config: NetIPv4Config): string[] {
-	if (config.dns === undefined) return [];
-	const ignoreAutomatic = config.dns.length > 0 ? 'yes' : 'no';
-	return ['ipv4.dns', config.dns.filter(isIPv4).join(','), 'ipv4.ignore-auto-dns', ignoreAutomatic, 'ipv6.dns', config.dns.filter(isIPv6).join(','), 'ipv6.ignore-auto-dns', ignoreAutomatic];
-}
-
-/**
- * NetworkManager refuses `ipv6.dns` on a profile whose IPv6 method is
- * `disabled` or `ignore`, and would only say so after the profile update has
- * started. Say it first, as a request the host cannot honour rather than a
- * failed change.
- */
-export function assertIPv6DnsAllowed(ipv6Method: string, dns: readonly string[] | undefined): void {
-	if (!dns?.some(isIPv6)) return;
-	const method = ipv6Method.trim();
-	if (method === 'disabled' || method === 'ignore') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'IPv6 resolvers need IPv6 enabled on this profile');
-}
-
-export function nmcliModifyArgs(connectionUUID: string, config: NetIPv4Config, addressingChanged: boolean = true): string[] {
-	const base = ['connection', 'modify', 'uuid', connectionUUID];
-	const dns = nmcliDnsArgs(config);
-	if (!addressingChanged) return [...base, ...dns];
-	if (config.mode === 'dhcp') return [...base, 'ipv4.method', 'auto', 'ipv4.addresses', '', 'ipv4.gateway', '', ...dns];
-	return [...base, 'ipv4.method', 'manual', 'ipv4.addresses', `${config.address}/${config.prefixLength}`, 'ipv4.gateway', config.gateway ?? '', ...dns];
-}
-
-/** Address one active profile unambiguously even when display names collide. */
-export function nmcliActivateArgs(connectionUUID: string, device: string): string[] {
-	return ['connection', 'up', 'uuid', connectionUUID, 'ifname', device];
-}
-
-export function assertNmcliActiveConnection(connections: Map<string, string>, device: string, expectedUUID: string): void {
-	if (connections.get(device) !== expectedUUID || [...connections.values()].filter(uuid => uuid === expectedUUID).length !== 1) throw new Error(`NetworkManager activated the profile on an unexpected device`);
-}
-
-const NM_SERVICE = 'org.freedesktop.NetworkManager';
-const NM_PATH = '/org/freedesktop/NetworkManager';
-const NM_INTERFACE = 'org.freedesktop.NetworkManager';
-const NM_CHECKPOINT_DELETE_NEW_CONNECTIONS = 2;
-
-/** Create a device checkpoint that also removes profiles created by a failed mutation. */
-export function networkManagerCheckpointCreateArgs(devicePath: string): string[] {
-	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, 'CheckpointCreate', 'aouu', '1', devicePath, String(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS), String(NM_CHECKPOINT_DELETE_NEW_CONNECTIONS)];
-}
-
-/** Finish a checkpoint explicitly; rollback is never left waiting for an interactive timeout. */
-export function networkManagerCheckpointFinishArgs(method: 'CheckpointDestroy' | 'CheckpointRollback', checkpointPath: string): string[] {
-	return ['--system', 'call', NM_SERVICE, NM_PATH, NM_INTERFACE, method, 'o', checkpointPath];
-}
-
-/** Parse the stable object-path output of `busctl call ... CheckpointCreate`. */
-export function parseNetworkManagerCheckpointPath(output: string): string {
-	const match = output.trim().match(/^o\s+"?(\/org\/freedesktop\/NetworkManager\/Checkpoint\/\d+)"?$/);
-	if (!match?.[1]) throw new Error('NetworkManager returned an invalid checkpoint path');
-	return match[1];
-}
-
-/** Reject a D-Bus rollback that completed but failed for any checkpointed device. */
-export function assertNetworkManagerRollback(output: string): void {
-	const header = output.trim().match(/^a\{su\}\s+(\d+)\s*(.*)$/s);
-	if (!header) throw new Error('NetworkManager returned an invalid rollback result');
-	const expected = Number(header[1]);
-	const entries = [...(header[2] ?? '').matchAll(/"([^"]+)"\s+(\d+)/g)];
-	if (expected === 0 || entries.length !== expected || entries.some(entry => Number(entry[2]) !== 0)) throw new Error('NetworkManager failed to roll back a checkpointed device');
-}
-
-/** Transaction invariant shared by IPv4 and Wi-Fi mutations. */
-export async function withNetworkManagerCheckpoint<T>(operations: { create: () => Promise<string>; mutate: () => Promise<T>; commit: (checkpointPath: string) => Promise<void>; rollback: (checkpointPath: string) => Promise<void> }): Promise<T> {
-	const checkpointPath = await operations.create();
-	try {
-		const result = await operations.mutate();
-		await operations.commit(checkpointPath);
-		return result;
-	} catch (error) {
-		try {
-			await operations.rollback(checkpointPath);
-		} catch (rollbackError) {
-			throw new AggregateError([error, rollbackError], 'network mutation failed and rollback also failed');
-		}
-		throw error;
-	}
-}
-
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
 	await applyNativeLinuxIPv4(requireNativeMutationContext(), device, config, {
@@ -572,89 +359,9 @@ export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addr
 	});
 }
 
-/** Verify the live address and route before committing the NetworkManager checkpoint. */
-/** The saved profile carries the requested addressing method. */
-export function assertLinuxIPv4Method(config: NetIPv4Config, methodText: string): void {
-	if (methodText.trim() !== (config.mode === 'dhcp' ? 'auto' : 'manual')) throw new Error('NetworkManager did not preserve the requested IPv4 method');
-}
-
-export function assertLinuxIPv4Applied(config: NetIPv4Config, methodText: string, addrJson: string, routeJson: string, requireLease: boolean = true): void {
-	assertLinuxIPv4Method(config, methodText);
-	const addresses = (JSON.parse(addrJson) as IpAddrEntry[]).flatMap(entry => entry.addr_info ?? []).filter(address => address.family === 'inet');
-	if (config.mode === 'dhcp') {
-		// With the link down the method is what gets saved; the lease follows the cable.
-		// A leftover static address is not a lease. Without the origin check, a DHCP
-		// switch that never got an answer would pass on the address it was supposed
-		// to replace.
-		if (requireLease && !addresses.some(address => isLeasedAddress(address) && address.local !== '0.0.0.0' && !address.local.startsWith('169.254.') && address.scope !== 'host')) throw new Error('NetworkManager did not obtain a usable IPv4 lease');
-		return;
-	}
-	if (addresses.length !== 1 || addresses[0]?.local !== config.address || addresses[0]?.prefixlen !== config.prefixLength) throw new Error('NetworkManager did not apply the requested IPv4 address');
-	const routes = JSON.parse(routeJson) as IpRouteEntry[];
-	if (config.gateway) {
-		if (routes.length !== 1 || routes[0]?.gateway !== config.gateway) throw new Error('NetworkManager did not apply the requested IPv4 gateway');
-	} else if (routes.length !== 0) throw new Error('NetworkManager kept an unexpected default route');
-}
-
-function parseNmcliProfileValues(text: string): Map<string, string> {
-	const values = new Map<string, string>();
-	for (const line of text.split('\n')) {
-		const fields = splitNmcliFields(line.trim());
-		const key = fields[0]?.toLowerCase();
-		if (key) values.set(key, fields.slice(1).join(':').trim());
-	}
-	return values;
-}
-
-function dnsList(value: string | undefined): string[] {
-	return (value ?? '')
-		.split(',')
-		.map(server => server.trim())
-		.filter(Boolean);
-}
-
-function sameAddresses(actual: string[], expected: string[]): boolean {
-	const left = [...new Set(actual)].sort();
-	const right = [...new Set(expected)].sort();
-	return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-/**
- * Verify the resolvers a change asked for.
- *
- * `liveText` is what the device reports now, and is only meaningful once the
- * profile has been activated. With the carrier down there is nothing to activate
- * and no resolvers to read back, so pass `null`: the saved policy is the whole
- * change there, and it is still verified.
- */
-export function assertLinuxDnsApplied(config: NetIPv4Config, profileText: string, liveText: string | null, device: string): void {
-	if (config.dns === undefined) return;
-	const values = parseNmcliProfileValues(profileText);
-	const custom = config.dns.length > 0;
-	const expected4 = config.dns.filter(isIPv4);
-	const expected6 = config.dns.filter(isIPv6);
-	if (values.get('ipv4.ignore-auto-dns') !== (custom ? 'yes' : 'no') || values.get('ipv6.ignore-auto-dns') !== (custom ? 'yes' : 'no') || !sameAddresses(dnsList(values.get('ipv4.dns')), expected4) || !sameAddresses(dnsList(values.get('ipv6.dns')), expected6)) throw new Error('NetworkManager did not preserve the requested DNS policy');
-	if (custom && liveText !== null && !sameAddresses(parseNmcliDns(liveText).get(device) ?? [], config.dns)) throw new Error('NetworkManager did not apply the requested DNS servers');
-}
-
 /** Scan for Wi-Fi networks reachable from one device. */
 export async function scanLinuxWifi(device: string): Promise<NetWifiNetwork[]> {
 	return networkReader.call<NetWifiNetwork[]>({ method: 'linux.network.scan', args: { device, timeoutMs: WIFI_SCAN_TIMEOUT_MS } }, WIFI_SCAN_TIMEOUT_MS);
-}
-
-/** Map NetworkManager's three independent policy decisions to real capabilities. */
-export function parseLinuxCapabilities(text: string): NetCapabilities {
-	const modify = parseNmcliPermission(text, NM_MODIFY_PERMISSION);
-	const activate = parseNmcliPermission(text, NM_CONTROL_PERMISSION);
-	const checkpoint = parseNmcliPermission(text, NM_CHECKPOINT_PERMISSION);
-	const nativeIPv4 = modify === 'yes' && activate === 'yes' && checkpoint === 'yes';
-	const helperIPv4 = !nativeIPv4 && [modify, activate, checkpoint].every(verdict => verdict === 'yes' || verdict === 'auth');
-	return {
-		ipv4: nativeIPv4 || helperIPv4,
-		...(helperIPv4 && { ipv4Elevation: true }),
-		wifi: nativeIPv4 && parseNmcliPermission(text, NM_WIFI_SCAN_PERMISSION) === 'yes',
-		staticGatewayRequired: false,
-	};
 }
 
 const nativeWifiOptions: WifiMutationOptions = {

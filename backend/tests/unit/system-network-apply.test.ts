@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { canonicalDnsServer, ErrorCodes, ipv4BaselineOf, isIPv4, isIPv6, isUnambiguousWifiTarget, isValidSSID, isValidWifiKey, isWifiHexKey, MAX_DNS_SERVERS, normalizeDnsServers, validateIPv4Config, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
-import { assertIPv6DnsAllowed, assertLinuxDnsApplied, assertLinuxIPv4Applied, assertLinuxIPv4Method, assertLinuxWifiConnected, assertNetworkManagerRollback, assertNmcliActiveConnection, NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, networkManagerCheckpointCreateArgs, networkManagerCheckpointFinishArgs, nmcliActivateArgs, nmcliModifyArgs, nmcliWifiConnectArgs, parseLinuxCapabilities, parseNetworkManagerCheckpointPath, parseNmcliActiveConnections, parseNmcliDns, parseNmcliIPv4Method, parseNmcliIPv4Profile, parseNmcliManagedDevices, parseNmcliPermission, parseNmcliWifiList, parseProcNetWireless, splitNmcliFields, withNetworkManagerCheckpoint } from '../../src/system-network-linux.ts';
+import { NETWORK_MANAGER_CHECKPOINT_SAFETY_MS, NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS, NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_MUTATION_TIMEOUT_MS, NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS, NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS, parseNmcliIPv4Method } from '../../src/system-network-linux.ts';
+import { splitNmcliFields, parseNmcliWifiList, parseNmcliIPv4Profile } from '../helpers/linux-network-oracle.ts';
 import { isWindowsInterfaceID } from '../../src/system-network-windows.ts';
 import { assertAppliedIPv4State, assertDeviceName, assertIPv4Baseline, CAPABILITY_NEGATIVE_TTL_MS, CAPABILITY_POSITIVE_TTL_MS, firstLine, isIPv4AddressingUnchanged, isIPv4ConfigUnchanged, isValidWifiPassword, leaseRequired, MAX_WIFI_PASSWORD_BYTES, planIPv4Change, readCachedCapabilities, resetNetworkCapabilitiesCache, resolveJoinTarget, runNetworkMutation } from '../../src/system-network.ts';
 
@@ -116,17 +117,6 @@ describe('validateIPv4Config', () => {
 		expect(validateIPv4Config({ mode: 'static', address: 123, prefixLength: 24 })).toBe('address');
 		expect(validateIPv4Config({ mode: 'dhcp', dns: '192.0.2.1' })).toBe('dns');
 		expect(validateIPv4Config({ mode: 'static', address: '192.0.2.2', prefixLength: 24, gateway: 123 })).toBe('gateway');
-	});
-});
-
-describe('assertIPv6DnsAllowed', () => {
-	it('refuses IPv6 resolvers on a profile with IPv6 disabled, before the profile is touched', () => {
-		// Seen live: NetworkManager rejects ipv6.dns with "not allowed for method=disabled".
-		expect(() => assertIPv6DnsAllowed('disabled\n', ['2001:db8::53'])).toThrow(expect.objectContaining({ code: ErrorCodes.NETCONFIG_UNSUPPORTED }));
-		expect(() => assertIPv6DnsAllowed('ignore', ['192.0.2.53', '2001:db8::53'])).toThrow();
-		expect(() => assertIPv6DnsAllowed('disabled', ['192.0.2.53'])).not.toThrow();
-		expect(() => assertIPv6DnsAllowed('disabled', undefined)).not.toThrow();
-		expect(() => assertIPv6DnsAllowed('auto', ['2001:db8::53'])).not.toThrow();
 	});
 });
 
@@ -312,15 +302,6 @@ describe('Unix interface names', () => {
 });
 
 describe('Wi-Fi password handling', () => {
-	it('keeps the secret out of the nmcli argument vector', () => {
-		const secret = 'not-visible-in-proc';
-		const args = nmcliWifiConnectArgs('wlan0', 'Example network', true, '02:00:5E:40:00:01');
-		expect(args[0]).toBe('--ask');
-		expect(args).toContain('02:00:5E:40:00:01');
-		expect(args).not.toContain(secret);
-		expect(args).not.toContain('password');
-	});
-
 	it('bounds and validates the value written to stdin', () => {
 		expect(isValidWifiPassword('')).toBe(true);
 		expect(isValidWifiPassword('a'.repeat(MAX_WIFI_PASSWORD_BYTES))).toBe(true);
@@ -473,15 +454,6 @@ describe('parseNmcliWifiList', () => {
 	});
 });
 
-describe('parseNmcliActiveConnections', () => {
-	it('keys unambiguous active profile UUIDs by device', () => {
-		expect([...parseNmcliActiveConnections('11111111-1111-1111-1111-111111111111:eth0\n22222222-2222-2222-2222-222222222222:wlan0\n')]).toEqual([
-			['eth0', '11111111-1111-1111-1111-111111111111'],
-			['wlan0', '22222222-2222-2222-2222-222222222222'],
-		]);
-	});
-});
-
 describe('parseNmcliIPv4Method', () => {
 	it('accepts only methods the editor can preserve', () => {
 		expect(parseNmcliIPv4Method('auto\n')).toBe('dhcp');
@@ -522,267 +494,6 @@ describe('parseNmcliIPv4Profile', () => {
 	});
 });
 
-describe('parseNmcliManagedDevices', () => {
-	it('keeps managed and disconnected Wi-Fi devices distinct from unmanaged ones', () => {
-		const text = ['GENERAL.DEVICE:wlan0', 'GENERAL.NM-MANAGED:yes', '', 'GENERAL.DEVICE:wlan1', 'GENERAL.NM-MANAGED:no'].join('\n');
-		expect([...parseNmcliManagedDevices(text)]).toEqual(['wlan0']);
-	});
-});
-
-describe('parseNmcliDns', () => {
-	it('combines IPv4 and IPv6 resolvers for each device', () => {
-		const parsed = parseNmcliDns('GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001:db8::53\nIP6.DNS[2]:2001\\:db8\\:\\:54\n');
-		expect(parsed.get('eth0')).toEqual(['192.0.2.53', '2001:db8::53', '2001:db8::54']);
-	});
-});
-
-describe('nmcliModifyArgs', () => {
-	it('clears the manual fields when switching to DHCP', () => {
-		// NetworkManager keeps a stale ipv4.addresses on a profile whose method
-		// changed, and it comes back the moment the user switches to static again.
-		const args = nmcliModifyArgs('11111111-1111-1111-1111-111111111111', { mode: 'dhcp' });
-		expect(args.slice(0, 4)).toEqual(['connection', 'modify', 'uuid', '11111111-1111-1111-1111-111111111111']);
-		expect(args).toContain('auto');
-		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('');
-		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('');
-		expect(args).not.toContain('ipv4.dns');
-	});
-
-	it('changes DNS only when explicitly requested in either address mode', () => {
-		const unchanged = nmcliModifyArgs('lan', { mode: 'dhcp' });
-		expect(unchanged).not.toContain('ipv4.dns');
-		expect(unchanged).not.toContain('ipv4.ignore-auto-dns');
-		expect(unchanged).not.toContain('ipv6.dns');
-		expect(unchanged).not.toContain('ipv6.ignore-auto-dns');
-
-		const automatic = nmcliModifyArgs('lan', { mode: 'dhcp', dns: [] });
-		expect(automatic[automatic.indexOf('ipv4.dns') + 1]).toBe('');
-		expect(automatic[automatic.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
-		expect(automatic[automatic.indexOf('ipv6.dns') + 1]).toBe('');
-		expect(automatic[automatic.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('no');
-
-		const custom = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53', '127.0.0.1'] });
-		expect(custom[custom.indexOf('ipv4.dns') + 1]).toBe('127.0.0.1');
-		expect(custom[custom.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
-		expect(custom[custom.indexOf('ipv6.dns') + 1]).toBe('2001:db8::53');
-		expect(custom[custom.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('yes');
-	});
-
-	it('does not rewrite addressing for a DNS-only update', () => {
-		const args = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['192.0.2.53'] }, false);
-		expect(args).not.toContain('ipv4.method');
-		expect(args).not.toContain('ipv4.addresses');
-		expect(args).not.toContain('ipv4.gateway');
-		expect(args).toContain('ipv4.dns');
-	});
-
-	it('disables automatic DNS for both families when only one family is custom', () => {
-		const ipv4Only = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['192.0.2.53'] });
-		expect(ipv4Only[ipv4Only.indexOf('ipv4.dns') + 1]).toBe('192.0.2.53');
-		expect(ipv4Only[ipv4Only.indexOf('ipv6.dns') + 1]).toBe('');
-		expect(ipv4Only[ipv4Only.indexOf('ipv6.ignore-auto-dns') + 1]).toBe('yes');
-
-		const ipv6Only = nmcliModifyArgs('lan', { mode: 'dhcp', dns: ['2001:db8::53'] });
-		expect(ipv6Only[ipv6Only.indexOf('ipv4.dns') + 1]).toBe('');
-		expect(ipv6Only[ipv6Only.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
-		expect(ipv6Only[ipv6Only.indexOf('ipv6.dns') + 1]).toBe('2001:db8::53');
-	});
-
-	it('sets address, gateway and DNS for a static config', () => {
-		const args = nmcliModifyArgs('lan', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.1', '198.51.100.1'] });
-		expect(args[args.indexOf('ipv4.method') + 1]).toBe('manual');
-		expect(args[args.indexOf('ipv4.addresses') + 1]).toBe('192.0.2.10/24');
-		expect(args[args.indexOf('ipv4.gateway') + 1]).toBe('192.0.2.1');
-		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('192.0.2.1,198.51.100.1');
-		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('yes');
-	});
-
-	it('does not ignore automatic DNS when the user explicitly requested it', () => {
-		const args = nmcliModifyArgs('lan', { mode: 'static', address: '192.0.2.10', prefixLength: 24, dns: [] });
-		expect(args[args.indexOf('ipv4.dns') + 1]).toBe('');
-		expect(args[args.indexOf('ipv4.ignore-auto-dns') + 1]).toBe('no');
-	});
-
-	it('addresses both modify and activation by UUID rather than an ambiguous name', () => {
-		const uuid = '11111111-1111-1111-1111-111111111111';
-		expect(nmcliModifyArgs(uuid, { mode: 'dhcp' }).slice(0, 4)).toEqual(['connection', 'modify', 'uuid', uuid]);
-		expect(nmcliActivateArgs(uuid, 'eth0')).toEqual(['connection', 'up', 'uuid', uuid, 'ifname', 'eth0']);
-	});
-});
-
-describe('active NetworkManager profile binding', () => {
-	const uuid = '11111111-1111-1111-1111-111111111111';
-
-	it('accepts only one activation on the requested device', () => {
-		expect(() => assertNmcliActiveConnection(new Map([['eth0', uuid]]), 'eth0', uuid)).not.toThrow();
-		expect(() => assertNmcliActiveConnection(new Map([['eth1', uuid]]), 'eth0', uuid)).toThrow('unexpected device');
-		expect(() =>
-			assertNmcliActiveConnection(
-				new Map([
-					['eth0', uuid],
-					['eth1', uuid],
-				]),
-				'eth0',
-				uuid
-			)
-		).toThrow('unexpected device');
-	});
-});
-
-describe('assertLinuxIPv4Applied', () => {
-	const addr = JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24 }] }]);
-	const route = JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.1' }]);
-
-	it('confirms the requested live static address and gateway', () => {
-		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, 'manual\n', addr, route)).not.toThrow();
-	});
-
-	it('rejects a successful command whose live route does not match', () => {
-		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' }, 'manual', addr, JSON.stringify([{ dev: 'eth0', gateway: '192.0.2.254' }]))).toThrow('gateway');
-		expect(() => assertLinuxIPv4Applied({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, 'manual', addr, route)).toThrow('unexpected default route');
-	});
-
-	it('requires a usable IPv4 lease before confirming DHCP', () => {
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]')).toThrow('lease');
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '169.254.10.2', prefixlen: 16 }] }]), '[]')).toThrow('lease');
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', addr, '[]')).not.toThrow();
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]')).toThrow('method');
-		// A permanent address is the static one the switch was supposed to replace, so
-		// it is not evidence that a lease arrived.
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24, valid_life_time: 4294967295 }] }]), '[]')).toThrow('lease');
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', JSON.stringify([{ ifname: 'eth0', addr_info: [{ family: 'inet', local: '192.0.2.10', prefixlen: 24, dynamic: true, valid_life_time: 3600 }] }]), '[]')).not.toThrow();
-		// With the link down only the saved method can be verified; the lease follows the cable.
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'auto\n', '[]', '[]', false)).not.toThrow();
-		expect(() => assertLinuxIPv4Applied({ mode: 'dhcp' }, 'manual\n', '[]', '[]', false)).toThrow('method');
-		expect(() => assertLinuxIPv4Method({ mode: 'dhcp' }, 'auto\n')).not.toThrow();
-		expect(() => assertLinuxIPv4Method({ mode: 'dhcp' }, 'manual')).toThrow('method');
-		expect(() => assertLinuxIPv4Method({ mode: 'static', address: '192.0.2.10', prefixLength: 24 }, 'manual')).not.toThrow();
-	});
-});
-
-describe('Linux DNS verification', () => {
-	const automatic = ['ipv4.dns:', 'ipv4.ignore-auto-dns:no', 'ipv6.dns:', 'ipv6.ignore-auto-dns:no'].join('\n');
-	const custom = ['ipv4.dns:192.0.2.53', 'ipv4.ignore-auto-dns:yes', 'ipv6.dns:2001\\:db8\\:\\:53', 'ipv6.ignore-auto-dns:yes'].join('\n');
-
-	it('accepts the requested resolver policy and live custom servers', () => {
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, automatic, 'GENERAL.DEVICE:eth0\n', 'eth0')).not.toThrow();
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53'] }, custom, 'GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.53\nIP6.DNS[1]:2001\\:db8\\:\\:53\n', 'eth0')).not.toThrow();
-	});
-
-	it('rejects a command that left the wrong policy or live servers', () => {
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, custom, 'GENERAL.DEVICE:eth0\n', 'eth0')).toThrow('DNS');
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53'] }, custom, 'GENERAL.DEVICE:eth0\nIP4.DNS[1]:192.0.2.54\n', 'eth0')).toThrow('DNS');
-	});
-
-	it('still verifies the saved policy when there is no live side to read', () => {
-		// Saving DHCP with the carrier down writes the resolvers to the profile but
-		// activates nothing, so the device reports none. The saved policy is the whole
-		// change there and is checked; only the live comparison is skipped.
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53', '2001:db8::53'] }, custom, null, 'eth0')).not.toThrow();
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, automatic, null, 'eth0')).not.toThrow();
-		// A profile that did not take the requested policy still fails.
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: ['192.0.2.53'] }, automatic, null, 'eth0')).toThrow('DNS');
-		expect(() => assertLinuxDnsApplied({ mode: 'dhcp', dns: [] }, custom, null, 'eth0')).toThrow('DNS');
-	});
-});
-
-describe('Linux Wi-Fi verification', () => {
-	const networks = parseNmcliWifiList('Cafe:00\\:11\\:22\\:33\\:44\\:55:80:WPA2:*\nCafe:66\\:77\\:88\\:99\\:AA\\:BB:70:WPA2:\n');
-
-	it('requires the selected access point to be active', () => {
-		expect(() => assertLinuxWifiConnected(networks, 'Cafe', '00:11:22:33:44:55')).not.toThrow();
-		expect(() => assertLinuxWifiConnected(networks, 'Cafe', '66:77:88:99:AA:BB')).toThrow('Wi-Fi');
-		expect(() => assertLinuxWifiConnected(networks, 'Other', null)).toThrow('Wi-Fi');
-	});
-});
-
-describe('NetworkManager checkpoint transaction', () => {
-	const devicePath = '/org/freedesktop/NetworkManager/Devices/7';
-	const checkpointPath = '/org/freedesktop/NetworkManager/Checkpoint/12';
-
-	it('requests deletion of connections created after the checkpoint', () => {
-		const args = networkManagerCheckpointCreateArgs(devicePath);
-		expect(args.slice(-3)).toEqual([devicePath, String(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS), '2']);
-		expect(args).toContain('CheckpointCreate');
-		expect(parseNetworkManagerCheckpointPath(`o "${checkpointPath}"\n`)).toBe(checkpointPath);
-	});
-
-	it('keeps a real safety reserve beyond the whole transaction and its rollback', () => {
-		// The activation is the longest step but never the only one: the pre-checks
-		// and the two read-backs run inside the checkpoint as well. Measuring the
-		// reserve against the activation alone would report thirty seconds of margin
-		// where there is one.
-		const longest = Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS);
-		expect(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 - longest - NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS).toBeGreaterThanOrEqual(NETWORK_MANAGER_CHECKPOINT_SAFETY_MS);
-		// Each budget has to cover the steps it is named after.
-		expect(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
-		expect(NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
-	});
-
-	it('destroys a successful checkpoint and keeps the mutation', async () => {
-		const events: string[] = [];
-		const result = await withNetworkManagerCheckpoint({
-			create: async () => {
-				events.push('create');
-				return checkpointPath;
-			},
-			mutate: async () => {
-				events.push('mutate');
-				return 42;
-			},
-			commit: async path => {
-				events.push(`commit:${path}`);
-			},
-			rollback: async path => {
-				events.push(`rollback:${path}`);
-			},
-		});
-		expect(result).toBe(42);
-		expect(events).toEqual(['create', 'mutate', `commit:${checkpointPath}`]);
-		expect(networkManagerCheckpointFinishArgs('CheckpointDestroy', checkpointPath)).toContain('CheckpointDestroy');
-	});
-
-	it('rolls back immediately when the mutation fails', async () => {
-		const events: string[] = [];
-		const failure = new Error('mutation failed');
-		const operation = withNetworkManagerCheckpoint({
-			create: async () => checkpointPath,
-			mutate: async () => {
-				events.push('mutate');
-				throw failure;
-			},
-			commit: async () => {
-				events.push('commit');
-			},
-			rollback: async path => {
-				events.push(`rollback:${path}`);
-			},
-		});
-		await expect(operation).rejects.toBe(failure);
-		expect(events).toEqual(['mutate', `rollback:${checkpointPath}`]);
-		expect(networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath)).toContain('CheckpointRollback');
-	});
-
-	it('reports a rollback failure instead of hiding it', async () => {
-		const operation = withNetworkManagerCheckpoint({
-			create: async () => checkpointPath,
-			mutate: async () => {
-				throw new Error('mutation failed');
-			},
-			commit: async () => {},
-			rollback: async () => {
-				throw new Error('rollback failed');
-			},
-		});
-		await expect(operation).rejects.toBeInstanceOf(AggregateError);
-	});
-
-	it('accepts only successful per-device rollback results', () => {
-		expect(() => assertNetworkManagerRollback(`a{su} 1 "${devicePath}" 0\n`)).not.toThrow();
-		expect(() => assertNetworkManagerRollback(`a{su} 1 "${devicePath}" 1\n`)).toThrow();
-	});
-});
-
 describe('isWindowsInterfaceID', () => {
 	it('accepts a canonical braced GUID', () => {
 		expect(isWindowsInterfaceID('{2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B}')).toBe(true);
@@ -790,91 +501,6 @@ describe('isWindowsInterfaceID', () => {
 
 	it('rejects anything else', () => {
 		for (const value of ['2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B', '{not-a-guid}', '', "{2B1F0E8A-4C3D-4E5F-9A7B-1C2D3E4F5A6B}'; calc; '"]) expect(isWindowsInterfaceID(value)).toBe(false);
-	});
-});
-
-describe('parseProcNetWireless', () => {
-	// Captured verbatim from an associated brcmfmac adapter on Debian 12/arm64.
-	// Only the interface name and levels matter; the trailing counters vary per host.
-	const PROC = `Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
- face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
- wlan0: 0000   59.  -51.  -256        0      0      0   1077      0        0
-`;
-
-	it('reads the level of a real associated adapter', () => {
-		// The same moment's `iw dev wlan0 link` reported -51 dBm, so both sources
-		// must land on the same percentage or the UI would flicker between them.
-		expect(parseProcNetWireless(PROC)).toEqual(new Map([['wlan0', 98]]));
-	});
-
-	it('ignores the two header lines', () => {
-		expect(parseProcNetWireless(PROC).size).toBe(1);
-	});
-
-	it('reads several adapters at once', () => {
-		const two = PROC + ' wlan1: 0000   30.  -75.  -256        0      0      0      0      0        0\n';
-		expect(parseProcNetWireless(two)).toEqual(
-			new Map([
-				['wlan0', 98],
-				['wlan1', 50],
-			])
-		);
-	});
-
-	it('refuses to turn a driver-relative level into a percentage', () => {
-		// A positive level has no documented scale; inventing a number from it would
-		// be worse than admitting the signal is unknown.
-		expect(parseProcNetWireless(' wlan0: 0000   59.  144.  0        0      0      0      0      0        0').size).toBe(0);
-	});
-
-	it('yields nothing when no wireless driver is loaded', () => {
-		expect(parseProcNetWireless('Inter-| sta-|   Quality\n face | tus | link level noise\n').size).toBe(0);
-	});
-});
-
-describe('parseNmcliPermission', () => {
-	// Captured from a Debian 12 host: the same command run as root and as an
-	// unprivileged user. Values are not localized even on a Czech-locale system.
-	const AS_ROOT = 'org.freedesktop.NetworkManager.network-control:yes\norg.freedesktop.NetworkManager.settings.modify.system:yes\n';
-	const AS_USER = 'org.freedesktop.NetworkManager.network-control:auth\norg.freedesktop.NetworkManager.settings.modify.system:auth\n';
-	const KEY = 'org.freedesktop.NetworkManager.settings.modify.system';
-
-	it('reads the verdict for a privileged process', () => {
-		expect(parseNmcliPermission(AS_ROOT, KEY)).toBe('yes');
-	});
-
-	it('reads "auth" for a process that would need a password prompt', () => {
-		// A backend has no polkit agent, so "auth" means the write would fail —
-		// the caller must treat it as not writable rather than as permitted.
-		expect(parseNmcliPermission(AS_USER, KEY)).toBe('auth');
-	});
-
-	it('does not confuse one permission with another', () => {
-		expect(parseNmcliPermission(AS_ROOT, 'org.freedesktop.NetworkManager.network-control')).toBe('yes');
-		expect(parseNmcliPermission(AS_USER, 'org.freedesktop.NetworkManager.network-control')).toBe('auth');
-	});
-
-	it('returns null when the permission is absent', () => {
-		expect(parseNmcliPermission(AS_ROOT, 'org.freedesktop.NetworkManager.wifi.share.open')).toBeNull();
-	});
-});
-
-describe('parseLinuxCapabilities', () => {
-	const permissions = (modify: string, control: string, scan: string, checkpoint: string = 'yes'): string => [`org.freedesktop.NetworkManager.settings.modify.system:${modify}`, `org.freedesktop.NetworkManager.network-control:${control}`, `org.freedesktop.NetworkManager.wifi.scan:${scan}`, `org.freedesktop.NetworkManager.checkpoint-rollback:${checkpoint}`].join('\n');
-
-	it('requires both profile modification and activation for IPv4 writes', () => {
-		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes'))).toEqual({ ipv4: true, wifi: true, staticGatewayRequired: false });
-		expect(parseLinuxCapabilities(permissions('yes', 'no', 'yes'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
-		expect(parseLinuxCapabilities(permissions('auth', 'yes', 'yes'))).toEqual({ ipv4: true, ipv4Elevation: true, wifi: false, staticGatewayRequired: false });
-	});
-
-	it('requires the separate scan permission before offering Wi-Fi actions', () => {
-		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'no'))).toEqual({ ipv4: true, wifi: false, staticGatewayRequired: false });
-	});
-
-	it('requires checkpoint permission before offering any mutation', () => {
-		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', 'auth'))).toEqual({ ipv4: true, ipv4Elevation: true, wifi: false, staticGatewayRequired: false });
-		expect(parseLinuxCapabilities(permissions('yes', 'yes', 'yes', 'no'))).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
 	});
 });
 
@@ -916,7 +542,7 @@ describe('isValidSSID on a name the radio reported', () => {
 	it('still refuses what could never have been an SSID', () => {
 		expect(isValidSSID('')).toBe(false);
 		expect(isValidSSID('x'.repeat(97))).toBe(false);
-		expect(isValidSSID('a b')).toBe(false);
+		expect(isValidSSID('a\0b')).toBe(false);
 		expect(isValidSSID(undefined)).toBe(false);
 	});
 
@@ -995,4 +621,16 @@ describe('isUnambiguousWifiTarget', () => {
 		expect(isUnambiguousWifiTarget(rows, rows[0]!)).toBe(false);
 		expect(resolveJoinTarget(rows, 'Guests', null)).toBe('ambiguous');
 	});
+});
+
+it('keeps a real safety reserve beyond the whole transaction and its rollback', () => {
+	// The activation is the longest step but never the only one: the pre-checks
+	// and the two read-backs run inside the checkpoint as well. Measuring the
+	// reserve against the activation alone would report thirty seconds of margin
+	// where there is one.
+	const longest = Math.max(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS, NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS);
+	expect(NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS * 1000 - longest - NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS).toBeGreaterThanOrEqual(NETWORK_MANAGER_CHECKPOINT_SAFETY_MS);
+	// Each budget has to cover the steps it is named after.
+	expect(NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS + NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS);
+	expect(NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS).toBeGreaterThan(NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
 });

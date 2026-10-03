@@ -1,4 +1,5 @@
-import type { NetWifiNetwork } from '@shared';
+import { isIPv4, validateIPv4Config, type NetWifiNetwork } from '@shared';
+import type { NmcliIPv4Profile } from '../../src/system-network-linux.ts';
 
 /**
  * Split one `nmcli -t` output line into fields.
@@ -25,11 +26,6 @@ export function splitNmcliFields(line: string): string[] {
 	}
 	fields.push(current);
 	return fields;
-}
-
-export function assertLinuxWifiConnected(networks: NetWifiNetwork[], ssid: string, bssid: string | null): void {
-	const active = networks.find(network => network.active && network.ssid === ssid && (bssid === null || network.bssid?.toLowerCase() === bssid.toLowerCase()));
-	if (!active) throw new Error('NetworkManager did not connect to the requested Wi-Fi access point');
 }
 
 /**
@@ -71,7 +67,24 @@ export function parseNmcliWifiList(text: string): NetWifiNetwork[] {
 	return [...networks.values()].sort((a, b) => (b.signal ?? -1) - (a.signal ?? -1));
 }
 
-/** Build the public part of a Wi-Fi connect command; the secret is never an argument. */
-export function nmcliWifiConnectArgs(device: string, ssid: string, askForPassword: boolean, bssid: string | null = null): string[] {
-	return [...(askForPassword ? ['--ask'] : []), 'device', 'wifi', 'connect', ssid, ...(bssid ? ['bssid', bssid] : []), 'ifname', device];
+/** Accept only a plain profile the editor can replace without preserving hidden routing policy. */
+export function parseNmcliIPv4Profile(text: string, expectedDevice: string, activeInstances: number): NmcliIPv4Profile {
+	const values = new Map<string, string>();
+	for (const line of text.split('\n')) {
+		const fields = splitNmcliFields(line.trim());
+		const key = fields[0]?.toLowerCase();
+		if (key) values.set(key, fields.slice(1).join(':').trim());
+	}
+	const method = values.get('ipv4.method') ?? '';
+	const gatewayText = values.get('ipv4.gateway') ?? '';
+	const addresses = values.get('ipv4.addresses') ?? '';
+	const interfaceName = values.get('connection.interface-name') || null;
+	const multiConnectMatch = (values.get('connection.multi-connect') ?? '').match(/^-?\d+/);
+	const multiConnect = multiConnectMatch ? Number(multiConnectMatch[0]) : null;
+	const addressMatch = addresses.match(/^([^/]+)\/(\d{1,2})$/);
+	const simpleManualAddress = !!addressMatch && validateIPv4Config({ mode: 'static', address: addressMatch[1] ?? '', prefixLength: Number(addressMatch[2]), gateway: gatewayText }) === null;
+	const knownMethod = method === 'auto' || method === 'manual';
+	const boundOnce = interfaceName === expectedDevice && (multiConnect === 0 || multiConnect === 1) && activeInstances === 1;
+	const safe = boundOnce && knownMethod && values.get('ipv4.never-default') === 'no' && (values.get('ipv4.routes') ?? '') === '' && ['', '0'].includes(values.get('ipv4.route-table') ?? '') && (values.get('ipv4.routing-rules') ?? '') === '' && (gatewayText === '' || isIPv4(gatewayText)) && (method === 'auto' ? addresses === '' && gatewayText === '' : simpleManualAddress);
+	return { method, gateway: gatewayText || null, address: simpleManualAddress ? (addressMatch?.[1] ?? null) : null, prefixLength: simpleManualAddress && addressMatch ? Number(addressMatch[2]) : null, safe };
 }

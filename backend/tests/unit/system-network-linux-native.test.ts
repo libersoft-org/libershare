@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { parseNativeIPv4Profile, parseNativeNameservers, readNativeLinuxCapabilities, readNativeLinuxNetwork, scanNativeLinuxWifi } from '../../src/native/linux/network-reader.ts';
 import { variant, type DBusVariant } from '../../src/native/linux/dbus.ts';
-import { parseLinuxNetworkState, parseNmcliIPv4Profile, parseNmcliWifiList } from '../../src/system-network-linux.ts';
+import { parseLinuxNetworkState } from '../../src/system-network-linux.ts';
+import { parseNmcliIPv4Profile, parseNmcliWifiList } from '../helpers/linux-network-oracle.ts';
 import capture from './fixtures/native-netlink/arm64.json';
 import { createNativeNetworkFixture as fixture, profile } from './fixtures/native-network-reader.ts';
 
