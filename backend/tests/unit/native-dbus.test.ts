@@ -6,7 +6,7 @@ import type { SdBusSymbols } from '../../src/native/linux/dbus-native.ts';
 
 function fakeBus(): {
 	sd: SdBusSymbols;
-	state: { destination: string; timeout: bigint; slots: number; released: number; calls: number; delivered: boolean; signalReady: boolean; rule: string; failProcess: boolean; sendError: number; insideCallback: boolean; sender: string; errorName: string | null; events: string[] };
+	state: { destination: string; timeout: bigint; slots: number; released: number; calls: number; delivered: boolean; signalReady: boolean; rule: string; failProcess: boolean; sendError: number; insideCallback: boolean; sender: string; errorName: string | null; events: string[]; callbacks: Pointer[]; userdata: Pointer[]; replay: (() => number)[] };
 } {
 	const buffers: Buffer[] = [];
 	const allocate = (value: string | number): Pointer => {
@@ -17,11 +17,11 @@ function fakeBus(): {
 	const write = (address: Pointer, value: bigint): void => {
 		new DataView(toArrayBuffer(address, 0, 8)).setBigUint64(0, value, true);
 	};
-	const state = { destination: '', timeout: 0n, slots: 0, released: 0, calls: 0, delivered: false, signalReady: false, rule: '', failProcess: false, sendError: 0, insideCallback: false, sender: ':1.42', errorName: null as string | null, events: [] as string[] };
+	const state = { destination: '', timeout: 0n, slots: 0, released: 0, calls: 0, delivered: false, signalReady: false, rule: '', failProcess: false, sendError: 0, insideCallback: false, sender: ':1.42', errorName: null as string | null, events: [] as string[], callbacks: [] as Pointer[], userdata: [] as Pointer[], replay: [] as (() => number)[] };
 	const bus = allocate(8),
-		message = allocate(8),
-		slot = allocate(8);
-	let callback: (() => number) | undefined;
+		message = allocate(8);
+	const callbacks = new Map<Pointer, () => number>();
+	const replySenders = new Map<Pointer, string>();
 	let signalCallback: (() => number) | undefined;
 	const signalSlot = allocate(8);
 	const symbols = {
@@ -32,18 +32,24 @@ function fakeBus(): {
 		sd_bus_set_allow_interactive_authorization: () => 0,
 		sd_bus_message_new_method_call: (_bus: Pointer, out: Pointer, destination: Pointer) => {
 			state.destination = new CString(destination).toString();
-			write(out, BigInt(message));
+			write(out, BigInt(allocate(8)));
 			return 0;
 		},
 		sd_bus_message_unref: () => null,
-		sd_bus_call_async: (_bus: Pointer, out: Pointer, _message: Pointer, callbackAddress: Pointer, _data: Pointer, timeout: bigint) => {
+		sd_bus_call_async: (_bus: Pointer, out: Pointer, _message: Pointer, callbackAddress: Pointer, data: Pointer, timeout: bigint) => {
 			state.calls++;
 			state.timeout = timeout;
+			state.callbacks.push(callbackAddress);
+			state.userdata.push(data);
+			const invoke = CFunction({ ptr: callbackAddress, args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 });
+			replySenders.set(_message, state.sender);
+			const callback = () => invoke(_message, data, null);
+			state.replay.push(callback);
 			if (state.sendError) return -state.sendError;
+			const slot = allocate(8);
 			write(out, BigInt(slot));
 			state.slots++;
-			const invoke = CFunction({ ptr: callbackAddress, args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 });
-			callback = () => invoke(message, null, null);
+			callbacks.set(slot, callback);
 			return 1;
 		},
 		sd_bus_process: () => {
@@ -55,13 +61,15 @@ function fakeBus(): {
 				state.insideCallback = false;
 				return 1;
 			}
-			if (!state.delivered || !callback) return 0;
+			const entries = [...callbacks];
+			const pending = entries[entries.length - 1];
+			if (!state.delivered || !pending) return 0;
 			state.insideCallback = true;
 			state.events.push('callback-enter');
-			callback();
+			pending[1]();
 			state.events.push('callback-exit');
 			state.insideCallback = false;
-			callback = undefined;
+			callbacks.delete(pending[0]);
 			return 1;
 		},
 		sd_bus_slot_unref: (releasedSlot: Pointer) => {
@@ -70,7 +78,7 @@ function fakeBus(): {
 			state.slots--;
 			state.released++;
 			if (releasedSlot === signalSlot) signalCallback = undefined;
-			else callback = undefined;
+			else callbacks.delete(releasedSlot);
 			return null;
 		},
 		sd_bus_close_unref: () => {
@@ -81,16 +89,18 @@ function fakeBus(): {
 			new Uint8Array(toArrayBuffer(out, 0, 1))[0] = state.errorName ? 3 : 2;
 			return 0;
 		},
-		sd_bus_message_get_sender: () => allocate(state.sender),
+		sd_bus_message_get_sender: (reply: Pointer) => allocate(replySenders.get(reply) ?? state.sender),
 		sd_bus_message_get_path: () => allocate('/org/example/Service'),
 		sd_bus_message_get_interface: () => allocate('org.example.Service'),
 		sd_bus_message_get_member: () => allocate('Changed'),
-		sd_bus_add_match: (_bus: Pointer, out: Pointer, rule: Pointer, address: Pointer) => {
+		sd_bus_add_match: (_bus: Pointer, out: Pointer, rule: Pointer, address: Pointer, data: Pointer) => {
 			state.rule = new CString(rule).toString();
 			write(out, BigInt(signalSlot));
 			state.slots++;
 			const invoke = CFunction({ ptr: address, args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 });
-			signalCallback = () => invoke(message, null, null);
+			state.callbacks.push(address);
+			state.userdata.push(data);
+			signalCallback = () => invoke(message, data, null);
 			return 0;
 		},
 		sd_bus_message_get_signature: () => allocate(''),
@@ -200,6 +210,65 @@ describe('D-Bus signatures', () => {
 });
 
 describe('sd-bus call lifetime', () => {
+	test('one trampoline routes reverse replies across calls and connections', async () => {
+		const first = fakeBus(), second = fakeBus();
+		const firstBus = new SystemBus({}, first.sd), secondBus = new SystemBus({}, second.sd);
+		const order: string[] = [];
+		try {
+			first.state.sender = ':1.41';
+			const a = firstBus.call(method).then(reply => { expect(reply.sender).toBe(':1.41'); order.push('a'); });
+			first.state.sender = ':1.42';
+			const b = firstBus.call(method).then(reply => { expect(reply.sender).toBe(':1.42'); order.push('b'); });
+			second.state.sender = ':1.43';
+			const c = secondBus.call(method).then(reply => { expect(reply.sender).toBe(':1.43'); order.push('c'); });
+			expect(new Set([...first.state.callbacks, ...second.state.callbacks]).size).toBe(1);
+			expect(new Set([...first.state.userdata, ...second.state.userdata]).size).toBe(3);
+			second.state.delivered = true;
+			await c;
+			first.state.delivered = true;
+			await Promise.all([a, b]);
+			// Results settle after the pump; each callback still reaches its own promise.
+			expect(order[0]).toBe('c');
+			expect(new Set(order)).toEqual(new Set(['a', 'b', 'c']));
+			expect(first.state.released).toBe(2);
+			expect(second.state.released).toBe(1);
+		} finally {
+			firstBus.close(); secondBus.close();
+		}
+	});
+	test('cancellation removes only its userdata while other calls remain pending', async () => {
+		const { sd, state } = fakeBus();
+		const bus = new SystemBus({}, sd);
+		const controller = new AbortController();
+		let completed = false;
+		try {
+			const cancelled = bus.call({ ...method, signal: controller.signal });
+			const pending = bus.call(method).then(() => { completed = true; });
+			controller.abort();
+			await expect(cancelled).rejects.toMatchObject({ stage: 'cancelled', mayHaveBeenSent: true });
+			expect(state.slots).toBe(1);
+			expect(state.replay[0]!()).toBe(0);
+			await Bun.sleep(10);
+			expect(completed).toBe(false);
+			state.delivered = true;
+			await pending;
+			expect(state.slots).toBe(0);
+		} finally { bus.close(); }
+	});
+	test('closed connections and subscriptions keep reusing the worker trampoline', async () => {
+		const addresses = new Set<Pointer>();
+		for (let i = 0; i < 20; i++) {
+			const { sd, state } = fakeBus();
+			const bus = new SystemBus({}, sd);
+			bus.subscribe(match, () => {}, error => { throw error; });
+			state.delivered = true;
+			try { await bus.call(method); }
+			finally { bus.close(); }
+			for (const address of state.callbacks) addresses.add(address);
+			expect(state.slots).toBe(0);
+		}
+		expect(addresses.size).toBe(1);
+	});
 	test('pins mutation destination and waits without a local timeout', async () => {
 		const { sd, state } = fakeBus();
 		const bus = new SystemBus({}, sd);
@@ -218,7 +287,8 @@ describe('sd-bus call lifetime', () => {
 			expect(state.slots).toBe(1);
 			state.delivered = true;
 			expect(await call).toMatchObject({ sender: ':1.42', type: 'method_return', values: [] });
-			expect(state.events).toEqual(['callback-enter', 'callback-exit', 'slot-unref', 'callback-close']);
+			expect(state.events).toEqual(['callback-enter', 'callback-exit', 'slot-unref']);
+			expect(callbackClose).not.toHaveBeenCalled();
 			expect(state.released).toBe(1);
 			expect(state.calls).toBe(1);
 		} finally {
@@ -297,7 +367,8 @@ describe('sd-bus call lifetime', () => {
 				expect(state.calls).toBe(1);
 				expect(state.slots).toBe(0);
 				expect(state.released).toBe(0);
-				expect(callbackClose).toHaveBeenCalledTimes(1);
+				expect(callbackClose).not.toHaveBeenCalled();
+				expect(state.replay[0]!()).toBe(0);
 			} finally {
 				bus.close();
 				callbackClose.mockRestore();

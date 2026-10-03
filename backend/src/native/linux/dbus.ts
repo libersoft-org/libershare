@@ -1,4 +1,5 @@
-import { FFIType, JSCallback, ptr, read, type Pointer } from 'bun:ffi';
+import { ptr, read, type Pointer } from 'bun:ffi';
+import { retainDBusCallback, type DBusCallback } from './dbus-callbacks.ts';
 import { copyDBusString, dbusCString, decodeDBus, encodeDBus, type DBusValue, type DBusVariant } from './dbus-codec.ts';
 import { checkSdBus, loadSdBus, nativePointer, type SdBusSymbols } from './dbus-native.ts';
 
@@ -47,7 +48,7 @@ export interface DBusSubscription {
 
 interface SignalSubscription {
 	readonly slotOut: BigUint64Array;
-	readonly callback: JSCallback;
+	readonly callback: DBusCallback;
 	readonly listener: (signal: DBusSignal) => void;
 	readonly onError: (error: Error) => void;
 }
@@ -79,7 +80,7 @@ export class DBusTransportError extends Error {
 }
 
 interface PendingCall {
-	readonly callback: JSCallback;
+	readonly callback: DBusCallback;
 	readonly slotOut: BigUint64Array;
 	readonly resolve: (reply: DBusReply) => void;
 	readonly reject: (error: Error) => void;
@@ -145,13 +146,11 @@ export class SystemBus {
 				checkSdBus(created, 'new method call');
 				if (!message) throw new Error('D-Bus did not create a message');
 				encodeDBus(this.sd, message, request.signature ?? '', request.args ?? []);
-				const callback = new JSCallback(
+				const callback = retainDBusCallback(
 					(replyAddress: Pointer) => {
 						// sd_bus_process owns the borrowed reply. Never release the callback on this stack.
 						if (pending && !pending.result) pending.result = this.copyReply(replyAddress);
-						return 0;
-					},
-					{ args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 }
+					}
 				);
 				pending = {
 					callback,
@@ -168,7 +167,7 @@ export class SystemBus {
 				};
 				this.pending.add(pending);
 				enteredSend = true;
-				const sent = this.sd.sd_bus_call_async(this.bus, ptr(pending.slotOut), message, callback.ptr, null, timeout);
+				const sent = this.sd.sd_bus_call_async(this.bus, ptr(pending.slotOut), message, callback.ptr, callback.userdata, timeout);
 				// sd_bus_send queues partial writes and returns success; a negative call_async return queued no message.
 				if (sent < 0) throw new DBusTransportError(`D-Bus send failed: errno ${-sent}`, 'before-send', false, -sent);
 				signal?.addEventListener('abort', pending.abort, { once: true });
@@ -200,7 +199,7 @@ export class SystemBus {
 		if (fields.length !== 4 || fields.some(([key, value]) => !['sender', 'path', 'interface', 'member'].includes(key) || !value || !/^[A-Za-z0-9_.:/-]+$/.test(value))) throw new Error('Invalid D-Bus signal match');
 		const rule = dbusCString(`type='signal',${fields.map(([key, value]) => `${key}='${value}'`).join(',')}`);
 		let subscription: SignalSubscription;
-		const callback = new JSCallback(
+		const callback = retainDBusCallback(
 			(message: Pointer) => {
 				let value: DBusSignal | Error;
 				try {
@@ -217,14 +216,12 @@ export class SystemBus {
 					value = new DBusTransportError(`Cannot decode D-Bus signal: ${String(error)}`, 'decode', true);
 				}
 				this.signalQueue.push({ subscription, value });
-				return 0;
-			},
-			{ args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 }
+			}
 		);
 		subscription = { callback, slotOut: new BigUint64Array(1), listener, onError };
 		this.subscriptions.add(subscription);
 		try {
-			checkSdBus(this.sd.sd_bus_add_match(this.bus, ptr(subscription.slotOut), ptr(rule), callback.ptr, null), 'add match');
+			checkSdBus(this.sd.sd_bus_add_match(this.bus, ptr(subscription.slotOut), ptr(rule), callback.ptr, callback.userdata), 'add match');
 		} catch (error) {
 			this.releaseSubscription(subscription);
 			throw error;
@@ -340,7 +337,7 @@ export class SystemBus {
 	private finish(pending: PendingCall): void {
 		if (!pending.result || !this.pending.delete(pending)) return;
 		pending.signal?.removeEventListener('abort', pending.abort);
-		// sd-bus must lose the slot before Bun frees the executable callback.
+		// sd-bus must lose the slot before its userdata token leaves the registry.
 		if (pending.slotOut[0]) this.sd.sd_bus_slot_unref(nativePointer(pending.slotOut[0]));
 		pending.callback.close();
 		if (pending.result instanceof Error) pending.reject(pending.result);
