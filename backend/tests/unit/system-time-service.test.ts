@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, applyTimesyncdDropIn, setSystemNtpEnabled, setSystemNtpServer, settlesToNtpEnabled, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, setSystemNtpEnabled, setSystemNtpServer, settlesToNtpEnabled, waitForWindowsTimeService, withSystemTimeLock, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type CommandRunner, type WindowsModeState } from '../../src/system-time.ts';
+import { applyTimesyncdFixture as applyTimesyncdDropIn } from '../helpers/system-time-timesyncd.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_HELPER_BUDGET_MS, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';

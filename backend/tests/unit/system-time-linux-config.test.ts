@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyTimesyncdDropIn, type CommandRunner, buildTimesyncdDropIn, parseTimesyncConfig, resolveSystemExecutable } from '../../src/system-time.ts';
+import { type CommandRunner, buildTimesyncdDropIn, parseTimesyncConfig, resolveSystemExecutable } from '../../src/system-time.ts';
 import { parseUtcOffsetMinutes } from '../../src/system-time-common.ts';
 import { verifyTimesyncdServer } from '../../src/system-time-linux.ts';
-import { timesyncConfigOutput } from '../helpers/system-time-timesyncd.ts';
+import { applyTimesyncdFixture as applyTimesyncdDropIn, timesyncConfigOutput } from '../helpers/system-time-timesyncd.ts';
 import { nativeTimeFixture, type TimeStatusScenario } from './fixtures/native-time-reader.ts';
 import { readNativeLinuxTimeStatus } from '../../src/native/linux/time-reader.ts';
 

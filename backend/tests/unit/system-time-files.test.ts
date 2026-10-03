@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { applyTimesyncdDropIn, syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
+import { syncDirectory, type CommandRunner, type RunOutcome, SAVE_BUDGET_MS, withSaveBudget, withSystemTimeLock, writeFileAtomically } from '../../src/system-time.ts';
 import { fakeRunner } from '../helpers/system-time-fixtures.ts';
-import { withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
+import { applyTimesyncdFixture as applyTimesyncdDropIn, withTimesyncConfigRead } from '../helpers/system-time-timesyncd.ts';
 import { serviceAccountAccessForOperation, serviceAccountGroups, serviceAccountProbe, type ServiceAccountIdentity } from '../../src/system-time-files.ts';
 
 /**

@@ -1,5 +1,11 @@
 import { readFile } from 'node:fs/promises';
-import type { CommandRunner } from '../../src/system-time.ts';
+import { applyTimesyncdDropIn, type CommandRunner } from '../../src/system-time.ts';
+import { unreadableByServiceAccount } from '../../src/system-time-files.ts';
+
+/** Temporary fixture paths use mode checks; the native child only accepts the host drop-in. */
+export function applyTimesyncdFixture(...args: Parameters<typeof applyTimesyncdDropIn>): ReturnType<typeof applyTimesyncdDropIn> {
+	return applyTimesyncdDropIn(args[0], args[1], args[2], args[3], args[4], path => unreadableByServiceAccount(path, async () => null));
+}
 
 export async function timesyncConfigOutput(path: string, laterConfiguration = ''): Promise<string> {
 	return '# /etc/systemd/timesyncd.conf.d/90-libershare.conf\n' + (await readFile(path, 'utf8')) + laterConfiguration;
