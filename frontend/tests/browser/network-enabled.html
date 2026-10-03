@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Network enable response compatibility</title>
+	<pre id="results">Running...</pre>
+	<script type="module">
+		import { get } from 'svelte/store';
+		import { api } from '/src/scripts/api.ts';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { notifications } from '/src/scripts/notifications.ts';
+		import { notificationTimeout } from '/src/scripts/settings.ts';
+		import { setNetworkEnabled } from '/src/scripts/lishNetwork.ts';
+		const original = api.lishnets.setEnabled;
+		const timeout = get(notificationTimeout);
+		const results = [];
+		const scenarios = [
+			['legacy failure is unconfirmed', { success: false, applied: false }, false, 'changeUnconfirmed'],
+			['legacy success confirms the applied state', { success: true, applied: true }, true, null],
+			['legacy accepted but unapplied is unconfirmed', { success: true, applied: false }, false, 'changeUnconfirmed'],
+			['legacy inconsistent failure is unconfirmed', { success: false, applied: true }, false, 'changeUnconfirmed'],
+			['current rejected write stays rejected', { stored: false, success: false, applied: false }, false, null],
+			['current stored but unapplied write stays saved', { stored: true, success: false, applied: false }, true, 'savedNotApplied'],
+			['current applied write succeeds', { stored: true, success: true, applied: true }, true, null],
+		];
+		try {
+			await new Promise(resolve => {
+				const off = translations.subscribe(value => {
+					if (value.settings?.lishNetwork)
+						queueMicrotask(() => {
+							off();
+							resolve();
+						});
+				});
+			});
+			notificationTimeout.set(0);
+			for (const enabled of [true, false])
+				for (const [name, response, expected, warning] of scenarios) {
+					try {
+						notifications.set([]);
+						let calls = 0;
+						api.lishnets.setEnabled = async (id, requested) => {
+							if (id !== 'test-network' || requested !== enabled) throw new Error('Wrong API arguments');
+							calls++;
+							return { ...response, transitioned: false, joined: enabled && response.applied };
+						};
+						const actual = await setNetworkEnabled('test-network', enabled);
+						if (actual !== expected || calls !== 1) throw new Error(`Expected ${expected}, got ${actual} after ${calls} requests`);
+						const notices = get(notifications);
+						if (notices.length !== (warning ? 1 : 0)) throw new Error('Unexpected notification count');
+						if (warning && (notices[0].type !== 'warning' || notices[0].text !== get(t)(`settings.lishNetwork.${warning}`))) throw new Error('Wrong outcome notification');
+						results.push({ name, enabled, passed: true });
+					} catch (error) {
+						results.push({ name, enabled, passed: false, error: error.message });
+					}
+				}
+		} finally {
+			api.lishnets.setEnabled = original;
+			notificationTimeout.set(timeout);
+			notifications.set([]);
+			window.networkEnabledTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+		}
+	</script>
+</html>

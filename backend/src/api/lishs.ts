@@ -100,6 +100,8 @@ interface LISHsHandlers {
 	/** As {@link LISHsHandlers.importManifest}, for a caller that already holds mutation admission. */
 	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
 	pauseMutations: () => Promise<void>;
+	/** Pause verification without discarding the user's queue during a network restart. */
+	pauseForNetworkRestart: () => Promise<void>;
 	resumeMutations: () => void;
 	runMutation: <T>(operation: () => Promise<T>) => Promise<T>;
 }
@@ -512,7 +514,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	function processVerificationQueue(): void {
-		if (stoppingAllVerifications || currentVerification || verificationQueue.length === 0) return;
+		if (mutationAdmission.isClosed || stoppingAllVerifications || currentVerification || verificationQueue.length === 0) return;
 		const lishID = verificationQueue.shift()!;
 		const ac = new AbortController();
 		const run: VerificationRun = { lishID, ac, promise: Promise.resolve() };
@@ -539,8 +541,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				activeVerificationRuns.delete(run);
 				const isOwner = currentVerification === run;
 				if (isOwner) {
-					clearBusy(lishID);
-					if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+					if (!verificationQueue.includes(lishID)) {
+						clearBusy(lishID);
+						if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
+					}
 					currentVerification = null;
 				}
 				// Resume download if enabled — no-op if download not enabled or LISH deleted.
@@ -803,9 +807,24 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		await mutationAdmission.closeAndDrain();
 	}
 
-	function resumeMutations(): void {
-		mutationAdmission.open();
+	async function pauseForNetworkRestart(): Promise<void> {
+		const mutationsDrained = mutationAdmission.closeAndDrain();
+		const current = currentVerification;
+		// An explicit user cancellation must not be turned into a new verification request.
+		if (current && !current.ac.signal.aborted) {
+			if (!verificationQueue.includes(current.lishID)) verificationQueue.unshift(current.lishID);
+			current.ac.abort();
+			broadcast('lishs:verify', { lishID: current.lishID, filePath: '', verifiedChunks: 0, queued: true });
+		}
+		for (const run of activeVerificationRuns) run.ac.abort();
+		await mutationsDrained;
+		while (activeVerificationRuns.size > 0) await Promise.allSettled([...activeVerificationRuns].map(run => run.promise));
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, resumeMutations, runMutation };
+	function resumeMutations(): void {
+		mutationAdmission.open();
+		processVerificationQueue();
+	}
+
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

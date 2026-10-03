@@ -28,6 +28,8 @@ function makeMockNet() {
 		getTopicPeers: (): string[] => [],
 		getRecentTopicMembers: (): string[] => [],
 		isBootstrapOrRelayPeer: (): boolean => false,
+		isRelayPeer: (): boolean => false,
+		isClaimedByJoinedNetwork: (): boolean => false,
 		async disconnectPeer(): Promise<void> {},
 		pruneConfiguredBootstrapPeer(pid: string): void {
 			this.prunedBootstrap.push(pid);
@@ -61,7 +63,7 @@ function makeMockNet() {
 }
 
 function bare(db: Database, mock: ReturnType<typeof makeMockNet>, joined: string[]) {
-	const networks = Object.create(Networks.prototype) as Networks;
+	const networks = new Networks(db, '.', {} as never, {} as never);
 	(networks as any).db = db;
 	(networks as any).network = mock;
 	(networks as any).joinedNetworks = new Set(joined);

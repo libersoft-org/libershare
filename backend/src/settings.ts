@@ -238,6 +238,23 @@ const DEFAULT_SETTINGS: SettingsData = {
  * Settings storage.
  * Wraps JSONStorage with SettingsData type.
  */
+/** What one settings write asked for: its kind and the paths it accepted, changed or not. */
+export interface SettingsWriteScope {
+	readonly kind: 'set' | 'setMany' | 'reset';
+	readonly paths: readonly string[];
+}
+
+/** A prepared settings change handed to the {@link SettingsChangeApplier} before it goes live. */
+export interface SettingsChange {
+	readonly before: SettingsData;
+	readonly after: SettingsData;
+	readonly scope: SettingsWriteScope;
+	/** Save and publish `after`. Idempotent; a failure leaves the previous document in place. */
+	commit(): Promise<void>;
+}
+
+export type SettingsChangeApplier = (change: SettingsChange) => Promise<void>;
+
 export class Settings {
 	private storage!: JSONStorage<SettingsData>;
 	/**
@@ -252,6 +269,7 @@ export class Settings {
 	 * every writer goes through: the API, the import and the reset.
 	 */
 	private readonly writeLock = new Mutex();
+	private changeApplier: SettingsChangeApplier | null = null;
 
 	private constructor() {}
 
@@ -271,7 +289,7 @@ export class Settings {
 	 * ever sees the pair below the floor. A rejected key throws before anything is published.
 	 */
 	async set(path: string, value: any): Promise<void> {
-		await this.writeLock.runExclusive(() => this.storage.setMany([{ path, value }], draft => Settings.repairDraft(draft), 'throw'));
+		await this.write('set', () => this.storage.prepare([{ path, value }], draft => Settings.repairDraft(draft), 'throw'));
 	}
 
 	/**
@@ -284,7 +302,35 @@ export class Settings {
 	 * What the lock buys is that no other writer sees or extends the half-written document.
 	 */
 	async setMany(entries: ReadonlyArray<{ path: string; value: any }>): Promise<{ applied: number; skipped: string[] }> {
-		return await this.writeLock.runExclusive(() => this.storage.setMany(entries, draft => Settings.repairDraft(draft)));
+		const prepared = await this.write('setMany', () => this.storage.prepare(entries, draft => Settings.repairDraft(draft)));
+		return { applied: prepared.applied.length, skipped: prepared.skipped };
+	}
+
+	/**
+	 * Install what runs between preparing a settings change and publishing it — the network
+	 * restart manager. It receives the documents before and after, what the request wrote and a
+	 * `commit` that saves and publishes; it must call `commit` itself, at the point where the
+	 * change may go live. One applier for every writer: set, setMany and reset.
+	 */
+	setChangeApplier(applier: SettingsChangeApplier | null): void {
+		this.changeApplier = applier;
+	}
+
+	/**
+	 * One write session under {@link writeLock}: prepare the document, let the applier decide
+	 * how the change goes live, commit. Nothing is published unless the save succeeded, and a
+	 * change whose preparation failed is not saved at all.
+	 */
+	private async write(kind: SettingsWriteScope['kind'], prepare: () => { draft: SettingsData; applied: string[]; skipped: string[] }, applyRuntime = true): Promise<{ draft: SettingsData; applied: string[]; skipped: string[] }> {
+		return await this.writeLock.runExclusive(async () => {
+			const prepared = prepare();
+			let committed: Promise<void> | null = null;
+			const commit = (): Promise<void> => (committed ??= this.storage.commit(prepared.draft));
+			const applier = applyRuntime ? this.changeApplier : null;
+			if (applier) await applier({ before: structuredClone(this.storage.list()), after: structuredClone(prepared.draft), scope: { kind, paths: [...prepared.applied] }, commit });
+			await commit();
+			return prepared;
+		});
 	}
 
 	/**
@@ -316,8 +362,31 @@ export class Settings {
 		return structuredClone(DEFAULT_SETTINGS);
 	}
 
-	async reset(): Promise<SettingsData> {
-		return await this.writeLock.runExclusive(() => this.storage.reset());
+	/**
+	 * Hold every settings write until `release()`, for an operation that has to take the settings
+	 * session BEFORE other locks — the factory reset takes it ahead of the network maintenance
+	 * lease, the same order a settings restart uses, so the two cannot wait on each other. The
+	 * hold's own `reset` writes the defaults without the change applier: the caller restarts.
+	 */
+	async holdWrites(): Promise<{ reset(): Promise<SettingsData>; release(): void }> {
+		const release = await this.writeLock.acquire();
+		return {
+			reset: async () => {
+				const defaults = this.storage.prepareReset();
+				await this.storage.commit(defaults);
+				return defaults;
+			},
+			release,
+		};
+	}
+
+	/**
+	 * Restore the defaults. `applyRuntime: false` is for a caller that restarts the node itself
+	 * (the factory reset), so the change applier does not restart it a second time.
+	 */
+	async reset(options: { applyRuntime?: boolean } = {}): Promise<SettingsData> {
+		const defaults = this.storage.prepareReset();
+		return (await this.write('reset', () => ({ draft: defaults, applied: Object.keys(defaults), skipped: [] }), options.applyRuntime !== false)).draft;
 	}
 
 	/** Create all storage directories from current settings (expanding ~ to home). */

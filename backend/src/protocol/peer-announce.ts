@@ -175,6 +175,8 @@ export interface PeerAnnounceManagerDeps {
 	getNode(): Libp2p | null;
 	/** Returns the current pubsub instance (may be null). */
 	getPubsub(): any | null;
+	/** Save cleanup protection before publishing observed membership. */
+	beforeMemberConfirmed?(topic: string, peerID: string): void;
 	/**
 	 * Broadcast a message on a gossipsub topic, over the pubsub instance the caller
 	 * captured — NOT over whatever pubsub the network happens to hold now. An emit spans
@@ -267,13 +269,13 @@ export class PeerAnnounceManager {
 	 * on a node that never emits an announce at all.
 	 */
 	noteMember(topic: string, peerID: string): void {
+		this.confirmTopicMember(topic, peerID);
 		let members = this.topicMembers.get(topic);
 		if (!members) {
 			members = new Map<string, number>();
 			this.topicMembers.set(topic, members);
 		}
 		members.set(peerID, monotonicNow());
-		this.confirmTopicMember(topic, peerID);
 	}
 
 	/**
@@ -293,6 +295,7 @@ export class PeerAnnounceManager {
 
 	/** Record live evidence that `peerID` is subscribed to `topic` right now. */
 	private confirmTopicMember(topic: string, peerID: string): void {
+		this.deps.beforeMemberConfirmed?.(topic, peerID);
 		let confirmed = this.confirmedMembers.get(topic);
 		if (!confirmed) {
 			confirmed = new Set<string>();
@@ -333,6 +336,7 @@ export class PeerAnnounceManager {
 	 */
 	private refreshTopicMembers(pubsub: any, lishTopics: string[]): void {
 		const now = monotonicNow();
+		const failures: unknown[] = [];
 		for (const t of this.topicMembers.keys()) if (!lishTopics.includes(t)) this.topicMembers.delete(t);
 		for (const t of this.confirmedMembers.keys()) if (!lishTopics.includes(t)) this.confirmedMembers.delete(t);
 		for (const topic of lishTopics) {
@@ -344,15 +348,20 @@ export class PeerAnnounceManager {
 			try {
 				for (const p of pubsub.getSubscribers(topic)) {
 					const pid = p.toString();
-					members.set(pid, now);
 					// Seen subscribed right now — the same standing a SUBSCRIBE event grants.
-					this.confirmTopicMember(topic, pid);
+					try {
+						this.confirmTopicMember(topic, pid);
+						members.set(pid, now);
+					} catch (error) {
+						failures.push(error);
+					}
 				}
 			} catch {
 				// topic may be tearing down — keep what we already have
 			}
 			for (const [pid, seen] of members) if (now - seen > PEER_ANNOUNCE_MEMBER_TTL_MS) members.delete(pid);
 		}
+		if (failures.length > 0) throw new AggregateError(failures, 'Could not save membership cleanup claims');
 	}
 
 	/** Start the periodic emitter. Safe to call only once per start/stop cycle. */

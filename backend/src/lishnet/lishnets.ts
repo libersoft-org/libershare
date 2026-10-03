@@ -1,11 +1,14 @@
+import { observePeerCleanupClaims, recordLeavingPeerCleanup, replayPeerCleanup } from './peer-cleanup.ts';
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult } from '../protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult, type PeerReleaseOutcome } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, CodedError, ErrorCodes } from '@shared';
+import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type NetworkMutationOutcome, combineNetworkMutations, CodedError, ErrorCodes } from '@shared';
 import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
+import { confirmPeerCleanup, listPeerCleanup } from '../db/peer-cleanup.ts';
+import { type PeerId } from '@libp2p/interface';
 
 /**
  * Outcome of {@link Networks.setEnabled}.
@@ -24,6 +27,8 @@ export interface SetEnabledResult {
 	joined: boolean;
 	/** Whether the stored state is also reflected by the running node. */
 	applied: boolean;
+	/** Whether this request's state was saved — the same meaning as in {@link NetworkMutationOutcome}. */
+	stored: boolean;
 	/**
 	 * Identity of the row as it stood inside the critical section, for the event the API
 	 * broadcasts. The handler used to read the row itself before awaiting this call, which
@@ -52,6 +57,8 @@ interface ReconcileOutcome {
 	applied: boolean;
 	/** Identity of the row this convergence actually converged on, if it still exists. */
 	network?: { networkID: string; name: string };
+	/** The row this convergence worked from; undefined for a network that no longer exists. */
+	converged?: LISHNetworkConfig | undefined;
 }
 
 /**
@@ -140,6 +147,7 @@ interface InstalledBootstrap {
 export class Networks {
 	private db: Database;
 	private network: Network;
+	private readonly flushPeerCleanupClaims: () => void;
 
 	// Track which lishnets are currently joined (subscribed)
 	private joinedNetworks: Set<string> = new Set();
@@ -171,6 +179,7 @@ export class Networks {
 	 * already owns a per-ID lock, so no cycle is possible.
 	 */
 	private readonly catalogMutex = new Mutex();
+	private readonly peerCleanupMutex = new Mutex();
 	/** Lazily initialised because a few focused unit fixtures instantiate the prototype. */
 	private mutationAdmission?: NetworkMutationGate;
 	/**
@@ -257,6 +266,7 @@ export class Networks {
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
 		this.network = new Network(dataDir, dataServer, settings);
+		this.flushPeerCleanupClaims = observePeerCleanupClaims(db, this.network, () => this.getEnabled());
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
 			if (this._onPeerCountChange) this._onPeerCountChange(counts);
@@ -330,7 +340,20 @@ export class Networks {
 		// can record which specific peers connected / mismatched / timed out.
 		// (Previous behaviour used a flat preset list that bypassed our tracking.)
 		try {
-			await this.network.start([]);
+			const releaseCleanup = await this.peerCleanupMutex.acquire();
+			try {
+				await this.network.start([], {
+					beforeStart: async node => {
+						try {
+							await this.replayPeerCleanup(node);
+						} finally {
+							releaseCleanup();
+						}
+					},
+				});
+			} finally {
+				releaseCleanup();
+			}
 
 			// The enabled list is read AFTER the start, not before it. Reading it first meant
 			// startup worked from a snapshot taken before a long await: an API disable or
@@ -462,17 +485,20 @@ export class Networks {
 		return await this.inMutation(async () => {
 			const staged = await this.inCatalog(() => {
 				if (!lishnetExists(this.db, id)) return undefined;
-				setLISHnetEnabled(this.db, id, enabled);
+				this.db.transaction(() => {
+					if (!enabled) this.recordLeavingPeers([id], this.enabledIDsWithout([id]), crypto.randomUUID());
+					setLISHnetEnabled(this.db, id, enabled);
+				})();
 				// Named from the row this write landed on, not from a read the caller took outside
 				// the lock — see {@link SetEnabledResult.network}.
 				return { row: this.get(id), job: this.reconcileLater(id) };
 			});
-			if (!staged) return { found: false, transitioned: false, joined: false, applied: false };
+			if (!staged) return { found: false, stored: false, transitioned: false, joined: false, applied: false };
 			const outcome = await staged.job;
 			// Everything transition-related comes out of the outcome, which was assembled under
 			// the lishnet's lock. Nothing here may re-read the runtime: by now the next waiter
 			// has had the lock, so a second look answers for its transition, not for this one.
-			const result: SetEnabledResult = { found: true, transitioned: outcome.transitioned, joined: outcome.joined, applied: outcome.applied };
+			const result: SetEnabledResult = { found: true, stored: true, transitioned: outcome.transitioned, joined: outcome.joined, applied: outcome.applied && Networks.sameRuntimeState(staged.row, outcome.converged) };
 			// The row the convergence worked from, so the event carries the name the transition
 			// actually used rather than a snapshot a queued rename has since replaced. A row that
 			// no longer exists falls back to the one this call's own catalog phase wrote — there
@@ -484,7 +510,7 @@ export class Networks {
 	}
 
 	/**
-	 * Phase one of every lishnet write: the DATABASE, under {@link catalogMutex} alone.
+	 * Phase one of every lishnet write: the DATABASE, excluding the startup cleanup snapshot.
 	 *
 	 * `body` is synchronous and must not touch the network. The catalog used to be held for
 	 * the runtime phase as well, and that phase is slow — a join awaits a sequential dial of
@@ -494,7 +520,19 @@ export class Networks {
 	 * which presented as a frozen shutdown.
 	 */
 	private async inCatalog<T>(body: () => T): Promise<T> {
-		return await this.catalogMutex.runExclusive(async () => body());
+		for (;;) {
+			const release = await this.catalogMutex.acquire();
+			if (this.peerCleanupMutex.isLocked()) {
+				release();
+				await this.peerCleanupMutex.waitForUnlock();
+				continue;
+			}
+			try {
+				return await body();
+			} finally {
+				release();
+			}
+		}
 	}
 
 	private getMutationAdmission(): NetworkMutationGate {
@@ -609,7 +647,7 @@ export class Networks {
 	private currentState(id: string): ReconcileOutcome {
 		const row = this.get(id);
 		const joined = this.joinedNetworks.has(id);
-		const outcome: ReconcileOutcome = { transitioned: false, joined, applied: joined === (row?.enabled === true) };
+		const outcome: ReconcileOutcome = { transitioned: false, joined, applied: joined === (row?.enabled === true) && (!joined || !this.reconcileAdmissionClosed), converged: row };
 		if (row) outcome.network = { networkID: row.networkID, name: row.name };
 		return outcome;
 	}
@@ -718,7 +756,10 @@ export class Networks {
 			else await this.leaveNetwork(id, installed);
 		}
 		const settled = this.joinedNetworks.has(id);
-		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled, applied: settled === wantJoined };
+		// Joined also means the stored bootstrap list is the one installed on the node. Whether
+		// its peers answered is not part of it: an unreachable peer is not an unapplied setting.
+		const listInstalled = !settled || (this.appliedBootstrap.get(id)?.addresses ?? []).join('\n') === after.join('\n');
+		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled, applied: settled === wantJoined && listInstalled, converged: next };
 		if (next) outcome.network = { networkID: next.networkID, name: next.name };
 		return outcome;
 	}
@@ -875,6 +916,16 @@ export class Networks {
 		// could redial it back after we left.
 		const leftPeers = new Set<string>(this.network.getTopicPeers(id));
 		for (const pid of this.network.getRecentTopicMembers(id)) leftPeers.add(pid);
+		// The queue was written with the catalog change, from the membership seen then; a join
+		// still finishing may have brought more peers since. Recorded now, while the topic
+		// still shows them and before the first hang-up, so a crash mid-leave leaves the next
+		// start their cleanup too. A failed write must not stop the leave itself.
+		const leaveOperation = crypto.randomUUID();
+		try {
+			this.recordLeavingPeers([id], this.enabledIDsWithout([id]), leaveOperation);
+		} catch (err: any) {
+			console.error(`[Networks] recording the peers of the leave of ${id} failed:`, err?.message ?? err);
+		}
 
 		this.network.unsubscribeTopic(id);
 		this.joinedNetworks.delete(id);
@@ -925,11 +976,16 @@ export class Networks {
 
 		const stillConfigured = this.configuredBootstrapPeerIDsElsewhere(id);
 		for (const pid of new Set(Networks.bootstrapPeerIDsOf(outgoing))) {
-			if (stillConfigured.has(pid)) continue;
+			if (stillConfigured.has(pid)) {
+				this.settlePeerCleanup(pid, leaveOperation, 'kept');
+				continue;
+			}
 			this.network.pruneConfiguredBootstrapPeer(pid, id);
-			if (stillJoinedPeers.has(pid)) continue;
-			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.releasePeer(pid, id, epoch);
+			if (stillJoinedPeers.has(pid) || this.network.isBootstrapOrRelayPeer(pid)) {
+				this.settlePeerCleanup(pid, leaveOperation, 'kept');
+				continue;
+			}
+			this.settlePeerCleanup(pid, leaveOperation, await this.releasePeer(pid, id, epoch));
 		}
 
 		// Disconnect peers that belonged exclusively to the lishnet we just left.
@@ -940,9 +996,11 @@ export class Networks {
 		// Network.disconnectPeer entry point (which also clears the keep-alive tag
 		// so ReconnectQueue does not immediately re-dial it).
 		for (const pid of leftPeers) {
-			if (stillJoinedPeers.has(pid)) continue;
-			if (this.network.isBootstrapOrRelayPeer(pid)) continue;
-			await this.releasePeer(pid, id, epoch);
+			if (stillJoinedPeers.has(pid) || this.network.isBootstrapOrRelayPeer(pid)) {
+				this.settlePeerCleanup(pid, leaveOperation, 'kept');
+				continue;
+			}
+			this.settlePeerCleanup(pid, leaveOperation, await this.releasePeer(pid, id, epoch));
 		}
 
 		const net = this.get(id);
@@ -960,11 +1018,25 @@ export class Networks {
 	 * unsubscribed and nobody left to finish. The peer that failed is logged and the leave
 	 * carries on.
 	 */
-	private async releasePeer(peerID: string, id: string, epoch: number): Promise<void> {
+	private async releasePeer(peerID: string, id: string, epoch: number): Promise<PeerReleaseOutcome> {
 		try {
-			await this.network.disconnectPeer(peerID, id, epoch);
+			return await this.network.disconnectPeer(peerID, id, epoch);
 		} catch (err: any) {
 			console.error(`[Networks] disconnecting ${peerID.slice(0, 16)} while leaving ${id} failed:`, err?.message ?? err);
+			return 'incomplete';
+		}
+	}
+
+	/** Keep protection rows until the last owner leaves and deletion actually succeeds. */
+	private settlePeerCleanup(peerID: string, operationID: string, outcome: PeerReleaseOutcome): void {
+		if (outcome !== 'released' || this.network.isClaimedByJoinedNetwork(peerID)) return;
+		try {
+			confirmPeerCleanup(
+				this.db,
+				listPeerCleanup(this.db).filter(row => row.peerID === peerID && row.operationID === operationID)
+			);
+		} catch (err: any) {
+			console.error(`[Networks] settling the peer cleanup of ${peerID.slice(0, 16)} failed:`, err?.message ?? err);
 		}
 	}
 
@@ -1123,28 +1195,45 @@ export class Networks {
 	}
 
 	async importFromLISHnet(data: ILISHNetwork, enabled: boolean = false): Promise<LISHNetworkConfig> {
-		return await this.inMutation(() => this.importFromLISHnetAdmitted(data, enabled));
+		return (await this.inMutation(() => this.importFromLISHnetAdmitted(data, enabled))).config;
 	}
 
-	private async importFromLISHnetAdmitted(data: ILISHNetwork, enabled: boolean): Promise<LISHNetworkConfig> {
+	private async importFromLISHnetAdmitted(data: ILISHNetwork, enabled: boolean): Promise<{ config: LISHNetworkConfig; outcome: ReconcileOutcome }> {
 		const definition = this.validateNetwork(data);
 		const config: LISHNetworkConfig = { ...definition, enabled };
 		// An upsert can bring a network into existence — see {@link catalogMutex}.
 		const job = await this.inCatalog(() => {
-			upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+			this.db.transaction(() => {
+				// Switching an existing network off leaves it: queue its peers with the write, as
+				// update and setEnabled do, or an interrupted leave strands them.
+				if (this.get(config.networkID)?.enabled && !config.enabled) this.recordLeavingPeers([config.networkID], this.enabledIDsWithout([config.networkID]), crypto.randomUUID());
+				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+			})();
 			return this.reconcileLater(config.networkID);
 		});
-		await job;
-		return config;
+		return { config, outcome: await job };
 	}
 
 	/** Parse and import a file under one mutation admission held from before I/O. */
 	async importFromFile(filePath: string, enabled: boolean = false): Promise<LISHNetworkConfig[]> {
+		return (await this.importFromFileDetailed(filePath, enabled)).value;
+	}
+
+	/**
+	 * {@link importFromFile}, reporting per network whether the running node applied it: an
+	 * enabled network imported while the node is down is stored but not joined.
+	 */
+	async importFromFileDetailed(filePath: string, enabled: boolean = false): Promise<NetworkMutationOutcome<LISHNetworkConfig[]>> {
 		return await this.inMutation(async () => {
 			const definitions = await this.parseFromFile(filePath);
-			const results: LISHNetworkConfig[] = [];
-			for (const definition of definitions) results.push(await this.importFromLISHnetAdmitted(definition as ILISHNetwork, enabled));
-			return results;
+			const configs: LISHNetworkConfig[] = [];
+			const items: Array<NetworkMutationOutcome<null> & { networkID: string }> = [];
+			for (const definition of definitions) {
+				const { config, outcome } = await this.importFromLISHnetAdmitted(definition as ILISHNetwork, enabled);
+				configs.push(config);
+				items.push({ ...Networks.outcomeOf(null, config, outcome), networkID: config.networkID });
+			}
+			return combineNetworkMutations(configs, items);
 		});
 	}
 
@@ -1189,15 +1278,24 @@ export class Networks {
 		// that already exists writes nothing and reconciles nothing: it used to claim a
 		// revision anyway on the way in, which cancelled a queued enable of that very network
 		// — a request that changed nothing discarding one that meant something.
+		return (await this.addDetailed(network)).stored;
+	}
+
+	/** {@link add} with the outcome of this request — see {@link NetworkMutationOutcome}. */
+	async addDetailed(network: LISHNetworkConfig): Promise<NetworkMutationOutcome<boolean>> {
 		return await this.inMutation(async () => {
-			const job = await this.inCatalog(() => (addLISHnet(this.db, network) ? this.reconcileLater(network.networkID) : undefined));
-			if (!job) return false;
-			await job;
-			return true;
+			const staged = await this.inCatalog(() => (addLISHnet(this.db, network) ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined));
+			if (!staged) return Networks.notStored(false);
+			return Networks.outcomeOf(true, staged.row, await staged.job);
 		});
 	}
 
 	async update(network: LISHNetworkConfig): Promise<boolean> {
+		return (await this.updateDetailed(network)).stored;
+	}
+
+	/** {@link update} with the outcome of this request — see {@link NetworkMutationOutcome}. */
+	async updateDetailed(network: LISHNetworkConfig): Promise<NetworkMutationOutcome<boolean>> {
 		// Row read and write in ONE critical section. With the read outside it, a toggle
 		// could slip between the two and be overwritten by a row this edit had already read.
 		// The general edit form carries the bootstrap list AND the enabled flag, so this path
@@ -1210,11 +1308,14 @@ export class Networks {
 				// otherwise be persisted while the runtime worked from the filtered copy, and
 				// the two would disagree about what this network's bootstrap list even is.
 				const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
-				return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned }) ? this.reconcileLater(network.networkID) : undefined;
+				const updated = this.db.transaction(() => {
+					if (this.get(network.networkID)?.enabled && !network.enabled) this.recordLeavingPeers([network.networkID], this.enabledIDsWithout([network.networkID]), crypto.randomUUID());
+					return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
+				})();
+				return updated ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined;
 			});
-			if (!job) return false;
-			await job;
-			return true;
+			if (!job) return Networks.notStored(false);
+			return Networks.outcomeOf(true, job.row, await job.job);
 		});
 	}
 
@@ -1237,14 +1338,22 @@ export class Networks {
 	 * keep-alive tags and forgotten their peerStore entries.
 	 */
 	async delete(id: string): Promise<boolean> {
+		return (await this.deleteDetailed(id)).stored;
+	}
+
+	/** {@link delete} with the outcome of this request — see {@link NetworkMutationOutcome}. */
+	async deleteDetailed(id: string): Promise<NetworkMutationOutcome<boolean>> {
 		return await this.inMutation(async () => {
 			const job = await this.inCatalog(() => {
 				if (!lishnetExists(this.db, id)) return undefined;
-				deleteLISHnet(this.db, id);
+				this.db.transaction(() => {
+					this.recordLeavingPeers([id], this.enabledIDsWithout([id]), crypto.randomUUID());
+					deleteLISHnet(this.db, id);
+				})();
 				return this.reconcileLater(id);
 			});
-			if (!job) return false;
-			await job;
+			if (!job) return Networks.notStored(false);
+			const outcome = await job;
 			// Only while the lishnet is still gone. `NetworkMutationGate` counts writers rather
 			// than serialising them, so an add of this same ID can land while the leave drains —
 			// and the suppression then belongs to that newer life, not to the delete that is
@@ -1255,7 +1364,7 @@ export class Networks {
 			await this.inCatalog(() => {
 				if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
 			});
-			return true;
+			return Networks.outcomeOf(true, undefined, outcome);
 		});
 	}
 
@@ -1291,6 +1400,14 @@ export class Networks {
 	 * otherwise stay in its topic with no row left to explain it.
 	 */
 	async replace(networks: LISHNetworkConfig[]): Promise<void> {
+		await this.replaceDetailed(networks);
+	}
+
+	/**
+	 * {@link replace} with one outcome per network it touched, combined: applied only when every
+	 * one was, transitioned when any was. An empty list that removed nothing is applied.
+	 */
+	async replaceDetailed(networks: LISHNetworkConfig[]): Promise<NetworkMutationOutcome<boolean>> {
 		// Snapshot and rewrite in one critical section, so the list this reconciles against
 		// is exactly the list it replaced. Reading it outside meant a network created while
 		// we waited was rewritten out of existence behind the back of the add that was still
@@ -1298,17 +1415,24 @@ export class Networks {
 		// Every affected network's turn is reserved before the catalog is released, so a
 		// single-network write issued after this one cannot converge ahead of it on any of
 		// them — see {@link reconcileLater}.
-		await this.inMutation(async () => {
+		return await this.inMutation(async () => {
 			let removed: string[] = [];
+			let affected: Array<{ networkID: string; desired: LISHNetworkConfig | undefined }> = [];
 			const jobs = await this.inCatalog(() => {
 				const rows = new Map(this.list().map(n => [n.networkID, n]));
-				replaceLISHnets(this.db, networks);
+				const enabledAfter = new Set(networks.filter(n => n.enabled).map(n => n.networkID));
+				const leaving = [...rows.values()].filter(n => n.enabled && !enabledAfter.has(n.networkID)).map(n => n.networkID);
+				this.db.transaction(() => {
+					this.recordLeavingPeers(leaving, enabledAfter, crypto.randomUUID());
+					replaceLISHnets(this.db, networks);
+				})();
 				const kept = new Set(networks.map(n => n.networkID));
 				// A network this call drops is deleted every bit as much as one removed through
 				// delete(), so the suppression its leave installs needs the same release: its key
 				// is an ID that no longer exists, and no rejoin can ever present it again.
 				removed = [...rows.keys()].filter(id => !kept.has(id));
-				return [...new Set([...rows.keys(), ...kept])].map(id => this.reconcileLater(id));
+				affected = [...new Set([...rows.keys(), ...kept])].map(id => ({ networkID: id, desired: this.get(id) }));
+				return affected.map(({ networkID }) => this.reconcileLater(networkID));
 			});
 			const outcomes = await Promise.allSettled(jobs);
 			// After the leaves, like delete() does — the suppression only exists once they ran.
@@ -1334,6 +1458,8 @@ export class Networks {
 					failures.map(failure => failure.reason),
 					`${failures.length} lishnet reconciliation failed`
 				);
+			const items = affected.map(({ networkID, desired }, index) => ({ networkID, ...Networks.outcomeOf(null, desired, (outcomes[index] as PromiseFulfilledResult<ReconcileOutcome>).value) }));
+			return combineNetworkMutations(true, items);
 		});
 	}
 
@@ -1358,6 +1484,11 @@ export class Networks {
 	 * recorded. Returns the updated config or null if the network is unknown.
 	 */
 	async updateBootstrapPeers(id: string, bootstrapPeers: string[]): Promise<LISHNetworkConfig | null> {
+		return (await this.updateBootstrapPeersDetailed(id, bootstrapPeers)).value;
+	}
+
+	/** {@link updateBootstrapPeers} with the outcome of this request — see {@link NetworkMutationOutcome}. */
+	async updateBootstrapPeersDetailed(id: string, bootstrapPeers: string[]): Promise<NetworkMutationOutcome<LISHNetworkConfig | null>> {
 		return await this.inMutation(async () => {
 			const staged = await this.inCatalog(() => {
 				const existing = this.get(id);
@@ -1369,10 +1500,68 @@ export class Networks {
 				if (!updateLISHnet(this.db, next)) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
 				return { next, job: this.reconcileLater(id) };
 			});
-			if (!staged) return null;
-			await staged.job;
-			return staged.next;
+			if (!staged) return Networks.notStored<LISHNetworkConfig | null>(null);
+			return Networks.outcomeOf<LISHNetworkConfig | null>(staged.next, staged.next, await staged.job);
 		});
+	}
+
+	/**
+	 * Record, for every lishnet in `leaving`, the peers its leave has to clean out of the peer
+	 * store — its configured bootstrap peers, current topic members and recent ones — together with
+	 * every lishnet in `remaining` that already uses one of them, which protects that peer.
+	 *
+	 * Synchronous and called inside the same transaction as the catalog write, so a process that
+	 * dies right after the write still finds the whole batch at its next start. Must run before
+	 * the write replaces a leaving row: its bootstrap list is read from it.
+	 */
+	/** Enabled lishnets other than `excluded`, as they stand before the write in progress. */
+	private enabledIDsWithout(excluded: readonly string[]): Set<string> {
+		return new Set(
+			this.getEnabled()
+				.map(n => n.networkID)
+				.filter(id => !excluded.includes(id))
+		);
+	}
+
+	/**
+	 * Queue live members and stored bootstraps even after a failed restart.
+	 */
+	recordPeersForCatalogReset(): void {
+		this.db.transaction(() => this.recordLeavingPeers([...new Set([...this.joinedNetworks, ...this.list().map(row => row.networkID)])], new Set(), crypto.randomUUID()))();
+	}
+
+	private recordLeavingPeers(leaving: readonly string[], remaining: ReadonlySet<string>, operationID: string): void {
+		this.flushPeerCleanupClaims();
+		recordLeavingPeerCleanup(this.db, this.network, leaving, remaining, operationID, id => [...(this.get(id)?.bootstrapPeers ?? []), ...(this.appliedBootstrap.get(id)?.addresses ?? [])]);
+	}
+
+	/**
+	 * Before autodial, remove queued peers without an enabled owner. Failed writes or
+	 * deletions fail startup and retain the queue.
+	 */
+	private async replayPeerCleanup(node: { peerStore: { delete(peerID: PeerId): Promise<void> } }): Promise<void> {
+		this.flushPeerCleanupClaims();
+		await replayPeerCleanup(this.db, node, () => this.getEnabled());
+	}
+
+	/**
+	 * The outcome of one request from the row it stored and the convergence that followed.
+	 * Applied only when the node reached THIS request's state: a convergence that worked from a
+	 * row a newer request has since written reached that request's state instead.
+	 */
+	private static outcomeOf<T>(value: T, desired: LISHNetworkConfig | undefined, outcome: ReconcileOutcome): NetworkMutationOutcome<T> {
+		return { stored: true, applied: outcome.applied && Networks.sameRuntimeState(desired, outcome.converged), transitioned: outcome.transitioned, joined: outcome.joined, value };
+	}
+
+	/** A request that stored nothing: a duplicate add, or a write to a network that does not exist. */
+	private static notStored<T>(value: T): NetworkMutationOutcome<T> {
+		return { stored: false, applied: false, transitioned: false, value };
+	}
+
+	/** Whether two rows ask the node for the same thing: membership and bootstrap list. */
+	private static sameRuntimeState(a: LISHNetworkConfig | undefined, b: LISHNetworkConfig | undefined): boolean {
+		if (!a || !b) return a === b;
+		return a.enabled === b.enabled && Networks.cleanBootstrapList(a.bootstrapPeers ?? []).join('\n') === Networks.cleanBootstrapList(b.bootstrapPeers ?? []).join('\n');
 	}
 
 	/**

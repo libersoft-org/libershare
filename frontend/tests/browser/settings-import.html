@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Settings import outcome regression</title>
+	<pre id="results">Running...</pre>
+	<div id="dialog"></div>
+	<div id="download"></div>
+	<div id="footer"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { CodedError, ErrorCodes } from '@shared';
+		import { api } from '/src/scripts/api.ts';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { notifications } from '/src/scripts/notifications.ts';
+		import { incomingPort, footerVisible, loadSettings } from '/src/scripts/settings.ts';
+		import Confirm from '/src/pages/Settings/SettingsBackupImportConfirm.svelte';
+		import Download from '/src/pages/Settings/SettingsDownload.svelte';
+		import Footer from '/src/pages/Settings/SettingsFooter.svelte';
+		const baseline = {
+			language: 'en',
+			ui: { cursorSize: 'medium', footerVisible: true, footerPosition: 'right', footerWidgets: {}, timeFormat24h: true, showSeconds: false },
+			audio: { enabled: false, volume: 50 },
+			storage: { downloadPath: '/files', tempPath: '/temp', lishPath: '/lish', lishnetPath: '/networks', backupPath: '/backup' },
+			network: { incomingPort: 9090, maxDownloadPeersPerLISH: 5, maxUploadPeersPerLISH: 5, maxDownloadSpeed: 0, maxUploadSpeed: 0, maxChunkSize: 65536, maxMessageSize: 262144, allowRelay: false, maxRelayReservations: 10, useRelayClients: false, maxRelayClients: 5, autoStartSharing: false, autoStartDownloading: false },
+			system: { notificationTimeout: 0 },
+			export: {},
+			input: {},
+		};
+		const data = { network: { incomingPort: 29999 }, ui: { footerVisible: false } };
+		const imported = { ...baseline, network: { ...baseline.network, ...data.network }, ui: { ...baseline.ui, ...data.ui } };
+		const originals = { apply: api.settings.applyImported, list: api.settings.list, defaults: api.settings.getDefaults, call: api.call };
+		const results = [];
+		const assert = (condition, message) => {
+			if (!condition) throw new Error(message);
+		};
+		const settle = async () => {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		};
+		async function check(name, failure, saved, same, readFails, types) {
+			let release;
+			const gate = new Promise(resolve => {
+				release = resolve;
+			});
+			const initial = same ? imported : baseline;
+			let reads = 0,
+				done = 0;
+			const mounted = [];
+			try {
+				incomingPort.set(initial.network.incomingPort);
+				footerVisible.set(initial.ui.footerVisible);
+				notifications.set([]);
+				api.settings.applyImported = async () => {
+					if (failure === 'committed') throw new CodedError(ErrorCodes.SETTINGS_SAVED_NOT_APPLIED, JSON.stringify({ code: ErrorCodes.NETWORK_PORT_IN_USE, detail: '29999' }));
+					if (failure) throw new CodedError(failure);
+					return { applied: 2, skipped: [] };
+				};
+				api.settings.list = async () => {
+					reads++;
+					await gate;
+					if (readFails) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+					return structuredClone(saved ? imported : initial);
+				};
+				mounted.push(
+					mount(Confirm, {
+						target: document.querySelector('#dialog'),
+						props: {
+							data,
+							position: { x: 0, y: 2 },
+							onDone: () => {
+								done++;
+							},
+						},
+					})
+				);
+				await settle();
+				[...document.querySelectorAll('#dialog .button')].find(button => button.textContent.trim() === get(t)('common.yes')).click();
+				await settle();
+				assert(reads === 1, 'The import outcome did not reload the actual settings');
+				assert(done === 0, 'The dialog closed before readback settled');
+				release();
+				await settle();
+				assert(done === 1, 'The dialog did not finish after readback');
+				const actual = get(notifications);
+				assert(JSON.stringify(actual.map(notice => notice.type)) === JSON.stringify(types), `Unexpected notices: ${actual.map(notice => notice.type)}`);
+				if (failure === 'committed')
+					assert(
+						actual.some(notice => notice.text.includes('29999') && notice.text.includes('saved')),
+						'Saved outcome lost its translated cause'
+					);
+				const expected = readFails ? initial : saved ? imported : initial;
+				mounted.push(mount(Download, { target: document.querySelector('#download'), props: { areaID: 'import-download' } }));
+				mounted.push(mount(Footer, { target: document.querySelector('#footer'), props: { areaID: 'import-footer' } }));
+				await tick();
+				assert(document.querySelector('#download input[type="number"]').value === String(expected.network.incomingPort), 'Visible port did not match readback');
+				const footer = [...document.querySelectorAll('#footer [role="switch"]')].find(control => control.getAttribute('aria-label') === get(t)('settings.footerVisible'));
+				assert(footer.getAttribute('aria-checked') === String(expected.ui.footerVisible), 'Visible footer setting did not match readback');
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			} finally {
+				release();
+				await settle();
+				for (const component of mounted.reverse()) await unmount(component);
+			}
+		}
+		try {
+			await new Promise(resolve => {
+				const off = translations.subscribe(value => {
+					if (value.settings?.backup)
+						queueMicrotask(() => {
+							off();
+							resolve();
+						});
+				});
+			});
+			api.call = async method => {
+				if (method === 'system.getVolume') return { available: false, known: true, volume: null };
+				if (method === 'events.subscribe') return true;
+				throw new Error(`Unexpected API ${method}`);
+			};
+			api.settings.list = async () => structuredClone(baseline);
+			api.settings.getDefaults = async () => structuredClone(baseline);
+			await loadSettings();
+			await check('saved import with failed restart reloads both fields and warns', 'committed', true, false, false, ['warning']);
+			await check('matching old values do not hide an explicit committed failure', 'committed', true, true, false, ['warning']);
+			await check('failed save reloads old values and reports an error', ErrorCodes.FS_NO_SPACE, false, false, false, ['error']);
+			await check('matching readback values do not prove that a write committed', ErrorCodes.NETWORK_NOT_RUNNING, false, true, false, ['error']);
+			await check('an uncertain request reloads values without inventing a committed outcome', ErrorCodes.REQUEST_TIMEOUT, true, false, false, ['error']);
+			await check('failed readback preserves the committed warning and reports stale fields', 'committed', true, false, true, ['error', 'warning']);
+			await check('a readback failure after success does not report false completion', null, true, false, true, ['error']);
+			await check('successful import reloads visible values before reporting success', null, true, false, false, ['success']);
+		} catch (error) {
+			results.push({ name: 'fixture setup', passed: false, error: error.message });
+		} finally {
+			api.settings.applyImported = originals.apply;
+			api.settings.list = originals.list;
+			api.settings.getDefaults = originals.defaults;
+			api.call = originals.call;
+			window.settingsImportTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+		}
+	</script>
+</html>

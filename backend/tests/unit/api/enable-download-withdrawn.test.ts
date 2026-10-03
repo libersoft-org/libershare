@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { tmpdir } from 'os';
 import { initTransferHandlers, initDownloadState, removeDownloadState } from '../../../src/api/transfer.ts';
+import { initUploadState } from '../../../src/protocol/lish-protocol.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
 import { type Settings } from '../../../src/settings.ts';
@@ -30,6 +31,7 @@ const settings = { get: (): boolean => false } as unknown as Settings;
 
 describe('enableDownload — withdrawn while starting', () => {
 	beforeEach(() => {
+		initUploadState(new Set(), () => {});
 		initDownloadState(new Set<string>(), () => {});
 	});
 
