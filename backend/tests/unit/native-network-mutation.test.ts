@@ -19,7 +19,7 @@ function settings(): NativeNetworkSettings {
 function fixture() {
 	const endpoint: BoundDBusEndpoint = { connectionId: 'connection-1', rule: { kind: 'dbus-process', busId: 'a'.repeat(32), destination: ':1.42', process: { pid: 42, started: '1234' } } };
 	const original = settings();
-	const state = { saved: structuredClone(original), applied: structuredClone(original), remaining: 255000, clock: 0, pending: false, closed: false, duplicate: false, unknown: '', failure: '', activationState: 2, expireAfterUpdate: false, wrongDns: false, rollbackWrongDevice: false };
+	const state = { saved: structuredClone(original), applied: structuredClone(original), remaining: 255000, clock: 0, pending: false, closed: false, duplicate: false, unknown: '', failure: '', activationState: 2, expireAfterUpdate: false, wrongDns: false, rollbackWrongDevice: false, rollbackBusyReads: 0, rollbackBusy: 0 };
 	const writes: Parameters<NativeNetworkMutationDeps['mutate']>[2][] = [];
 	const reads: Parameters<NativeNetworkMutationDeps['read']>[1][] = [];
 	const recovery: unknown[] = [];
@@ -58,7 +58,12 @@ function fixture() {
 			if (request.member === 'GetSettings') return reply('a{sa{sv}}', structuredClone(state.saved));
 			if (request.member !== 'GetAll') throw new Error(`Unexpected read ${request.member}`);
 			if (request.path === ROOT) return reply('a{sv}', { ActiveConnections: variant('ao', state.duplicate ? [ACTIVE, `${ACTIVE}2`] : [ACTIVE]) });
-			if (request.path === DEVICE) return reply('a{sv}', { Managed: variant('b', true), ActiveConnection: variant('o', ACTIVE), Ip4Config: variant('o', `${ROOT}/IP4Config/1`), Ip6Config: variant('o', `${ROOT}/IP6Config/1`) });
+			if (request.path === DEVICE) {
+				// After a rollback NetworkManager is still reactivating for `rollbackBusyReads` reads.
+				const restoring = state.rollbackBusyReads > 0;
+				if (restoring) state.rollbackBusyReads--;
+				return reply('a{sv}', { Managed: variant('b', true), State: variant('u', restoring ? 70 : 100), ActiveConnection: variant('o', ACTIVE), Ip4Config: variant('o', `${ROOT}/IP4Config/1`), Ip6Config: variant('o', `${ROOT}/IP6Config/1`) });
+			}
 			if (request.path.startsWith(ACTIVE)) return reply('a{sv}', { Uuid: original['connection']!['uuid']!, Connection: variant('o', PROFILE), Devices: variant('ao', [DEVICE]), State: variant('u', state.activationState) });
 			if (request.path.includes('/IP')) {
 				const family = request.path.includes('/IP4') ? 4 : 6;
@@ -87,6 +92,7 @@ function fixture() {
 			}
 			if (request.member === 'CheckpointDestroy') return reply('');
 			if (request.member === 'CheckpointRollback') {
+				state.rollbackBusyReads = state.rollbackBusy;
 				state.saved = structuredClone(original);
 				state.applied = structuredClone(original);
 				return reply('a{su}', { [state.rollbackWrongDevice ? `${DEVICE}2` : DEVICE]: 0 });
@@ -178,6 +184,20 @@ describe('journaled NetworkManager IPv4 transaction', () => {
 		await expect(applyNativeLinuxIPv4(f.context, 'eth0', { mode: 'dhcp', dns: [] }, options, f.deps)).rejects.toBeInstanceOf(DBusError);
 		expect(f.writes.map(call => call.member)).toEqual(['CheckpointCreate', 'Update2', 'CheckpointRollback']);
 		expect(f.state.saved).toEqual(f.original);
+	});
+	test('a rollback still reactivating is pending until NetworkManager goes quiet', async () => {
+		const settles = fixture();
+		settles.state.failure = 'Update2';
+		settles.state.rollbackBusy = 20;
+		await expect(applyNativeLinuxIPv4(settles.context, 'eth0', { mode: 'dhcp', dns: [] }, options, settles.deps)).rejects.toBeInstanceOf(DBusError);
+		expect(settles.state.rollbackBusyReads).toBe(0);
+		expect(settles.state.pending).toBe(false);
+		const stuck = fixture();
+		stuck.state.failure = 'Update2';
+		stuck.state.rollbackBusy = Number.MAX_SAFE_INTEGER;
+		await expect(applyNativeLinuxIPv4(stuck.context, 'eth0', { mode: 'dhcp', dns: [] }, options, stuck.deps)).rejects.toBeInstanceOf(NativeMutationUnknown);
+		expect(stuck.state.pending).toBe(true);
+		expect(stuck.writes[stuck.writes.length - 1]!.member).toBe('CheckpointRollback');
 	});
 	test('unknown update or activation never triggers rollback or retry', async () => {
 		for (const member of ['Update2', 'ActivateConnection']) {

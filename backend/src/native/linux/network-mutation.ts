@@ -100,6 +100,43 @@ async function readSettings(deps: NativeNetworkMutationDeps, endpoint: BoundDBus
 	return record(reply.values[0]) as NativeNetworkSettings;
 }
 
+/** NM device states between "prepare" and "secondaries", plus "deactivating". */
+function deviceInTransition(state: number): boolean {
+	return (state >= 40 && state <= 90) || state === 110;
+}
+
+/**
+ * A successful CheckpointRollback reply only says NetworkManager accepted the rollback: it may
+ * still be reactivating the device. Wait until the device and its active connection go quiet,
+ * and report whether that happened before `deadline`. Until it does, the outcome is unknown, not
+ * interrupted, so nobody may acknowledge it while NetworkManager is still restoring.
+ * ponytail: "quiet" is two idle reads 500 ms apart, as NM signals no end of a rollback.
+ */
+export async function rollbackSettled(readDevice: () => Promise<Record<string, DBusVariant>>, readActive: (path: string) => Promise<Record<string, DBusVariant>>, now: () => number, sleep: (ms: number) => Promise<void>, deadline: number): Promise<boolean> {
+	let idleSince: number | null = null;
+	while (true) {
+		const device = await readDevice();
+		const state = device['State']?.value;
+		const activePath = device['ActiveConnection']?.value;
+		let busy = typeof state !== 'number' || deviceInTransition(state);
+		if (!busy && typeof activePath === 'string' && activePath !== '/') {
+			try {
+				const activeState = (await readActive(activePath))['State']?.value;
+				busy = activeState === 1 || activeState === 3;
+			} catch (error) {
+				// The active connection vanished between the two reads: the device is still moving.
+				if (!(error instanceof DBusError)) throw error;
+				busy = true;
+			}
+		}
+		if (busy) idleSince = null;
+		else if (idleSince === null) idleSince = now();
+		else if (now() - idleSince >= 500) return true;
+		if (now() >= deadline) return false;
+		await sleep(Math.min(100, deadline - now()));
+	}
+}
+
 export function nativeIPv4ProfileFingerprint(settings: NativeNetworkSettings): string {
 	const canonical = (entry: unknown): unknown => {
 		if (typeof entry === 'bigint') return { bigint: entry.toString() };
@@ -397,6 +434,7 @@ export async function applyNativeLinuxIPv4(context: NativeMutationContext, devic
 		if (unknown) throw error;
 		if (checkpointMayExist) {
 			if (!checkpoint || available() < options.rollbackTimeoutMs + options.checkpointSafetyMs) return await context.pending(endpoint!.rule);
+			const rollbackDeadline = deps.now() + options.rollbackTimeoutMs;
 			try {
 				const reply = await write(request(NM_PATH, NM, 'CheckpointRollback', 'o', [checkpoint]), options.rollbackTimeoutMs, false);
 				const result = record(reply.values[0]);
@@ -405,6 +443,13 @@ export async function applyNativeLinuxIPv4(context: NativeMutationContext, devic
 				if (unknown) throw rollbackError;
 				throw new AggregateError([error, rollbackError], 'Network mutation failed and rollback also failed');
 			}
+			let settled = false;
+			try {
+				settled = await rollbackSettled(() => all(checkpointDevice!, `${NM}.Device`), path => all(path, `${NM}.Connection.Active`), () => deps.now(), ms => deps.sleep(ms), rollbackDeadline);
+			} catch {
+				// A failed read leaves the rollback just as unconfirmed as a timeout does.
+			}
+			if (!settled) return await context.pending(endpoint!.rule);
 		}
 		throw error;
 	} finally {
