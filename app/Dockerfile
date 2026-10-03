@@ -5,6 +5,21 @@
 # Can cross-compile to Windows via cargo-xwin.
 # No QEMU emulation needed.
 
+# Use NSIS 3.11 for Tauri's current installer template; Bookworm ships 3.08.
+FROM debian:bookworm AS nsis
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	build-essential ca-certificates curl python3 scons unzip zlib1g-dev
+RUN curl -fL https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip -o /tmp/nsis.zip \
+	&& echo 'c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1  /tmp/nsis.zip' | sha256sum -c - \
+	&& curl -fL https://github.com/kichik/nsis/archive/refs/tags/v311.tar.gz -o /tmp/nsis.tar.gz \
+	&& echo '6ba0e34576f95282e4c7ab4347c016eaaa929fb5f20c90c6a28fb84ca1e2724e  /tmp/nsis.tar.gz' | sha256sum -c - \
+	&& unzip -q /tmp/nsis.zip -d /opt \
+	&& tar -xzf /tmp/nsis.tar.gz -C /tmp \
+	&& cd /tmp/nsis-311 \
+	&& scons -j2 SKIPSTUBS=all SKIPPLUGINS=all SKIPUTILS=all SKIPMISC=all \
+		PREFIX=/usr/local PREFIX_DATA=/opt/nsis-3.11 PREFIX_CONF=/opt/nsis-3.11 install-compiler \
+	&& makensis -VERSION
+
 # Debian 12 is the oldest supported glibc baseline.
 FROM debian:bookworm
 
@@ -36,7 +51,6 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		imagemagick \
 		librsvg2-bin \
 		jq \
-		nsis \
 		osslsigncode \
 		zip \
 		unzip \
@@ -90,6 +104,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	else CROSS_MULTIARCH="x86_64-linux-gnu"; fi && \
 	sed -i 's/^Requires\.private:.*$/Requires.private:/' \
 		/usr/lib/${CROSS_MULTIARCH}/pkgconfig/*.pc 2>/dev/null || true
+
+COPY --from=nsis /usr/local/bin/makensis /usr/local/bin/makensis
+COPY --from=nsis /opt/nsis-3.11 /opt/nsis-3.11
 
 # Install Rust with both Linux targets
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
