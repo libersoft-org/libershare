@@ -15,7 +15,7 @@ export interface NativeWifiObservation {
 export function isWifiRecoveryData(value: unknown): value is WifiRecoveryData {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
 	const data = value as Record<string, unknown>;
-	if (data['version'] !== 1 || !['connect', 'disconnect'].includes(String(data['operation'])) || typeof data['device'] !== 'string' || !data['device'] || Buffer.byteLength(data['device']) > 15 || /[/\0]/.test(data['device']) || typeof data['wasActive'] !== 'boolean' || typeof data['credentialVerified'] !== 'boolean') return false;
+	if (data['version'] !== 1 || !['connect', 'disconnect'].includes(String(data['operation'])) || typeof data['device'] !== 'string' || !data['device'] || Buffer.byteLength(data['device']) > 15 || /[/\0]/.test(data['device']) || typeof data['wasActive'] !== 'boolean' || typeof data['credentialVerified'] !== 'boolean' || typeof data['originalAutoconnect'] !== 'boolean') return false;
 	if (!['prepared', 'clone-active', 'commit', 'committed', 'rolled-back', 'connected', 'disconnecting', 'disconnected'].includes(String(data['phase']))) return false;
 	for (const key of ['originalActiveUuid', 'selectedProfileUuid', 'desiredProfileUuid', 'cloneUuid']) if (data[key] !== null && (typeof data[key] !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(data[key] as string))) return false;
 	for (const key of ['originalActiveFingerprint', 'originalProfileFingerprint', 'desiredProfileFingerprint', 'secretSalt', 'oldSecretFingerprint', 'newSecretFingerprint']) if (data[key] !== null && (typeof data[key] !== 'string' || !/^[0-9a-f]{64}$/.test(data[key] as string))) return false;
@@ -96,7 +96,7 @@ export async function observeNativeLinuxWifi(value: unknown, timeoutMs: number, 
 			secretState = oldSecretMatches ? 'old' : newSecretMatches ? 'new' : 'other';
 		}
 		const originalSaved = metadata.originalActiveUuid ? profiles.get(metadata.originalActiveUuid) : undefined;
-		const originalAssociation = activeUuid === metadata.originalActiveUuid && (link.bssid?.toLowerCase() ?? null) === metadata.originalBssid && (activeUuid === null ? wifiNumber(device, 'State') === 30 : activeValid && originalSaved?.path === activeProfilePath && originalSaved.fingerprint === metadata.originalActiveFingerprint);
+		const originalAssociation = activeUuid === metadata.originalActiveUuid && (link.bssid?.toLowerCase() ?? null) === metadata.originalBssid && wifiValue(device, 'Autoconnect', 'b') === metadata.originalAutoconnect && (activeUuid === null ? wifiNumber(device, 'State') === 30 : activeValid && originalSaved?.path === activeProfilePath && originalSaved.fingerprint === metadata.originalActiveFingerprint);
 		const selectedRestored = metadata.selectedProfileUuid ? selected?.fingerprint === metadata.originalProfileFingerprint && oldSecretMatches : !desired;
 		const originalMatches = !cloneExists && originalAssociation && selectedRestored;
 		let desiredProfileMatches = false;
@@ -107,7 +107,7 @@ export async function observeNativeLinuxWifi(value: unknown, timeoutMs: number, 
 			const authentication = security ? wifiString(security, 'key-mgmt') : 'open';
 			desiredProfileMatches = metadata.desiredProfileFingerprint ? desired.fingerprint === metadata.desiredProfileFingerprint : ssid instanceof Uint8Array && Buffer.from(ssid).toString('hex') === metadata.targetSsidHex && authentication === metadata.targetAuthentication;
 		}
-		const targetMatches = metadata.operation === 'disconnect' ? activeUuid === null && link.bssid === null && wifiNumber(device, 'State') === 30 && (!metadata.originalActiveUuid || originalSaved?.fingerprint === metadata.originalActiveFingerprint) : !cloneExists && activeValid && activeUuid === metadata.desiredProfileUuid && desired?.path === activeProfilePath && link.bssid?.toLowerCase() === metadata.targetBssid && link.ssid !== null && Buffer.from(link.ssid).toString('hex') === metadata.targetSsidHex && desiredProfileMatches && newSecretMatches;
+		const targetMatches = metadata.operation === 'disconnect' ? activeUuid === null && link.bssid === null && wifiNumber(device, 'State') === 30 && wifiValue(device, 'Autoconnect', 'b') === false && (!metadata.originalActiveUuid || originalSaved?.fingerprint === metadata.originalActiveFingerprint) : !cloneExists && activeValid && activeUuid === metadata.desiredProfileUuid && desired?.path === activeProfilePath && link.bssid?.toLowerCase() === metadata.targetBssid && link.ssid !== null && Buffer.from(link.ssid).toString('hex') === metadata.targetSsidHex && desiredProfileMatches && newSecretMatches;
 		const partial = !cloneExists && metadata.credentialVerified && secretState === 'new' && desiredProfileMatches;
 		return { outcome: targetMatches ? 'target' : originalMatches ? 'original' : partial ? 'password-committed' : 'different', originalMatches, targetMatches, secretState, cloneExists };
 	} finally {

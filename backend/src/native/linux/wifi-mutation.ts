@@ -15,6 +15,7 @@ export interface WifiRecoveryData {
 	originalActiveUuid: string | null;
 	originalActiveFingerprint: string | null;
 	originalBssid: string | null;
+	originalAutoconnect: boolean;
 	targetSsidHex: string | null;
 	targetBssid: string | null;
 	targetAuthentication: string | null;
@@ -72,7 +73,9 @@ async function originalState(session: WifiSession, device: string, path: string)
 		fingerprint = wifiProfileFingerprint(await session.settings(wifiString(active, 'Connection', 'o')));
 	}
 	const link = await session.link(device);
-	return { properties, metadata: { version: 1, operation: 'connect', device, originalActiveUuid: uuid, originalActiveFingerprint: fingerprint, originalBssid: link.bssid?.toLowerCase() ?? null, targetSsidHex: null, targetBssid: null, targetAuthentication: null, selectedProfileUuid: null, desiredProfileUuid: null, originalProfileFingerprint: null, desiredProfileFingerprint: null, secretSalt: null, oldSecretFingerprint: null, newSecretFingerprint: null, wasActive: false, credentialVerified: false, cloneId: null, cloneUuid: null, checkpointPath: null, phase: 'prepared' } };
+	const autoconnect = wifiValue(properties, 'Autoconnect', 'b');
+	if (typeof autoconnect !== 'boolean') throw new Error('Invalid wireless autoconnect policy');
+	return { properties, metadata: { version: 1, operation: 'connect', device, originalActiveUuid: uuid, originalActiveFingerprint: fingerprint, originalBssid: link.bssid?.toLowerCase() ?? null, originalAutoconnect: autoconnect, targetSsidHex: null, targetBssid: null, targetAuthentication: null, selectedProfileUuid: null, desiredProfileUuid: null, originalProfileFingerprint: null, desiredProfileFingerprint: null, secretSalt: null, oldSecretFingerprint: null, newSecretFingerprint: null, wasActive: false, credentialVerified: false, cloneId: null, cloneUuid: null, checkpointPath: null, phase: 'prepared' } };
 }
 
 async function targetAccessPoint(session: WifiSession, devicePath: string, ssid: string, bssid: string | null): Promise<WifiAccessPoint> {
@@ -240,6 +243,12 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 			}
 			try {
 				await session.rollback(path!);
+				// NM checkpoint rollback clears a prior manual-disconnect autoconnect block.
+				const rolledBack = await session.all(path!, `${NM}.Device`);
+				if (wifiValue(rolledBack, 'Autoconnect', 'b') !== metadata!.originalAutoconnect) {
+					await session.write(wifiCall(path!, 'org.freedesktop.DBus.Properties', 'Set', 'ssv', [`${NM}.Device`, 'Autoconnect', variant('b', metadata!.originalAutoconnect)]), options.updateTimeoutMs, false);
+					if (wifiValue(await session.all(path!, `${NM}.Device`), 'Autoconnect', 'b') !== metadata!.originalAutoconnect) throw new Error('Original Wi-Fi autoconnect policy was not restored');
+				}
 			} catch (failure) {
 				if (session.unknown) throw failure;
 				return await context.pending(session.endpoint!.rule);

@@ -29,7 +29,7 @@ export interface WifiFixture {
 	writes: WifiCall[];
 	reads: WifiCall[];
 	records: WifiRecoveryData[];
-	state: { active: string | null; candidates: string[]; flags: number; wpa: number; rsn: number; failure: string; unknown: string; failSecrets: boolean; expireAtCommit: boolean; remaining: number; clock: number; closed: boolean; pending: boolean };
+	state: { active: string | null; autoconnect: boolean; candidates: string[]; flags: number; wpa: number; rsn: number; failure: string; unknown: string; failSecrets: boolean; expireAtCommit: boolean; remaining: number; clock: number; closed: boolean; pending: boolean };
 	autoRollback(): void;
 }
 
@@ -42,7 +42,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 		if (!options.open && !options.flags) secrets.set(PROFILE, OLD_PASSWORD);
 	}
 	const originalActive = options.active ? PROFILE : null;
-	const state = { active: originalActive, candidates: [...profiles.keys()], flags: options.open ? 0 : 1, wpa: 0, rsn: options.open ? 0 : 0x188, failure: '', unknown: '', failSecrets: false, expireAtCommit: false, remaining: 355000, clock: 0, closed: false, pending: false };
+	const state = { active: originalActive, autoconnect: !!options.active, candidates: [...profiles.keys()], flags: options.open ? 0 : 1, wpa: 0, rsn: options.open ? 0 : 0x188, failure: '', unknown: '', failSecrets: false, expireAtCommit: false, remaining: 355000, clock: 0, closed: false, pending: false };
 	const writes: WifiCall[] = [],
 		reads: WifiCall[] = [],
 		records: WifiRecoveryData[] = [];
@@ -61,6 +61,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				volatile.delete(path);
 			}
 		state.active = originalActive;
+		state.autoconnect = true;
 		if (originalActive && checkpointSecret !== undefined) secrets.set(originalActive, checkpointSecret);
 	};
 	const context: NativeMutationContext = {
@@ -116,7 +117,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				return reply('a{sa{sv}}', { '802-11-wireless-security': secrets.has(request.path) ? { psk: variant('s', secrets.get(request.path)!) } : {} });
 			}
 			if (request.member !== 'GetAll') throw new Error(`Unexpected read ${request.member}`);
-			if (request.path === DEVICE && request.args?.[0] === `${NM}.Device`) return reply('a{sv}', { DeviceType: variant('u', 2), Managed: variant('b', true), State: variant('u', state.active ? 100 : 30), ActiveConnection: variant('o', activePath()), AvailableConnections: variant('ao', state.candidates) });
+			if (request.path === DEVICE && request.args?.[0] === `${NM}.Device`) return reply('a{sv}', { DeviceType: variant('u', 2), Managed: variant('b', true), State: variant('u', state.active ? 100 : 30), Autoconnect: variant('b', state.autoconnect), ActiveConnection: variant('o', activePath()), AvailableConnections: variant('ao', state.candidates) });
 			if (request.path === DEVICE) return reply('a{sv}', { AccessPoints: variant('ao', [AP]) });
 			if (request.path === AP) return reply('a{sv}', { Ssid: variant('ay', Buffer.from('Demo')), HwAddress: variant('s', BSSID), Mode: variant('u', 2), Frequency: variant('u', 2412), Flags: variant('u', state.flags), WpaFlags: variant('u', state.wpa), RsnFlags: variant('u', state.rsn) });
 			if (request.path.includes('/ActiveConnection/')) {
@@ -140,6 +141,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				settings['connection']!['uuid'] ??= variant('s', CLONE_UUID);
 				consumeSettings(path, settings);
 				state.active = path;
+				state.autoconnect = true;
 				if ((request.args?.[3] as Record<string, { value: JournalValue }> | undefined)?.['persist']?.value === 'volatile') volatile.add(path);
 				if (state.unknown === 'AddAndActivateConnection2') {
 					state.pending = true;
@@ -164,6 +166,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				}
 				volatile.clear();
 				state.active = String(request.args![0]);
+				state.autoconnect = true;
 				if (state.unknown === 'ActivateConnection') {
 					state.pending = true;
 					throw new NativeMutationUnknown();
@@ -175,8 +178,13 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 				return reply('a{su}', { [DEVICE]: 0 });
 			}
 			if (request.member === 'CheckpointDestroy') return reply('');
+			if (request.member === 'Set') {
+				state.autoconnect = Boolean((request.args![2] as { value: boolean }).value);
+				return reply('');
+			}
 			if (request.member === 'Disconnect') {
 				state.active = null;
+				state.autoconnect = false;
 				if (state.unknown === 'Disconnect') {
 					state.pending = true;
 					throw new NativeMutationUnknown();

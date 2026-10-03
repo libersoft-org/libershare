@@ -156,7 +156,13 @@ export class WifiSession {
 	}
 	async waitActive(activePath: string, profilePath: string, uuid: string, devicePath: string, deadline: number): Promise<void> {
 		while (true) {
-			const active = await this.all(activePath, `${WIFI_NM}.Connection.Active`);
+			let active: WifiProperties;
+			try {
+				active = await this.all(activePath, `${WIFI_NM}.Connection.Active`);
+			} catch (error) {
+				if (error instanceof DBusError && error.reply.sender === this.endpoint!.rule.destination && ['org.freedesktop.DBus.Error.UnknownObject', 'org.freedesktop.DBus.Error.UnknownMethod'].includes(error.errorName)) throw new Error('Wi-Fi activation failed before completion');
+				throw error;
+			}
 			const state = wifiNumber(active, 'State');
 			if (state === 2) {
 				if (wifiString(active, 'Uuid') !== uuid || wifiString(active, 'Connection', 'o') !== profilePath || !wifiPaths(active, 'Devices').includes(devicePath) || wifiString(await this.all(devicePath, `${WIFI_NM}.Device`), 'ActiveConnection', 'o') !== activePath) throw new Error('NetworkManager activated a different Wi-Fi profile');

@@ -134,21 +134,38 @@ describe('native Wi-Fi transactions', () => {
 		await expect(connectNativeLinuxWifi(denied.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, denied.deps)).rejects.toBeInstanceOf(DBusError);
 		expect(denied.writes).toHaveLength(0);
 	});
-	test('a failed clone never overwrites the original secret', async () => {
-		const f = wifiFixture();
+	test.each([false, true])('a failed clone restores the original secret and autoconnect policy: active=%s', async active => {
+		const f = wifiFixture({ active });
 		f.state.failure = 'clone-activation';
 		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow('activation failed');
-		expect(f.writes.map(call => call.member)).toEqual(['CheckpointCreate', 'AddAndActivateConnection2', 'CheckpointRollback']);
+		expect(f.writes.map(call => call.member)).toEqual(['CheckpointCreate', 'AddAndActivateConnection2', 'CheckpointRollback', ...(active ? [] : ['Set'])]);
 		expect(f.secrets.get(PROFILE)).toBe(OLD_PASSWORD);
-		expect(f.state.active).toBeNull();
+		expect(f.state.autoconnect).toBe(active);
+		if (!active) expect(f.writes[f.writes.length - 1]!.args).toEqual(['org.freedesktop.NetworkManager.Device', 'Autoconnect', variant('b', false)]);
+		expect(f.state.active).toBe(active ? PROFILE : null);
 		expect(f.profiles.size).toBe(1);
+	});
+	test('a disappearing volatile active connection is a failed activation, not an unsupported API', async () => {
+		const f = wifiFixture();
+		const read = f.deps.read;
+		await expect(
+			connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, {
+				...f.deps,
+				read: async (endpoint, request, timeout) => {
+					if (request.path.includes('/ActiveConnection/')) return { type: 'error', sender: endpoint.rule.destination, signature: '', values: [], errorName: 'org.freedesktop.DBus.Error.UnknownMethod', errorMessage: 'Object no longer exists' };
+					return read(endpoint, request, timeout);
+				},
+			})
+		).rejects.toThrow('Wi-Fi activation failed before completion');
+		expect(f.state.autoconnect).toBe(false);
+		expect(f.writes.some(call => call.member === 'CheckpointRollback')).toBe(true);
 	});
 	test('a known failure after commit compensates the original secret before rollback', async () => {
 		for (const failure of ['commit', 'original-activation']) {
 			const f = wifiFixture();
 			f.state.failure = failure;
 			await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow();
-			expect(f.writes.slice(-2).map(call => call.member)).toEqual(['Update2', 'CheckpointRollback']);
+			expect(f.writes.slice(-3).map(call => call.member)).toEqual(['Update2', 'CheckpointRollback', 'Set']);
 			expect(f.secrets.get(PROFILE)).toBe(OLD_PASSWORD);
 			expect(f.profiles.size).toBe(1);
 			expect((await observeNativeLinuxWifi(f.records[f.records.length - 1], 5000, f.deps)).outcome).toBe('original');
