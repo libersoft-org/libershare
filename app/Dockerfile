@@ -16,9 +16,9 @@ RUN curl -fL https://github.com/tauri-apps/binary-releases/releases/download/nsi
 	&& unzip -q /tmp/nsis.zip -d /opt \
 	&& tar -xzf /tmp/nsis.tar.gz -C /tmp \
 	&& cd /tmp/nsis-311 \
-	&& scons -j2 SKIPSTUBS=all SKIPPLUGINS=all SKIPUTILS=all SKIPMISC=all \
+	&& scons -j2 VERSION=3.11 SKIPSTUBS=all SKIPPLUGINS=all SKIPUTILS=all SKIPMISC=all \
 		PREFIX=/usr/local PREFIX_DATA=/opt/nsis-3.11 PREFIX_CONF=/opt/nsis-3.11 install-compiler \
-	&& makensis -VERSION
+	&& test "$(makensis -VERSION)" = v3.11
 
 # Debian 12 is the oldest supported glibc baseline.
 FROM debian:bookworm
@@ -105,9 +105,6 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	sed -i 's/^Requires\.private:.*$/Requires.private:/' \
 		/usr/lib/${CROSS_MULTIARCH}/pkgconfig/*.pc 2>/dev/null || true
 
-COPY --from=nsis /usr/local/bin/makensis /usr/local/bin/makensis
-COPY --from=nsis /opt/nsis-3.11 /opt/nsis-3.11
-
 # Install Rust with both Linux targets
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \
 	&& sh /tmp/rustup-init.sh -y --default-toolchain stable \
@@ -139,6 +136,9 @@ ENV PATH="/root/.bun/bin:${PATH}"
 
 # AppImage: disable FUSE requirement (not available in Docker)
 ENV APPIMAGE_EXTRACT_AND_RUN=1
+
+COPY --from=nsis /usr/local/bin/makensis /usr/local/bin/makensis
+COPY --from=nsis /opt/nsis-3.11 /opt/nsis-3.11
 
 # Working directory will be mounted at runtime
 WORKDIR /workspace
