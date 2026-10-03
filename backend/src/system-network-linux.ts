@@ -1,30 +1,18 @@
-import { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
+import { splitNmcliFields } from './system-network-linux-wifi.ts';
 export { splitNmcliFields, parseNmcliWifiList, assertLinuxWifiConnected, nmcliWifiConnectArgs } from './system-network-linux-wifi.ts';
 import { applyNativeLinuxIPv4 } from './native/linux/network-mutation.ts';
 import { requireNativeMutationContext } from './native/mutation-context.ts';
-import { execFile, spawn } from 'node:child_process';
+import { connectNativeLinuxWifi, disconnectNativeLinuxWifi } from './native/linux/wifi-mutation.ts';
+import type { WifiMutationOptions } from './native/linux/wifi-client.ts';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import type { NativeNetworkSources } from './native/linux/network-reader.ts';
-import { promisify } from 'node:util';
 import { CodedError, ErrorCodes, isIPv4, isIPv6, validateIPv4Config } from '@shared';
 import type { NetAddress, NetCapabilities, NetInterfaceInfo, NetIPv4Config, NetLink, NetWifiInfo, NetWifiNetwork } from '@shared';
 
-const execFileAsync = promisify(execFile);
-/**
- * The environment every child process in this module runs under.
- *
- * The C locale is not a preference, it is what makes the parsing correct. This
- * module matches literal English tokens - `running` from `nmcli general`,
- * `unmanaged` from `nmcli device status`, `Not connected.` from `iw` - and nmcli's
- * own documentation recommends the C locale for machine parsing precisely
- * because those strings are translated otherwise. On a localised host the effect
- * is not a parse error but a wrong answer: a writable machine reports itself
- * read-only, and a device NetworkManager refuses to touch is offered as
- * configurable.
- */
+/** Locale retained for CLI oracle fixtures. */
 export const C_LOCALE_ENV: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C', LANG: 'C' };
 
-/** Hard cap on how long any `ip`/`iw` child process may run before we give up. */
+/** Shared native read budget, in milliseconds. */
 const EXEC_TIMEOUT_MS = 5000;
 const networkReader = new NativeWorkerChannel('read');
 /** IFA_F_PERMANENT lifetime sentinel — a manually configured address never expires. */
@@ -285,64 +273,6 @@ export function parseLinuxNetworkState(sources: LinuxNetworkSources): NetInterfa
 	return result;
 }
 
-/** Run the first candidate binary that exists, returning stdout. Throws when every candidate is missing or exits non-zero. */
-async function runFirst(candidates: string[], args: string[], timeoutMs: number = EXEC_TIMEOUT_MS, signal?: AbortSignal): Promise<string> {
-	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
-	for (const bin of candidates) {
-		try {
-			const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV, ...(signal ? { signal } : {}) });
-			return stdout;
-		} catch (err) {
-			lastError = err;
-			// ENOENT means this path does not exist — try the next candidate. Any
-			// other failure (non-zero exit, timeout) is the real answer: `ip` ran and
-			// said no, so a further candidate would only repeat it.
-			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-		}
-	}
-	throw lastError;
-}
-
-/** `execFile` cannot feed stdin; use this only for nmcli's password prompt. */
-async function runFirstWithInput(candidates: string[], args: string[], input: string, timeoutMs: number): Promise<string> {
-	let lastError: unknown = new Error(`no candidate found for ${args.join(' ')}`);
-	for (const bin of candidates) {
-		try {
-			return await new Promise<string>((resolve, reject) => {
-				const child = spawn(bin, args, { env: C_LOCALE_ENV, stdio: ['pipe', 'pipe', 'pipe'] });
-				let stdout = '';
-				let stderr = '';
-				let timedOut = false;
-				const timer = setTimeout(() => {
-					timedOut = true;
-					child.kill('SIGKILL');
-				}, timeoutMs);
-				child.stdout.on('data', chunk => (stdout += String(chunk)));
-				child.stderr.on('data', chunk => (stderr += String(chunk)));
-				child.stdin.on('error', () => {});
-				child.on('error', error => {
-					clearTimeout(timer);
-					reject(error);
-				});
-				child.on('close', code => {
-					clearTimeout(timer);
-					if (!timedOut && code === 0) resolve(stdout);
-					else {
-						const error = new Error(timedOut ? `${bin} timed out` : `${bin} failed with exit code ${code ?? 'unknown'}`);
-						Object.assign(error, { stdout, stderr, code });
-						reject(error);
-					}
-				});
-				child.stdin.end(input);
-			});
-		} catch (error) {
-			lastError = error;
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-		}
-	}
-	throw lastError;
-}
-
 /** A Linux read: the interfaces, and whether NetworkManager's profiles could not be read. */
 export interface LinuxNetworkRead {
 	interfaces: NetInterfaceInfo[];
@@ -356,33 +286,15 @@ export async function readLinuxNetworkState(): Promise<LinuxNetworkRead> {
 	return { interfaces: parseLinuxNetworkState(sources), ipv4ProfilesUnavailable };
 }
 
-/**
- * Writing configuration, unlike reading it, must go through the stack that owns
- * the device — an `ip addr add` would be silently reverted by whatever daemon is
- * in charge. NetworkManager is the only stack supported here: it drives every
- * desktop distribution the app targets, and it is the only one that persists a
- * change and reapplies it after a reboot through a single command.
- *
- * A host running systemd-networkd, ifupdown or netplan reports `ipv4: false` and
- * the UI keeps the read-only view rather than offering an edit that would not stick.
- */
-const NMCLI_CANDIDATES = ['/usr/bin/nmcli', '/bin/nmcli', 'nmcli'];
-const BUSCTL_CANDIDATES = ['/usr/bin/busctl', '/bin/busctl', 'busctl'];
 /** Match NetworkManager's documented default activation wait explicitly. */
-const NMCLI_ACTIVATION_WAIT_SECONDS = 90;
+const NM_ACTIVATION_WAIT_SECONDS = 90;
 export const NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS: number = EXEC_TIMEOUT_MS;
-export const NETWORK_MANAGER_MUTATION_TIMEOUT_MS: number = (NMCLI_ACTIVATION_WAIT_SECONDS + 5) * 1000;
+export const NETWORK_MANAGER_MUTATION_TIMEOUT_MS: number = (NM_ACTIVATION_WAIT_SECONDS + 5) * 1000;
 export const NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS;
 export const NETWORK_MANAGER_CHECKPOINT_SAFETY_MS: number = 30000;
 /** A rescan has to wait for the radio to sweep every channel. */
 const WIFI_SCAN_TIMEOUT_MS = 30000;
-/**
- * Every child process {@link applyLinuxIPv4} may run inside the checkpoint, in
- * the order it runs them, each at its own timeout. The pre-checks and the two
- * read-backs are as much a part of the transaction as the activation is: the
- * checkpoint has to outlive all of them, or NetworkManager starts its automatic
- * rollback while the explicit one is still to come.
- */
+/** Profile reads, update, activation and read-back before releasing the checkpoint. */
 export const NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS: number =
 	2 * EXEC_TIMEOUT_MS + // resolve the active profile and read it back to judge it
 	EXEC_TIMEOUT_MS + // ipv6.method, before an IPv6 resolver is offered to it
@@ -391,8 +303,8 @@ export const NETWORK_MANAGER_IPV4_TRANSACTION_TIMEOUT_MS: number =
 	EXEC_TIMEOUT_MS + // the profile is still the one active on the device
 	EXEC_TIMEOUT_MS + // method, address and route, read together
 	EXEC_TIMEOUT_MS; // profile and live resolvers, read together
-/** The same for {@link connectLinuxWifi}: the join, then the scan that confirms it. */
-export const NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS: number = NETWORK_MANAGER_MUTATION_TIMEOUT_MS + WIFI_SCAN_TIMEOUT_MS;
+/** Both activations, profile commit, association verification and password compensation. */
+export const NETWORK_MANAGER_WIFI_TRANSACTION_TIMEOUT_MS: number = 2 * NETWORK_MANAGER_MUTATION_TIMEOUT_MS + 2 * NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS + WIFI_SCAN_TIMEOUT_MS;
 /**
  * How long NetworkManager holds the checkpoint before rolling back on its own.
  *
@@ -646,34 +558,6 @@ export async function withNetworkManagerCheckpoint<T>(operations: { create: () =
 	}
 }
 
-async function networkManagerDevicePath(device: string): Promise<string> {
-	const path = (await runFirst(NMCLI_CANDIDATES, ['-g', 'GENERAL.DBUS-PATH', 'device', 'show', device])).trim();
-	if (!/^\/org\/freedesktop\/NetworkManager\/Devices\/\d+$/.test(path)) throw new Error(`NetworkManager returned an invalid D-Bus path for ${device}`);
-	return path;
-}
-
-async function createNetworkManagerCheckpoint(devicePath: string): Promise<string> {
-	return parseNetworkManagerCheckpointPath(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointCreateArgs(devicePath)));
-}
-
-async function destroyNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
-	await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointDestroy', checkpointPath));
-}
-
-async function rollbackNetworkManagerCheckpoint(checkpointPath: string): Promise<void> {
-	assertNetworkManagerRollback(await runFirst(BUSCTL_CANDIDATES, networkManagerCheckpointFinishArgs('CheckpointRollback', checkpointPath), NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS));
-}
-
-async function withDeviceCheckpoint<T>(device: string, mutate: () => Promise<T>): Promise<T> {
-	const devicePath = await networkManagerDevicePath(device);
-	return withNetworkManagerCheckpoint({
-		create: () => createNetworkManagerCheckpoint(devicePath),
-		mutate,
-		commit: destroyNetworkManagerCheckpoint,
-		rollback: rollbackNetworkManagerCheckpoint,
-	});
-}
-
 /** Apply an IPv4 configuration to one device and bring the profile back up. Throws when NetworkManager does not own the device. */
 export async function applyLinuxIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
 	await applyNativeLinuxIPv4(requireNativeMutationContext(), device, config, {
@@ -773,28 +657,21 @@ export function parseLinuxCapabilities(text: string): NetCapabilities {
 	};
 }
 
-/**
- * Join a Wi-Fi network.
- *
- * `device wifi connect` reuses a saved profile when one exists and creates one
- * otherwise, so the same call covers both "reconnect to a known network" and
- * "join a new one with a password". A password is supplied through stdin to
- * `nmcli --ask`, never argv, so another local user cannot read it from
- * `/proc/<pid>/cmdline` while the command is running.
- */
+const nativeWifiOptions: WifiMutationOptions = {
+	readTimeoutMs: EXEC_TIMEOUT_MS,
+	scanTimeoutMs: WIFI_SCAN_TIMEOUT_MS,
+	updateTimeoutMs: NETWORK_MANAGER_PROFILE_UPDATE_TIMEOUT_MS,
+	activationTimeoutMs: NETWORK_MANAGER_MUTATION_TIMEOUT_MS,
+	rollbackTimeoutMs: NETWORK_MANAGER_ROLLBACK_TIMEOUT_MS,
+	checkpointSafetyMs: NETWORK_MANAGER_CHECKPOINT_SAFETY_MS,
+	checkpointTimeoutSeconds: NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS,
+};
+
 export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
-	const args = ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), ...nmcliWifiConnectArgs(device, ssid, !!password, bssid)];
-	await withDeviceCheckpoint(device, async () => {
-		if (password) await runFirstWithInput(NMCLI_CANDIDATES, args, `${password}\n`, NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
-		else await runFirst(NMCLI_CANDIDATES, args, NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
-		const networks = parseNmcliWifiList(await runFirst(NMCLI_CANDIDATES, ['-t', '-f', 'SSID,BSSID,SIGNAL,SECURITY,IN-USE', 'device', 'wifi', 'list', 'ifname', device, '--rescan', 'no'], WIFI_SCAN_TIMEOUT_MS));
-		assertLinuxWifiConnected(networks, ssid, bssid);
-	});
+	await connectNativeLinuxWifi(requireNativeMutationContext(), device, ssid, password, bssid, nativeWifiOptions);
 }
 
-/** Deactivate the device without removing or rewriting its saved connections. */
+/** Deactivate the device without removing its saved profiles. */
 export async function disconnectLinuxWifi(device: string): Promise<void> {
-	await runFirst(NMCLI_CANDIDATES, ['--wait', String(NMCLI_ACTIVATION_WAIT_SECONDS), 'device', 'disconnect', device], NETWORK_MANAGER_MUTATION_TIMEOUT_MS);
-	const state = (await runFirst(NMCLI_CANDIDATES, ['-g', 'GENERAL.STATE', 'device', 'show', device])).trim();
-	if (!/^30(?:\s|$)/.test(state)) throw new Error('NetworkManager did not disconnect the Wi-Fi interface');
+	await disconnectNativeLinuxWifi(requireNativeMutationContext(), device, nativeWifiOptions);
 }

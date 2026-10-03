@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import { hostNetworkAdminHandler } from '../../src/api/api.ts';
+import { disconnectNativeLinuxWifi } from '../../src/native/linux/wifi-mutation.ts';
+import { NativeMutationUnknown } from '../../src/native/mutation-host.ts';
+import { DEVICE, PROFILE, wifiFixture, wifiOptions } from './fixtures/native-wifi.ts';
 
 function subprocess(script: string): any {
 	const result = Bun.spawnSync([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../..'), timeout: 15000 });
@@ -78,25 +81,30 @@ describe('Windows native disconnect', () => {
 });
 
 describe('Linux native disconnect', () => {
-	it.each(['30 (disconnected)', '100 (connected)', ''])('verifies the resulting NetworkManager state: %s', state => {
-		const result = subprocess(`
-			import { mock } from 'bun:test';
-			import { promisify } from 'node:util';
-			const child = await import('node:child_process');
-			const commands = [];
-			const execFile = () => {};
-			execFile[promisify.custom] = async (bin, args, options) => { commands.push(args); if(options.env.LC_ALL !== 'C') throw new Error('Wrong locale'); return { stdout: args.includes('GENERAL.STATE') ? ${JSON.stringify(state)} : '' }; };
-			mock.module('node:child_process', () => ({ ...child, execFile }));
-			const { disconnectLinuxWifi } = await import('./src/system-network-linux.ts');
-			let failure = null;
-			try { await disconnectLinuxWifi('wlan0'); } catch(error) { failure = error.message; }
-			console.log('RESULT:' + JSON.stringify({ commands, failure }));
-		`);
-		expect(result.commands).toHaveLength(2);
-		expect(result.commands[0].slice(-3)).toEqual(['device', 'disconnect', 'wlan0']);
-		expect(result.commands[1]).toEqual(['-g', 'GENERAL.STATE', 'device', 'show', 'wlan0']);
-		if (state.startsWith('30')) expect(result.failure).toBeNull();
-		else expect(result.failure).toContain('did not disconnect');
+	it.each([30, 100, null])('verifies the resulting NetworkManager state: %s', async state => {
+		const fixture = wifiFixture({ active: true });
+		const { read, mutate } = fixture.deps;
+		const operation = disconnectNativeLinuxWifi(fixture.context, 'wlan0', wifiOptions, {
+			...fixture.deps,
+			read: async (endpoint, request, timeoutMs) => {
+				if (state === null && request.path === DEVICE && fixture.writes.some(call => call.member === 'Disconnect')) throw new Error('NetworkManager state is unreadable');
+				return read(endpoint, request, timeoutMs);
+			},
+			mutate: async (context, endpoint, request) => {
+				const reply = await mutate(context, endpoint, request);
+				if (state === 100 && request.member === 'Disconnect') fixture.state.active = PROFILE;
+				return reply;
+			},
+		});
+		if (state === 30) {
+			await operation;
+			expect(fixture.state.pending).toBe(false);
+		} else {
+			await expect(operation).rejects.toBeInstanceOf(NativeMutationUnknown);
+			expect(fixture.state.pending).toBe(true);
+		}
+		expect(fixture.writes.map(call => call.member)).toEqual(['Disconnect']);
+		expect(fixture.reads.filter(call => call.path === DEVICE).length).toBeGreaterThan(0);
 	});
 });
 
@@ -118,11 +126,12 @@ it('serializes the RPC disconnect through its readback and publishes the resulti
 		const { runNetworkMutation } = await import('./src/system-network.ts');
 		const handlers = initSystemHandlers({get:()=>''}, (_event,state)=>order.push('published:' + state.interfaces[0].link), ()=>false, true);
 		const pending = handlers.wifiDisconnect({interfaceID:'wlan0'});
-		const queued = runNetworkMutation(async()=>order.push('next-mutation'));
-		const state = await pending; await queued;
-		console.log('RESULT:' + JSON.stringify({ order, link:state.interfaces[0].link,ssid:state.interfaces[0].wifi.ssid }));
+		const refused = await runNetworkMutation(async()=>order.push('unexpected-mutation')).catch(error=>error.code);
+		const state = await pending;
+		await runNetworkMutation(async()=>order.push('next-mutation'));
+		console.log('RESULT:' + JSON.stringify({ order, refused, link:state.interfaces[0].link,ssid:state.interfaces[0].wifi.ssid }));
 	`);
-	expect(result).toEqual({ order: ['read-before', 'disconnect', 'read-after', 'published:down', 'next-mutation'], link: 'down', ssid: null });
+	expect(result).toEqual({ order: ['read-before', 'disconnect', 'read-after', 'published:down', 'next-mutation'], refused: 'NETCONFIG_BUSY', link: 'down', ssid: null });
 });
 
 it.each([1, 4, 5, 7])('reads native interface state %i without treating transitional states as disconnected', state => {
