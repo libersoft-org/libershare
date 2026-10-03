@@ -80,6 +80,17 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 	tx();
 }
 
+/**
+ * Replace a LISH record, children included, in one transaction: if writing the new one fails,
+ * the old one is still there, whole.
+ */
+export function replaceLISH(db: Database, lish: IStoredLISH): void {
+	db.transaction(() => {
+		deleteLISH(db, lish.id as LISHid);
+		addLISH(db, lish);
+	})();
+}
+
 export function deleteLISH(db: Database, lishID: LISHid): boolean {
 	const result = db.run('DELETE FROM lishs WHERE lish_id = ?', [lishID]);
 	return result.changes > 0;

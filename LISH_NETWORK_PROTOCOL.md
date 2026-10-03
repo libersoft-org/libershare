@@ -41,7 +41,7 @@ lish/<networkID>
 
 The subscribers of a network's topic are the network's participants. One node can join any number of networks. LISH data themselves do NOT contain a `networkID`.
 
-The reference implementation currently has no per-LISH network assignment. Upload enablement is global: a peer that shares any joined lishnet with this node can discover and request every upload-enabled LISH. A lishnet is therefore a peer-membership boundary, not an isolation boundary between individual shares. Per-LISH network scoping belongs to the planned access-control extension.
+The reference implementation currently has no per-LISH network assignment. Upload enablement is global: a peer that shares any joined lishnet with this node can discover and request every upload-enabled LISH. A lishnet is therefore a peer-membership boundary, not an isolation boundary between individual shares. This is intended: a shared LISH is published in every lishnet the node has joined, and there is no per-LISH network assignment to add later.
 
 ### Peer discovery
 
@@ -72,6 +72,7 @@ Broadcast by a peer that wants to download a LISH. Every subscriber that shares 
 - Ignore when the LISH is not shared (upload disabled), temporarily busy (verification, data move, or deletion in progress), or its data directory is missing on disk
 - Ignore when the responder has no verified chunks of the LISH yet (nothing to serve)
 - After an `announceHave` is sent successfully, start a 60-second cooldown for that (peer, lishID) pair. Requests that arrive concurrently before the first send completes are not coalesced
+- A node that stops or resets aborts its replies still in flight and waits for them before it starts again; a reply it aborted records no cooldown
 
 ### searchLishs
 
@@ -298,7 +299,7 @@ Wire error codes returned in the `error` field:
 - The reference implementation normally generates a LISH ID as a random UUID. Imported IDs must be non-empty strings. For network-received manifests, the implementation requires the returned ID to equal the requested `lishID`, but does not independently validate its type, non-emptiness, or UUID syntax. The ID is not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. For a network-only download, version 0.0.1 uses the first accepted manifest for that identifier as its trust root; an imported `.lish` structure serves that role when present
 - The reference implementation accepts inbound request frames up to the same 128 MiB limit required for large responses before applying the per-request serving gate. Requests are normally small, but the protocol does not yet define a separate small request-frame cap
 - Structural manifest validation does not cap total file count, checksum count, or declared logical size, and it is not a disk-quota preflight. A downloader must treat allocation size as untrusted and ensure adequate storage before materializing files
-- Upload enablement is global across joined lishnets, as described above. Network-specific publication and download authorization are not implemented in version 0.0.1
+- Upload enablement is global across joined lishnets, as described above, by design: a node that must not offer a LISH to some group has to leave that group's lishnet or run as a separate node
 
 ## Planned extensions
 
