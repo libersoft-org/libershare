@@ -52,14 +52,11 @@ jobs:
           bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v${{ matrix.bun }}/bun-windows-aarch64.zip
       - name: Require native Windows ARM64
         run: bun -e "if (process.platform !== 'win32' || process.arch !== 'arm64') throw new Error('Native Windows ARM64 is required'); console.log(process.platform, process.arch, Bun.version)"
-      - name: Diagnose Windows oracle processes
-        if: matrix.bun == '1.4.2'
-        working-directory: backend
+      - name: Select native PowerShell oracle
         run: |
-          $env:WINDOWS_ORACLE_PWSH = (Get-Command pwsh.exe).Source
+          "WINDOWS_ORACLE_PWSH=$((Get-Command pwsh.exe).Source)" >> $env:GITHUB_ENV
           [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
           $PSVersionTable.PSVersion.ToString()
-          bun tests/helpers/windows-oracle-diagnostic.ts
       - name: Install backend dependencies
         working-directory: backend
         run: bun install --frozen-lockfile

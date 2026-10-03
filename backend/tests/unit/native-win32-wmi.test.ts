@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Worker } from 'node:worker_threads';
 import { execFileSync } from 'node:child_process';
+import { windowsOraclePath } from '../helpers/windows-powershell-oracle.ts';
 import { classifyWmiNext, openWmiConnection, wmiMethodResult } from '../../src/native/win32/wmi.ts';
 import type { WmiRow } from '../../src/native/win32/wmi-values.ts';
 
@@ -53,7 +54,7 @@ describe.skipIf(process.platform !== 'win32')('WMI network reads (live)', () => 
 		const properties = ['InterfaceIndex', 'Hidden', 'Virtual', 'NetworkAddresses', 'NdisPhysicalMedium'];
 		const rows = await workerRead<WmiRow[]>(`const connection = openWmiConnection(); try { return connection.query('SELECT * FROM MSFT_NetAdapter', ${JSON.stringify(properties)}, { IncludeHidden: true }); } finally { connection.close(); }`);
 		const command = "$ErrorActionPreference='Stop'; $rows=@(Get-NetAdapter -IncludeHidden | Select-Object InterfaceIndex,Hidden,Virtual,NetworkAddresses,NdisPhysicalMedium); ConvertTo-Json -InputObject $rows -Depth 8 -Compress";
-		const oracle = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 20000 })) as Record<string, unknown>[];
+		const oracle = JSON.parse(execFileSync(windowsOraclePath(), ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 20000 })) as Record<string, unknown>[];
 		const normalize = (values: Record<string, unknown>[]): string => JSON.stringify(values.map(value => Object.fromEntries(properties.map(name => [name, value[name]]))).sort((a, b) => Number(a['InterfaceIndex']) - Number(b['InterfaceIndex'])));
 		const actual = rows.map(value => Object.fromEntries(properties.map(name => [name, value[name]!.value])));
 		expect(rows.length).toBe(oracle.length);

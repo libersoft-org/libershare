@@ -6,7 +6,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { NativeWorkerChannel } from '../../src/native/worker-host.ts';
 import { parseWindowsNetworkState, readWindowsWifi } from '../../src/system-network-windows.ts';
-import { windowsPowerShellPath, windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
+import { windowsSystemEnvironment } from '../../src/network-helper-windows.ts';
+import { windowsOraclePath } from '../helpers/windows-powershell-oracle.ts';
 import { WINDOWS_STATE_COMMAND, WINDOWS_ELEVATION_COMMAND } from '../helpers/windows-network-oracle.ts';
 
 const forever = '99999999235959.000000:000';
@@ -86,7 +87,7 @@ test.skipIf(process.platform !== 'win32')(
 	'the native Windows worker agrees with NetTCPIP and token role queries',
 	async () => {
 		const worker = new NativeWorkerChannel('read');
-		const run = (script: string) => promisify(execFile)(windowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024, env: windowsSystemEnvironment() });
+		const run = (script: string) => promisify(execFile)(windowsOraclePath(), ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024, env: windowsSystemEnvironment() });
 		try {
 			const expected = parseWindowsNetworkState((await run(WINDOWS_STATE_COMMAND)).stdout, readWindowsWifi());
 			const actual = await worker.call<typeof expected>({ method: 'win32.network.snapshot' }, 15000);
