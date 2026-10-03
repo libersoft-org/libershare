@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, type NetworkHelperRequest } from '../../src/network-helper-protocol.ts';
-import { HelperResultStore, createHelperCancellation, helperResultCanExpire, helperRequestHash, trustedUnixHelperResult, validateHelperResult, type HelperResultRecord, type HelperResultSecurity } from '../../src/native/helper-results-store.ts';
+import { HelperResultStore, createHelperCancellation, helperResultCanExpire, helperRequestHash, helperResultsDirectory, trustedUnixHelperResult, validateHelperResult, type HelperResultRecord, type HelperResultSecurity } from '../../src/native/helper-results-store.ts';
 import { observeHelperOperation, readTrustedHelperResult, type HelperOperationRule, type HelperObservationDeps } from '../../src/native/helper-results.ts';
 import { executeRecordedHelper, type HelperExecutorDeps } from '../../src/native/helper-results-executor.ts';
 import { requireNativeMutationContext } from '../../src/native/mutation-context.ts';
@@ -12,6 +12,11 @@ import { trustedHelperAcl } from '../../src/native/helper-results-windows.ts';
 import { NativeWorkerFailure } from '../../src/native/worker-host.ts';
 
 const directories: string[] = [];
+test.skipIf(process.platform !== 'linux')('Linux helper receipts do not share the service-owned application directory', () => {
+	expect(helperResultsDirectory()).toBe('/var/lib/libershare-helper-results');
+	expect(new HelperResultStore().directory).not.toStartWith('/var/lib/libershare/');
+});
+
 afterEach(async () => {
 	for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
