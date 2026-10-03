@@ -1,4 +1,6 @@
 import { loadSystemLibrary } from './native/library.ts';
+import { requireNativeMutationContext } from './native/mutation-context.ts';
+import type { NativeEndRule } from './native/mutation-proof.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
@@ -582,6 +584,42 @@ export function timezoneOffsetMinutes(zone: string, at: Date = new Date()): numb
  *   but is wedged, which is a transient error and never an absence.
  */
 export type RunOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | { kind: 'failed'; code: number | null; output: string } | { kind: 'timeout' };
+
+export type OperationOutcome =
+	| RunOutcome
+	| { kind: 'denied'; output: string; stateMayHaveChanged?: boolean }
+	| { kind: 'unknown'; output: string; endRule: NativeEndRule }
+	| { kind: 'failed'; code: number | null; output: string; outcome?: SystemTimeOutcome; stateMayHaveChanged?: boolean };
+
+export interface SystemOperation {
+	readonly describe: string;
+	run(signal: AbortSignal): Promise<OperationOutcome>;
+}
+
+/** A budget stops new operations; it never aborts a dispatched native mutation. */
+export async function runOperations(platform: SystemPlatform, operations: readonly SystemOperation[], now: () => number = elapsedClock): Promise<SystemTimeResult> {
+	if (!operations.length) return result('unsupported', 'no operation available for this platform');
+	const steps: SystemTimeStep[] = [];
+	const deadline = now() + Math.min(SEQUENCE_BUDGET_MS, remainingSaveBudget() ?? SEQUENCE_BUDGET_MS);
+	const signal = new AbortController().signal;
+	const stop = (operation: SystemOperation, outcome: SystemTimeOutcome, message: string, mayHaveChanged: boolean): SystemTimeResult => {
+		steps.push({ command: operation.describe, ok: false });
+		const changed = steps.some(step => step.ok);
+		return { ...result(outcome, message), changed, stateMayHaveChanged: changed || mayHaveChanged, steps };
+	};
+	for (const operation of operations) {
+		if (now() >= deadline) return stop(operation, 'error', 'the time configuration budget expired before the next operation', false);
+		const value = await operation.run(signal);
+		if (value.kind === 'unknown') return requireNativeMutationContext().pending(value.endRule);
+		if (value.kind === 'ok') { steps.push({ command: operation.describe, ok: true }); continue; }
+		if (value.kind === 'missing') return stop(operation, 'unsupported', `${operation.describe} is unavailable`, false);
+		if (value.kind === 'timeout') return stop(operation, 'error', `${operation.describe} did not start within its budget`, false);
+		if (value.kind === 'denied') return stop(operation, 'permission-denied', value.output, value.stateMayHaveChanged === true);
+		const outcome = 'outcome' in value && value.outcome ? value.outcome : classifyFailure(platform, value.code, value.output);
+		return stop(operation, outcome, firstLine(value.output) ?? `${operation.describe} failed`, 'stateMayHaveChanged' in value ? value.stateMayHaveChanged !== false : true);
+	}
+	return result('ok');
+}
 
 /**
  * Run a binary with an argv array — never a shell string, so no input can be

@@ -1,11 +1,13 @@
-import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget, withFollowUpBudget, withReadBudget, remainingSaveBudget, SAVE_BUDGET_MS, WRITE_TIMEOUT_MS } from './system-time-common.ts';
+import { type SystemPlatform, type LocalDateTime, type SystemCommand, pad2, type PlatformStatus, type PlatformStatusReader, isSupportedPlatform, UNREADABLE_STATUS, processTimezone, timezoneOffsetMinutes, getTimezoneSource, result, type CommandRunner, runWrite, validateClockParts, runAll, listSystemTimezones, isValidNtpServer, withSaveBudget, withReadBudget, remainingSaveBudget } from './system-time-common.ts';
 import { macSystemsetup, readMacStatus } from './system-time-macos.ts';
 import { w32tm, w32tmNotifying, windowsClockRefusal, probeLocalMachineKeyWritable, type RegistryWriteState, W32TIME_NTP_CLIENT_SUBKEY, W32TIME_NTP_CLIENT_KEY, type WindowsSyncMode, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, readWindowsStatus, type WindowsModeReader, type WindowsModeState, windowsSyncIsOurs, canConvertTimezoneId, ianaToWindowsTimezoneId, rememberWindowsZone, readWindowsMode, windowsSyncEnabled, readWindowsTimeZone, readWindowsTimeServiceRunning, type WindowsTimeZoneState } from './system-time-windows.ts';
-import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn, verifyTimesyncdServer } from './system-time-linux.ts';
+import { readLinuxStatus, TIMESYNCD_DROPIN_PATH, buildTimesyncdDropIn } from './system-time-linux.ts';
 import { type SystemTimeStatus, type SystemTimeResult, type SystemTimeChanges, type SystemTimeStep } from '@shared';
 import { Mutex } from 'async-mutex';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { syncDirectory, unreadableByServiceAccount, type RollbackHandle, writeFileAtomically } from './system-time-files.ts';
+import { syncDirectory } from './system-time-files.ts';
+import { executeTimesyncdDropIn } from './native/linux/time-mutation-dropin.ts';
+import { runLinuxTimeOperation } from './native/linux/time-mutation.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -527,20 +529,6 @@ export function applySystemTimeSettings(changes: SystemTimeChanges, writers: Sys
 	);
 }
 
-/**
- * A per-command limit that fits in what the save has left.
- *
- * Null remaining means nobody set a budget - a writer used directly - and the ordinary write
- * limit applies. Otherwise it is the smaller of the two, so a command started late cannot
- * outlive the save that owns it.
- *
- * Whole milliseconds, and never zero, for the same two reasons as `commandTimeout`: a spawn
- * call refuses a fractional timeout, and it reads zero as no limit at all.
- */
-function budgetedTimeout(): number {
-	const remaining = remainingSaveBudget();
-	return remaining === null ? WRITE_TIMEOUT_MS : Math.max(1, Math.floor(Math.min(WRITE_TIMEOUT_MS, remaining)));
-}
 
 /** Why a host whose time source somebody else owns is left alone. */
 const NOT_OURS_MESSAGE = 'time synchronisation here is not ours to switch: this host has no such service, it belongs to a domain, or its time source is managed by group policy';
@@ -633,7 +621,7 @@ export async function setSystemClock(hours: number, minutes: number, seconds: nu
 		// Only the time of day is sent. Every platform resolves "today" at the moment of the
 		// write - systemd for a bare `HH:MM:SS`, `systemsetup -settime`, and `Get-Date` inside
 		// the PowerShell command - so no date computed here can be stale by the time it lands.
-		return runAll(platform, buildSetClockCommands(platform, { hours, minutes, seconds }), exec);
+		return platform === 'linux' && exec === runWrite ? runLinuxTimeOperation(api => api.clock({ hours, minutes, seconds })) : runAll(platform, buildSetClockCommands(platform, { hours, minutes, seconds }), exec);
 	});
 }
 
@@ -670,7 +658,7 @@ export async function setSystemTimezone(timezone: string, exec: CommandRunner = 
 	return withSystemTimeLock(async () => {
 		const currentZone = platform === 'win32' ? readWindowsZone() : null;
 		if (platform === 'win32' && currentZone === null) return result('error', 'cannot read the Windows daylight saving preference, so the timezone was left unchanged');
-		const r = await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId, currentZone?.daylightDisabled ?? false), exec);
+		const r = platform === 'linux' && exec === runWrite ? await runLinuxTimeOperation(api => api.timezone(timezone)) : await runAll(platform, buildSetTimezoneCommands(platform, timezone, windowsId, currentZone?.daylightDisabled ?? false), exec);
 		// Only so this process FORMATS in the new zone: writing the OS timezone does not
 		// invalidate a running process's ICU cache. What the status reports is read back
 		// from the OS, so an inherited or stale TZ can no longer misrepresent the host.
@@ -737,89 +725,8 @@ export async function setSystemNtpServer(server: string, readStatus: () => Promi
  * server that is no longer on disk, and a rollback interleaved that way restores an old
  * configuration over a newer successful write.
  */
-export async function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = runWrite, syncDir: (dir: string) => Promise<void> = syncDirectory): Promise<SystemTimeResult> {
-	return withSystemTimeLock(async () => {
-		// Creating a budget does not enforce it - each operation has to ask, and this one is the
-		// path that never reached `runAll` at all: with synchronisation off there is no daemon to
-		// restart, so the file write and its verification ARE the whole change and used to run
-		// however late the save already was. Measured with a budget already at -1 ms: the write
-		// went ahead and the verification took a fresh 90 s of its own.
-		//
-		// Asked BEFORE the write, because afterwards the honest answer is no longer "nothing
-		// happened" - and the rollback that repairs a late write is deliberately NOT subject to
-		// the budget: refusing to undo a change because time ran out is the one outcome worse
-		// than being slow.
-		const remaining = remainingSaveBudget();
-		if (remaining !== null && remaining <= 0) return result('error', `the time configuration did not start within the ${Math.round(SAVE_BUDGET_MS / 1000)} s this save is allowed`);
-		let rollback: RollbackHandle;
-		try {
-			rollback = await writeFileAtomically(path, buildTimesyncdDropIn(server), undefined, syncDir);
-		} catch (err) {
-			const e = err as { code?: string; message?: string; published?: boolean };
-			// The content reached its final name and only the flush afterwards failed, so this
-			// is not "nothing happened": the file is on disk, the daemon was never restarted
-			// onto it, and the host adopts it at the next start unless somebody removes it.
-			if (e.published) return { ...result('error', `${path} now holds the new server but could not be flushed to disk (${e.message ?? 'the directory flush failed'}), so systemd-timesyncd was not restarted onto it`), changed: true, stateMayHaveChanged: true };
-			if (e.code === 'EACCES' || e.code === 'EPERM') return result('permission-denied', `cannot write ${path}`);
-			return result('error', e.message ?? `cannot write ${path}`);
-		}
-		// Reachability before content: `systemd-analyze` reads as US, so a directory the daemon
-		// cannot enter passes every check below while the daemon never sees the file.
-		const unreachable = process.platform === 'win32' ? null : await unreadableByServiceAccount(path);
-		// The remainder, not a fresh limit of its own: this runs after a write that has already
-		// spent part of the save's time.
-		const verification = unreachable ?? (await verifyTimesyncdServer(server, (cmd, args, timeoutMs) => exec(cmd, args, timeoutMs ?? budgetedTimeout())));
-		if (verification !== null) {
-			const restored = await rollback();
-			if (restored.state === 'not-restored') return { ...result('error', `${verification} (${path} could not be restored safely; its current configuration was left untouched)`), changed: true, stateMayHaveChanged: true };
-			if (restored.state === 'restored-not-durable') return { ...result('error', `${verification} (${path} was restored but could not be flushed to disk, so it may not survive a crash)`), stateMayHaveChanged: true };
-			return result('error', verification);
-		}
-		const commands = buildSetNtpServerCommands('linux', server, syncRunning);
-		// Synchronisation is off, so there is deliberately no restart — the drop-in on disk
-		// IS the whole change and is read when the daemon next starts. Nothing to roll back,
-		// so the spare name the restore was holding is released here rather than left next to
-		// the live configuration until some later write sweeps it.
-		if (commands.length === 0) {
-			await rollback.discard();
-			return result('ok');
-		}
-		const r = await runAll('linux', commands, exec);
-		if (!r.success) {
-			const restored = await rollback();
-			const reason = r.message ?? 'the change could not be applied';
-			// A restart would load the current file, which may be our rejected value or a
-			// later administrator's edit. Do not activate either after a failed rollback.
-			if (restored.state === 'not-restored') return { ...r, changed: true, stateMayHaveChanged: true, message: `${reason} (${path} could not be restored safely; its current configuration and systemd-timesyncd were left as they are)` };
-			// Both restored states get the restart: the visible file is the original one either
-			// way, and only its durability is in question. Skipping it over a failed flush left
-			// the daemon stopped, or running the configuration just withdrawn, while the file
-			// on disk was in fact the old one.
-			//
-			// The daemon has to be put back onto the restored file for the rollback to mean
-			// anything, so this restart is part of it and its outcome is part of the answer.
-			// Discarded, a rollback that put the file back and left the daemon down reported as
-			// a clean undo.
-			//
-			// Under the RESTORE budget, not the save's. The failure being undone is often the
-			// save running out of time, and inheriting an exhausted budget made `runAll` refuse
-			// this restart before starting it: the file was back, the daemon was left stopped,
-			// and the result said the host had been restored. The lock still covers this, so the
-			// next save waits for it.
-			const back = await withFollowUpBudget(() => runAll('linux', commands, exec));
-			const caveats: string[] = [];
-			if (!back.success) caveats.push('systemd-timesyncd could not be restarted onto it');
-			if (restored.state === 'restored-not-durable') caveats.push('the restore could not be flushed to disk, so it may not survive a crash or a power loss');
-			if (caveats.length > 0) return { ...r, message: `${reason} (${path} was restored, but ${caveats.join(', and ')})` };
-			// Durably restored AND the daemon is back on the original file: the host is as it
-			// was found, so the `changed` flags `runAll` set on the way in no longer describe
-			// it. Carried through, they had the UI warn that part of a cleanly undone save
-			// might still be applied — a caveat about a state that does not exist.
-			return { ...result('error', reason), ...(r.steps ? { steps: r.steps } : {}) };
-		}
-		await rollback.discard();
-		return r;
-	});
+export function applyTimesyncdDropIn(server: string, syncRunning: boolean, path: string = TIMESYNCD_DROPIN_PATH, exec: CommandRunner = runWrite, syncDir: (dir: string) => Promise<void> = syncDirectory, checkAccess?: (path: string) => Promise<string | null>): Promise<SystemTimeResult> {
+	return withSystemTimeLock(() => executeTimesyncdDropIn(server, syncRunning, path, exec, syncDir, checkAccess));
 }
 
 /**
@@ -864,6 +771,7 @@ export async function setSystemNtpEnabled(enabled: boolean, readStatus: () => Pr
 			// which is not the outcome that asks for privileges.
 			if (enabled && !clientEnabled && probeNtpClientKey() === 'denied') return result('permission-denied', 'the NTP client provider is switched off and this application may not write it; the change needs administrator rights');
 		}
+		if (platform === 'linux' && exec === runWrite) return runLinuxTimeOperation(api => api.ntpEnabled(enabled));
 		const commands = buildSetNtpEnabledCommands(platform, enabled, mode, clientEnabled);
 		if (platform !== 'win32') {
 			const outcome = await runAll(platform, commands, exec);
@@ -960,7 +868,7 @@ export async function waitForWindowsTimeService(running: boolean, read: () => bo
 		await pause(Math.min(250, remaining));
 	}
 }
-export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, READ_BUDGET_MS, withSaveBudget, withFollowUpBudget, withReadBudget, remainingSaveBudget, elapsedClock, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
+export { resolveSystemExecutable, decodeCommandOutput, windowsSystemLibraryPath, run, runWrite, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, READ_BUDGET_MS, withSaveBudget, withFollowUpBudget, withReadBudget, remainingSaveBudget, elapsedClock, type SystemPlatform, type SystemCommand, type LocalDateTime, isSupportedPlatform, isValidNtpServer, validateClockParts, parseTimedatectlShow, parseYesNo, classifyFailure, firstLine, listSystemTimezones, getTimezoneSource, timezoneOffsetMinutes, type RunOutcome, type CommandRunner, runAll, runOperations, type SystemOperation, type OperationOutcome, type PlatformStatus, type PlatformStatusReader } from './system-time-common.ts';
 
 export { TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT, parseTimesyncConfig, type UnitState, parseUnitLoadStates, canonicalUnitName, unitIsLoaded, COMPETING_NTP_UNITS, competingNtpUnits, parseAnyUnitActive, type ExtractedWords, extractWordsChecked, extractWords, readTimedatedEnvironment, readNtpUnitsList, firstUsableNtpUnit, canConfigureTimesyncdServer, buildTimesyncdDropIn } from './system-time-linux.ts';
 
