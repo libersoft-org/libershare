@@ -1,47 +1,53 @@
 import { describe, expect, it } from 'bun:test';
 import { isAlreadyJoined, readNetworkState, resolveJoinTarget, readNetworkStateUnlocked, runNetworkMutation } from '../../src/system-network.ts';
 
-/**
- * The ordering guarantees the whole write path rests on.
- *
- * A host reconfiguration is several platform commands, and between two of them
- * the machine is in a state nobody asked for — the old address gone and the new
- * one not yet there. Every read that can be observed has to be kept out of that
- * window, and every mutation has to be kept out of another one's. The lock is
- * what does both; these pin down that it is actually taken on each path.
- */
 describe('network mutation serialisation', () => {
 	/** Resolve after the current macrotask queue, so an interleaving has room to happen. */
 	function tick(): Promise<void> {
 		return new Promise(resolve => setTimeout(resolve, 5));
 	}
 
-	it('serializes two mutations rather than interleaving their steps', async () => {
+	it('rejects a second mutation immediately while the first runs', async () => {
 		const order: string[] = [];
 		const first = runNetworkMutation(async () => {
 			order.push('first:start');
 			await tick();
 			order.push('first:end');
 		});
-		const second = runNetworkMutation(async () => {
+		const refused = await runNetworkMutation(async () => {
 			order.push('second:start');
-			await tick();
-			order.push('second:end');
-		});
-		await Promise.all([first, second]);
-		expect(order).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+		}).catch(error => error);
+		expect(refused.code).toBe('NETCONFIG_BUSY');
+		await first;
+		expect(order).toEqual(['first:start', 'first:end']);
 	});
 
-	it('makes a read wait for a reconfiguration instead of reading through it', async () => {
+	it('keeps reads available while a mutation waits for completion', async () => {
+		await readNetworkState();
 		const order: string[] = [];
+		let release!: () => void;
+		const gate = new Promise<void>(resolve => {
+			release = resolve;
+		});
 		const mutation = runNetworkMutation(async () => {
 			order.push('apply:start');
-			await tick();
+			await gate;
 			order.push('apply:end');
 		});
-		const read = readNetworkState().then(() => order.push('read'));
-		await Promise.all([mutation, read]);
-		expect(order).toEqual(['apply:start', 'apply:end', 'read']);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				readNetworkState().then(() => order.push('read')),
+				new Promise((_, reject) => {
+					timer = setTimeout(() => reject(new Error('Read queued behind mutation')), 1000);
+				}),
+			]);
+			expect(order).toEqual(['apply:start', 'read']);
+		} finally {
+			clearTimeout(timer);
+			release();
+			await mutation;
+		}
 	});
 
 	it('keeps the unlocked read off the lock, which would deadlock a mutation', async () => {

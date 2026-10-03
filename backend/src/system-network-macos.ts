@@ -1,32 +1,10 @@
-import { execFile } from 'node:child_process';
+import { applyNativeDarwinIPv4, darwinNetworkReader } from './native/darwin/network-mutation.ts';
+import { requireNativeMutationContext } from './native/mutation-context.ts';
+import { NativeMutationUnknown } from './native/mutation-host.ts';
 import { associateMacWifi, disconnectCoreWlanWifi, readCoreWlanWifi, scanCoreWlanWifi, type MacWifiInterface } from './system-network-corewlan.ts';
-import { setTimeout as delay } from 'node:timers/promises';
-import { promisify } from 'node:util';
 import { isIPv4, isIPv6, validateIPv4Config, type NetAddress, type NetInterfaceInfo, type NetIPv4Config, type NetLink, type NetMedium, type NetWifiNetwork } from '@shared';
 
-const execFileAsync = promisify(execFile);
-const C_LOCALE_ENV = { ...process.env, LC_ALL: 'C', LANG: 'C' };
-
-/**
- * macOS host network state.
- *
- * Everything comes from the BSD/Apple command-line tools rather than one API:
- * `networksetup` owns the persistent configuration (and is the only supported way
- * to change it), while `ifconfig` and `route` report what the kernel is doing
- * right now. The two are joined by the service-to-device map, because
- * `networksetup` is addressed by SERVICE name ("Wi-Fi", "Thunderbolt Bridge")
- * while everything else speaks DEVICE names (en0, bridge0).
- *
- * Wi-Fi state, scans and association use CoreWLAN in a native worker.
- * Both target selection and verification need Location Services access because
- * macOS hides SSID data without it, even from root. The capability follows name
- * visibility: see {@link isMacWifiConfigurable}.
- */
-
-/** Hard cap on any single tool invocation. These are local BSD utilities; a slow one is a hung one. */
-const EXEC_TIMEOUT_MS = 5000;
-/** Reconfiguring a service renegotiates DHCP, which is far slower than a read. */
-const APPLY_TIMEOUT_MS = 45000;
+/** SCPreferences owns policy; SCDynamicStore and BSD expose the live state. */
 /** `<redacted>` is what macOS substitutes for a network name when Location access was not granted. */
 const REDACTED = '<redacted>';
 
@@ -480,63 +458,21 @@ export function parseMacNetworkState(sources: MacNetworkSources): NetInterfaceIn
 	return result;
 }
 
-/** Run a tool, returning stdout. Throws when it is missing or exits non-zero. */
-async function run(bin: string, args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<string> {
-	const { stdout } = await execFileAsync(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: C_LOCALE_ENV });
-	return stdout;
-}
-
-/** Same call, but a failure yields an empty string — used for the optional per-service detail. */
-async function runOptional(bin: string, args: string[]): Promise<string> {
-	try {
-		return await run(bin, args);
-	} catch {
-		return '';
-	}
-}
-
-const NETWORKSETUP = '/usr/sbin/networksetup';
-
-/** Read the live macOS network state. Throws when the core tools are unavailable, so the caller degrades to addresses only. */
+/** Native reads keep blocking framework calls off the main event loop. */
 export async function readMacNetworkState(): Promise<NetInterfaceInfo[]> {
-	const [hardwarePorts, serviceOrder, ifconfig, route, route6, routes, resolvers] = await Promise.all([run(NETWORKSETUP, ['-listallhardwareports']), run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/sbin/ifconfig', ['-a']), runOptional('/sbin/route', ['-n', 'get', 'default']), runOptional('/sbin/route', ['-n', 'get', '-inet6', 'default']), runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet']), runOptional('/usr/sbin/scutil', ['--dns'])]);
-
-	const services = parseServiceOrder(serviceOrder);
-	const present = parseIfconfig(ifconfig);
-	const serviceInfo = new Map<string, string>();
-	const serviceDns = new Map<string, string>();
-	const dhcpPacket = new Map<string, string>();
-	// Only ask about devices that actually exist right now. A Mac carries a service
-	// per USB serial gadget it has ever seen, and querying all of them would cost
-	// dozens of spawns to describe interfaces that are not there.
-	for (const [device, service] of services) {
-		if (!present.has(device)) continue;
-		const [info, dns, packet] = await Promise.all([runOptional(NETWORKSETUP, ['-getinfo', service]), runOptional(NETWORKSETUP, ['-getdnsservers', service]), runOptional('/usr/sbin/ipconfig', ['getpacket', device])]);
-		if (info) serviceInfo.set(device, info);
-		if (dns) serviceDns.set(device, dns);
-		if (packet) dhcpPacket.set(device, packet);
-	}
-
-	const hasWifi = [...parseHardwarePorts(hardwarePorts).values()].some(port => /^Wi-Fi$/i.test(port));
-	// A native read failure leaves Wi-Fi unknown without discarding valid IPv4 state.
-	const nativeWifi = hasWifi ? await readCoreWlanWifi().catch(() => []) : [];
-	// The routing table only when both `route get` queries came back without an interface.
-	const routes6 = parseDefaultRoute(route).device || parseDefaultRoute(route6).device ? undefined : await runOptional('/usr/sbin/netstat', ['-rn', '-f', 'inet6']);
-	return parseMacNetworkState({ hardwarePorts, serviceOrder, ifconfig, route, route6, routes, routes6, serviceInfo, serviceDns, dhcpPacket, resolvers, nativeWifi });
+	const interfaces = await darwinNetworkReader.call<NetInterfaceInfo[]>({ method: 'darwin.network.read' }, 15000);
+	const wifi = interfaces.some(iface => iface.medium === 'wireless') ? await readCoreWlanWifi().catch(() => []) : [];
+	return interfaces.map(iface => {
+		const native = wifi.find(wifi => wifi.device === iface.id);
+		return native && iface.medium === 'wireless' ? { ...iface, wifi: native.wifi, wifiConfigurable: native.configurable } : iface;
+	});
 }
 
-/**
- * True when `networksetup` is present AND this process may actually use it to
- * write.
- *
- * macOS may require root when system-wide preferences are password-protected.
- * Group membership cannot prove that the current non-interactive process may
- * write, so only an effective root process advertises this capability.
- */
+/** The unprivileged process uses the helper; root still needs available frameworks. */
 export async function isMacWritable(): Promise<boolean> {
-	if (!hasMacWritePrivilege(typeof process.getuid === 'function' ? process.getuid() : undefined)) return false;
+	if (!hasMacWritePrivilege(process.getuid?.())) return false;
 	try {
-		await run(NETWORKSETUP, ['-getcomputername']);
+		await darwinNetworkReader.call({ method: 'darwin.network.read' }, 15000);
 		return true;
 	} catch {
 		return false;
@@ -630,52 +566,9 @@ export function assertMacIPv4Applied(config: NetIPv4Config, info: string, dnsTex
 	if (config.dns !== undefined && !sameAddressSet(parseServiceDns(dnsText), config.dns)) throw new Error('macOS did not apply the requested DNS policy');
 }
 
-async function verifyMacIPv4(service: string, config: NetIPv4Config, addressingChanged: boolean, requireLease: boolean): Promise<void> {
-	let info = await run(NETWORKSETUP, ['-getinfo', service]);
-	if (addressingChanged) {
-		const deadline = Date.now() + 20_000;
-		while (!macAddressingApplied(config, info, requireLease) && Date.now() < deadline) {
-			await delay(200);
-			info = await run(NETWORKSETUP, ['-getinfo', service]);
-		}
-	}
-	const dns = config.dns === undefined ? '' : await run(NETWORKSETUP, ['-getdnsservers', service]);
-	assertMacIPv4Applied(config, info, dns, addressingChanged, requireLease);
-}
-
-/** Resolve the service name a device belongs to. Throws when the device is not part of an enabled service. */
-async function serviceForDevice(device: string): Promise<string> {
-	const [serviceOrder, routeTable] = await Promise.all([run(NETWORKSETUP, ['-listnetworkserviceorder']), run('/usr/sbin/netstat', ['-rn', '-f', 'inet'])]);
-	const service = parseServiceOrder(serviceOrder).get(device);
-	if (!service) throw new Error(`no enabled network service uses ${device}`);
-	if (parseDefaultRoutes(routeTable).filter(route => route.device === device).length > 1) throw new Error(`multiple default routes use ${device}`);
-	return service;
-}
-
-/** Apply an IPv4 configuration to one device. Requires root, which is how networksetup guards every write. */
-export async function applyMacIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
-	const service = await serviceForDevice(device);
-	const [oldInfo, oldDns] = await Promise.all([run(NETWORKSETUP, ['-getinfo', service]), run(NETWORKSETUP, ['-getdnsservers', service])]);
-	const oldMode = parseServiceInfo(oldInfo);
-	const oldAddress = parseServiceIPv4(oldInfo);
-	const oldGateway = parseServiceGateway(oldInfo);
-	if (oldMode === 'unknown' || (oldMode === 'static' && (!oldAddress || !oldGateway))) throw new Error('macOS network service configuration cannot be preserved safely');
-	const previous: NetIPv4Config = oldMode === 'dhcp' ? { mode: 'dhcp', dns: parseServiceDns(oldDns) } : { mode: 'static', address: oldAddress!.address, prefixLength: oldAddress!.prefixLength, gateway: oldGateway!, dns: parseServiceDns(oldDns) };
-	return withMacRollback(
-		async () => {
-			for (const args of macApplyArgs(service, config, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
-			await verifyMacIPv4(service, config, addressingChanged, requireLease);
-		},
-		async () => {
-			for (const args of macApplyArgs(service, previous, addressingChanged)) await run(NETWORKSETUP, args, APPLY_TIMEOUT_MS);
-			// `networksetup` exiting zero is not the service being back: a restored
-			// DHCP service still has to get its lease, and a restored static one still
-			// has to hold the address it was handed. An unverified restore is exactly
-			// the case that leaves the machine unreachable while the app reports only
-			// the original failure.
-			await verifyMacIPv4(service, previous, addressingChanged, macRestoreRequiresLease(previous, oldInfo, requireLease));
-		}
-	);
+/** Persistent policy and its rollback use one locked SCPreferences transaction. */
+export function applyMacIPv4(device: string, config: NetIPv4Config, addressingChanged: boolean = true, requireLease: boolean = true): Promise<void> {
+	return applyNativeDarwinIPv4(requireNativeMutationContext(), device, config, { addressingChanged, requireLease });
 }
 
 /**
@@ -689,9 +582,11 @@ export async function withMacRollback<T>(mutate: () => Promise<T>, rollback: () 
 	try {
 		return await mutate();
 	} catch (applyError) {
+		if (applyError instanceof NativeMutationUnknown) throw applyError;
 		try {
 			await rollback();
 		} catch (rollbackError) {
+			if (rollbackError instanceof NativeMutationUnknown) throw rollbackError;
 			throw new Error(`network apply failed: ${String(applyError)}; rollback failed: ${String(rollbackError)}`);
 		}
 		throw applyError;

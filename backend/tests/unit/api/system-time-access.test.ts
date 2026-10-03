@@ -49,6 +49,10 @@ describe('system time API authorization', () => {
 					called.push('applyTimeSettings');
 					return ok;
 				},
+				acknowledgeTime: async () => {
+					called.push('acknowledgeTime');
+					return status;
+				},
 			};
 			const handlers = createTimeApiHandlers(system, authenticated);
 			const client = { data: { isLocalClient: local } };
@@ -58,6 +62,10 @@ describe('system time API authorization', () => {
 				expect(result.outcome).toBe(authenticated && local ? 'ok' : 'permission-denied');
 			}
 			expect(called).toEqual(authenticated && local ? [...writes] : []);
+			const acknowledgement = await handlers['system.time.acknowledgeInterrupted']!({}, client).catch((error: Error) => error);
+			if (authenticated && local) expect(acknowledgement).toBe(status);
+			else expect(acknowledgement).toBeInstanceOf(Error);
+			expect(called.includes('acknowledgeTime')).toBe(authenticated && local);
 			const read: SystemTimeStatus = await handlers['system.getTime']!({}, client);
 			expect(read.ntpServer).toBe(status.ntpServer);
 			expect(read.ntpEnabled).toBe(true);

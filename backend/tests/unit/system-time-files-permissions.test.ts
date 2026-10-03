@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { unreadableByServiceAccount, writeFileAtomically, type ServiceAccountAccess } from '../../src/system-time-files.ts';
+import { unreadableByServiceAccount as checkServiceAccountAccess, writeFileAtomically, type ServiceAccountAccess } from '../../src/system-time-files.ts';
 import { existsSync } from 'node:fs';
+
+/** These temporary path fixtures exercise mode checks; real cross-user reads are checked separately. */
+function unreadableByServiceAccount(path: string, access: ServiceAccountAccess = async () => null): Promise<string | null> {
+	return checkServiceAccountAccess(path, access);
+}
 
 /** Run a tool and fail loudly: a fixture that quietly did not apply would pass the test for the wrong reason. */
 async function run(command: string, args: string[]): Promise<void> {

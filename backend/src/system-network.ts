@@ -1,18 +1,14 @@
 import os from 'node:os';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
-import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, isWindowsWifiConfigurable, parseElevation, parseWindowsNetworkState, readWindowsWifi, scanWindowsWifi, WINDOWS_ELEVATION_COMMAND, WINDOWS_STATE_COMMAND, windowsApplyIPv4Command } from './system-network-windows.ts';
+import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, scanWindowsWifi } from './system-network-windows.ts';
+import { applyNativeWindowsIPv4 } from './native/win32/network-mutation.ts';
+import { requireNativeMutationContext } from './native/mutation-context.ts';
+import { NativeWorkerChannel } from './native/worker-host.ts';
 import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi, type LinuxNetworkRead } from './system-network-linux.ts';
 import { applyMacIPv4, connectMacWifi, disconnectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
 import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
-import { windowsPowerShellPath, windowsSystemEnvironment } from './network-helper-windows.ts';
-
-const execFileAsync = promisify(execFile);
-const WINDOWS_POWERSHELL = process.platform === 'win32' ? windowsPowerShellPath() : 'powershell.exe';
-const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironment() : undefined;
 
 /**
  * Host network state and configuration, dispatched per platform.
@@ -46,8 +42,9 @@ const WINDOWS_SYSTEM_ENV = process.platform === 'win32' ? windowsSystemEnvironme
  * ipconfig on macOS. Nothing here requires the user to install anything.
  */
 
-/** Hard cap on how long the PowerShell one-shot may run. */
+/** Read workers are independent from any native mutation in progress. */
 const WINDOWS_TIMEOUT_MS = 15000;
+const windowsReader = new NativeWorkerChannel('read');
 /**
  * How long a successful read is reused. A Windows read costs one PowerShell
  * spawn (measured 1.4-1.8 s on a 31-adapter workstation), and the poll
@@ -60,7 +57,6 @@ const CACHE_TTL_MS = 5000;
  * than any read, and a too-short timeout would report failure for a change the OS
  * went on to make anyway.
  */
-const APPLY_TIMEOUT_MS = 45000;
 /** Transport ceiling for a secret sent to NetworkManager. */
 export const MAX_WIFI_PASSWORD_BYTES = 1024;
 
@@ -68,6 +64,7 @@ export interface NetworkSnapshot {
 	interfaces: NetInterfaceInfo[];
 	detail: NetworkStateInfo['detail'];
 	ipv4ProfilesUnavailable: boolean;
+	stale?: boolean;
 }
 
 /**
@@ -76,6 +73,7 @@ export interface NetworkSnapshot {
  */
 export class NetworkStateCache {
 	private cached: { at: number; snapshot: NetworkSnapshot } | null = null;
+	private lastKnown: NetworkSnapshot | null = null;
 	private inFlight: { generation: number; promise: Promise<NetworkSnapshot> } | null = null;
 	private generation = 0;
 	private readonly reader: () => Promise<NetworkSnapshot>;
@@ -87,7 +85,7 @@ export class NetworkStateCache {
 	}
 
 	async read(): Promise<NetworkSnapshot> {
-		const now = Date.now();
+		const now = performance.now();
 		if (this.cached && now - this.cached.at < this.ttlMs) return this.cached.snapshot;
 
 		const generation = this.generation;
@@ -102,6 +100,7 @@ export class NetworkStateCache {
 			snapshot = await pending.promise;
 		} catch (err) {
 			if (this.inFlight === pending) this.inFlight = null;
+			if (this.lastKnown) return { ...this.lastKnown, stale: true };
 			throw err;
 		}
 		// Reset means a host mutation began after this read. Returning the old
@@ -110,7 +109,8 @@ export class NetworkStateCache {
 		// enters the cache. Join the current generation instead; it either reuses the
 		// post-mutation read already in flight or serves its completed cache entry.
 		if (this.generation !== generation) return this.read();
-		this.cached = { snapshot, at: Date.now() };
+		this.cached = { snapshot, at: performance.now() };
+		this.lastKnown = snapshot;
 		if (this.inFlight === pending) this.inFlight = null;
 		return snapshot;
 	}
@@ -124,19 +124,15 @@ export class NetworkStateCache {
 
 const stateCache = new NetworkStateCache(async () => {
 	const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
-	try {
-		const read = await readPlatform();
-		return { interfaces: assertReadProducedSomething(read.interfaces), detail, ipv4ProfilesUnavailable: read.ipv4ProfilesUnavailable };
-	} catch (err) {
-		console.warn('[system-network] Platform read failed, falling back to addresses only:', (err as Error).message);
-		return { interfaces: readGenericInterfaces(), detail: 'addressesOnly', ipv4ProfilesUnavailable: false };
-	}
+	const read = await readPlatform();
+	return { interfaces: assertReadProducedSomething(read.interfaces), detail, ipv4ProfilesUnavailable: read.ipv4ProfilesUnavailable };
 });
 
 const mutationMutex = new Mutex();
 
 /** Serialize changes to the one host network stack. */
 export function runNetworkMutation<T>(action: () => Promise<T>): Promise<T> {
+	if (mutationMutex.isLocked()) return Promise.reject(new CodedError(ErrorCodes.NETCONFIG_BUSY));
 	return mutationMutex.runExclusive(action);
 }
 
@@ -182,33 +178,24 @@ export function prefixFromNetmask(netmask: string, ipv4: boolean): number {
 }
 
 async function readWindows(): Promise<NetInterfaceInfo[]> {
-	const { stdout } = await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_STATE_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
-	// The Wi-Fi read is in-process FFI and never throws — a missing WLAN service
-	// simply yields an empty map, leaving `wifi` undefined on the adapters.
-	return parseWindowsNetworkState(stdout, readWindowsWifi());
+	return windowsReader.call({ method: 'win32.network.snapshot' }, WINDOWS_TIMEOUT_MS);
 }
 
-/**
- * Read the current network state, waiting for any reconfiguration in progress.
- *
- * A read that started in the middle of a multi-step apply would capture the gap
- * between "old address removed" and "new address created", and the periodic
- * broadcaster would publish that gap as the current state of the host — so this
- * takes the same lock the mutations take.
- *
- * Results are cached for {@link CACHE_TTL_MS} and concurrent callers share the
- * one in-flight read, so a poll tick and an RPC call arriving together cost a
- * single spawn. A failed platform read degrades to the address-only reader
- * rather than throwing — a settings screen showing addresses beats an error.
- */
+/** Reads remain available during a mutation; the API reports its durable phase separately. */
 export function readNetworkState(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	return runNetworkMutation(() => readNetworkStateUnlocked(primaryInterface));
+	return readNetworkStateUnlocked(primaryInterface);
 }
 
 /** {@link readNetworkState} for a caller that already holds the network mutation lock. */
 export async function readNetworkStateUnlocked(primaryInterface: string = ''): Promise<NetworkStateInfo> {
-	const snapshot = await stateCache.read();
-	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities(), ipv4ProfilesUnavailable: snapshot.ipv4ProfilesUnavailable };
+	let snapshot: NetworkSnapshot;
+	try {
+		snapshot = await stateCache.read();
+	} catch (error) {
+		console.warn('[system-network] Platform read failed:', error instanceof Error ? error.message : String(error));
+		snapshot = { interfaces: readGenericInterfaces(), detail: 'addressesOnly', ipv4ProfilesUnavailable: false };
+	}
+	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities(), ipv4ProfilesUnavailable: snapshot.ipv4ProfilesUnavailable, ...(snapshot.stale ? { stale: true } : {}) };
 }
 
 async function readPlatform(): Promise<LinuxNetworkRead> {
@@ -394,13 +381,14 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed before the user reaches Save rather than
 		// user when Save fails.
-		const native = await isWindowsElevated();
+		const capability = await windowsReader.call<{ elevated: boolean; wifi: boolean }>({ method: 'win32.network.capabilities' }, WINDOWS_TIMEOUT_MS);
+		const native = capability.elevated;
 		const elevated = !native && (await helperAvailableForCapabilities('win32'));
 		// Wi-Fi is the exception to that token: the WLAN service takes scan and join
 		// from an ordinary user, so the capability is whether the service lists an
 		// adapter at all. A host with no radio, or a stripped image with no WLAN
 		// stack, lists none and the screen offers nothing.
-		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: isWindowsWifiConfigurable(), staticGatewayRequired: false };
+		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: capability.wifi, staticGatewayRequired: false };
 	} else if (process.platform === 'linux') {
 		const capability = await readLinuxCapabilities();
 		if (capability.ipv4Elevation && !(await helperAvailableForCapabilities('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
@@ -422,16 +410,6 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 
 async function readCapabilities(): Promise<NetCapabilities> {
 	return readCachedCapabilities(probeCapabilities);
-}
-
-/** True when this process can actually run the privileged cmdlets. One spawn, cached with the capabilities. */
-async function isWindowsElevated(): Promise<boolean> {
-	try {
-		const { stdout } = await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_ELEVATION_COMMAND], { timeout: WINDOWS_TIMEOUT_MS, maxBuffer: 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
-		return parseElevation(stdout);
-	} catch {
-		return false;
-	}
 }
 
 /**
@@ -469,6 +447,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	// and a fresh read closes the gap between opening the form and pressing Save.
 	resetNetworkStateCache();
 	const before = await readNetworkStateUnlocked(primaryInterface);
+	if (before.stale) throw new CodedError(ErrorCodes.NETCONFIG_STALE, 'current host state could not be read');
 	const target = before.interfaces.find(item => item.id === interfaceID);
 	if (!target) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'unknown interface');
 	if (!target.ipv4Configurable || target.ipv4Mode === 'unknown') throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'interface configuration cannot be preserved safely');
@@ -486,14 +465,14 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 				// The helper reads the host again on its own; it gets the baseline this
 				// process just verified so a change made while the authorization prompt
 				// was open is refused there too, not applied over.
-				const response = await runElevatedNetworkHelper({ version: 1, operation: 'applyIPv4', interfaceID, config: desired, expected: ipv4BaselineOf(target) });
+				const response = await runElevatedNetworkHelper({ operation: 'applyIPv4', interfaceID, config: desired, expected: ipv4BaselineOf(target) });
 				if (!response.ok) throw response.code ? new CodedError(ErrorCodes[response.code], response.error) : new Error(response.error);
 				usedHelper = true;
 				return;
 			}
 			if (process.platform === 'win32') {
 				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-				await execFileAsync(WINDOWS_POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command', windowsApplyIPv4Command(interfaceID, desired, addressingChanged, requireLease)], { timeout: APPLY_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, env: WINDOWS_SYSTEM_ENV });
+				await applyNativeWindowsIPv4(requireNativeMutationContext(), interfaceID, desired, { addressingChanged, requireLease });
 			} else if (process.platform === 'darwin') {
 				await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
 			} else {

@@ -346,7 +346,7 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, this.authenticatedTransport);
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, this.authenticatedTransport, this.dataDir);
 		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(this.authenticatedTransport, handler);
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
@@ -413,7 +413,10 @@ export class APIServer {
 			stopAllNetworks: () => this.networks.stopAllNetworks(),
 			clearUploadRuntime: _transfer.clearUploads,
 			drainUploads: () => this._upload.stopAndDrain(),
-			closeServer: () => this.closeServer(),
+			closeServer: async () => {
+				await _system.close();
+				await this.closeServer();
+			},
 		};
 
 		this.handlers = {
@@ -537,6 +540,7 @@ export class APIServer {
 			...createTimeApiHandlers(_system, this.authenticatedTransport),
 			'system.network': async (_params, client) => networkStateForClient(await _system.network(), this.authenticatedTransport, client.data.isLocalClient),
 			'system.networkApply': networkAdmin(_system.networkApply),
+			'system.network.acknowledgeInterrupted': networkAdmin(_system.acknowledgeNetwork),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
 			'system.wifiConnect': networkAdmin(_system.wifiConnect),
 			'system.wifiDisconnect': networkAdmin(_system.wifiDisconnect),

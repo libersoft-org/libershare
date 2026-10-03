@@ -1,5 +1,5 @@
-// Plain JavaScript: Bun copies file assets into compiled binaries without transpiling imports.
-import { CString, dlopen, linkSymbols, FFIType, ptr, read, toArrayBuffer } from 'bun:ffi';
+import { ptr, read, toArrayBuffer } from 'bun:ffi';
+import { ObjectiveC } from './native/darwin/objc.ts';
 import { isMainThread } from 'node:worker_threads';
 
 /** Mixed CoreWLAN enums also match a single constituent; inspect WPA versions individually. */
@@ -102,59 +102,17 @@ export function coreWlanScanRows(networks, current) {
 
 function run(request) {
 	if (process.platform !== 'darwin') throw new Error('CoreWLAN is only available on macOS');
-	const objc = dlopen('/usr/lib/libobjc.A.dylib', {
-		objc_getClass: { args: [FFIType.ptr], returns: FFIType.ptr },
-		sel_registerName: { args: [FFIType.ptr], returns: FFIType.ptr },
-		objc_autoreleasePoolPush: { args: [], returns: FFIType.ptr },
-		objc_autoreleasePoolPop: { args: [FFIType.ptr], returns: FFIType.void },
-	});
-	// Tagged NSString pointers use all 64 bits; bun:ffi pointer Numbers would truncate them.
-	// Objective-C objects cross the FFI boundary as u64 BigInts, with method-specific returns.
-	const loader = dlopen('/usr/lib/libSystem.B.dylib', {
-		dlopen: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
-		dlsym: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
-		dlclose: { args: [FFIType.ptr], returns: FFIType.i32 },
-	});
-	const objcPath = Buffer.from('/usr/lib/libobjc.A.dylib\0');
-	const messageName = Buffer.from('objc_msgSend\0');
-	const handle = loader.symbols.dlopen(ptr(objcPath), 2);
-	const message = loader.symbols.dlsym(handle, ptr(messageName));
-	const calls = linkSymbols({
-		object: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.u64 },
-		objectArg: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
-		scan: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.ptr], returns: FFIType.u64 },
-		data: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
-		integer: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.i64_fast },
-		flag: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.bool },
-		supports: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.i64], returns: FFIType.bool },
-		disconnect: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.void },
-		join: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.u64, FFIType.ptr], returns: FFIType.bool },
-	});
-	const frameworkPath = Buffer.from('/System/Library/Frameworks/CoreWLAN.framework/CoreWLAN\0');
-	const framework = loader.symbols.dlopen(ptr(frameworkPath), 2);
-	if (!framework) throw new Error('macOS Wi-Fi framework is unavailable');
-	const pool = objc.symbols.objc_autoreleasePoolPush();
-	const buffers = [];
-	const cString = value => {
-		const buffer = Buffer.from(value + '\0', 'utf8');
-		buffers.push(buffer);
-		return ptr(buffer);
-	};
-	const selector = name => objc.symbols.sel_registerName(cString(name));
-	const klass = name => {
-		const result = objc.symbols.objc_getClass(cString(name));
-		if (!result) throw new Error('macOS Wi-Fi framework is unavailable');
-		return result;
-	};
-	const string = value => calls.symbols.objectArg(klass('NSString'), selector('stringWithUTF8String:'), cString(value));
-	const get = (object, name) => calls.symbols.object(object, selector(name));
-	const integer = (object, name) => Number(calls.symbols.integer(object, selector(name)));
-	const flag = (object, name) => calls.symbols.flag(object, selector(name));
-	const text = object => {
-		if (!object) return null;
-		const address = get(object, 'UTF8String');
-		return address ? new CString(Number(address)).toString() : null;
-	};
+	const objc = new ObjectiveC('CoreWLAN');
+	const calls = objc.calls;
+	const buffers = objc.buffers;
+	const selector = name => objc.selector(name);
+	const klass = name => objc.klass(name);
+	const string = value => objc.string(value);
+	const get = (object, name) => objc.get(BigInt(object), name);
+	const integer = (object, name) => objc.integer(BigInt(object), name);
+	const flag = (object, name) => objc.flag(BigInt(object), name);
+	const text = object => objc.text(BigInt(object));
+
 	const errorBuffer = new BigUint64Array(1);
 	const nativeError = operation => {
 		const error = read.ptr(ptr(errorBuffer));
@@ -251,25 +209,25 @@ function run(request) {
 		const selected = candidates.find(candidate => candidate.network === network);
 		if (!coreWlanAssociationMatches(actual, ssidHex, selected.bssid, securityType)) throw new Error('macOS did not connect to the requested Wi-Fi network with the requested security');
 	} finally {
-		objc.symbols.objc_autoreleasePoolPop(pool);
-		for (const buffer of buffers) buffer.fill(0);
-		calls.close();
-		loader.symbols.dlclose(framework);
 		objc.close();
-		loader.symbols.dlclose(handle);
-		loader.close();
 	}
 }
 
 if (!isMainThread)
 	self.onmessage = event => {
+		if (event.data.operation === 'close') {
+			self.postMessage({ closed: true });
+			return;
+		}
+		let response;
 		try {
-			self.postMessage({ result: run(event.data) });
+			response = { result: run(event.data) };
 		} catch (error) {
 			const password = event.data.password;
 			const message = error instanceof Error ? error.message : 'macOS Wi-Fi operation failed';
-			self.postMessage({ error: password ? message.split(password).join('[redacted]') : message });
+			response = { error: password ? message.split(password).join('[redacted]') : message };
 		} finally {
 			event.data.password = '';
 		}
+		self.postMessage({ ...response, settled: true });
 	};

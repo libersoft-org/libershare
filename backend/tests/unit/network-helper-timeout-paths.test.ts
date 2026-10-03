@@ -86,13 +86,12 @@ describe('macOS save whose helper preparation outlives the budget', () => {
 			import { mock } from 'bun:test';
 			const cp = { ...(await import('node:child_process')) };
 			const calls = [];
-			const execFile = (file, args, options, callback) => {
-				const done = typeof options === 'function' ? options : callback;
-				calls.push(file);
-				// codesign answers slowly, past the save budget; osascript would be the prompt.
-				setTimeout(() => done(null, { stdout: '', stderr: 'TeamIdentifier=TEAMID' + String.fromCharCode(10) + 'Identifier=app.example' }), file.endsWith('codesign') ? 400 : 0);
+			mock.module('node:child_process', () => ({ ...cp, spawn: file => {calls.push(file);throw new Error('Unexpected prompt');} }));
+			const { NativeWorkerChannel } = await import('./src/native/worker-host.ts');
+			NativeWorkerChannel.prototype.call = async () => {
+				await Bun.sleep(400);
+				return {team:'TEAMID',identifier:'app.example'};
 			};
-			mock.module('node:child_process', () => ({ ...cp, execFile }));
 			const { writeFileSync, mkdtempSync } = await import('node:fs');
 			const { join } = await import('node:path');
 			const { tmpdir } = await import('node:os');

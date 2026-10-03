@@ -1,11 +1,11 @@
-import type { SystemTimeResult, SystemTimeStatus } from '@shared';
+import { CodedError, ErrorCodes, type SystemTimeResult, type SystemTimeStatus } from '@shared';
 import type { initSystemHandlers } from './system.ts';
 
 interface TimeClient {
 	data: { isLocalClient: boolean };
 }
 
-type TimeSystem = Pick<ReturnType<typeof initSystemHandlers>, 'getTime' | 'listTimezones' | 'setClock' | 'setTimezone' | 'setNtpServer' | 'setNtpEnabled' | 'applyTimeSettings'>;
+type TimeSystem = Pick<ReturnType<typeof initSystemHandlers>, 'getTime' | 'listTimezones' | 'setClock' | 'setTimezone' | 'setNtpServer' | 'setNtpEnabled' | 'applyTimeSettings'> & Partial<Pick<ReturnType<typeof initSystemHandlers>, 'acknowledgeTime'>>;
 type TimeHandler = (params: any, client: TimeClient) => any;
 
 /** Keep the host state readable while advertising only actions this client may perform. */
@@ -32,5 +32,10 @@ export function createTimeApiHandlers(system: TimeSystem, authenticated: boolean
 		'system.setNtpServer': protect(system.setNtpServer),
 		'system.setNtpEnabled': protect(system.setNtpEnabled),
 		'system.applyTimeSettings': protect(system.applyTimeSettings),
+		'system.time.acknowledgeInterrupted': async (_params, client) => {
+			if (!authenticated || !client.data.isLocalClient) throw new Error('Changing system time requires an authenticated client on this machine');
+			if (!system.acknowledgeTime) throw new CodedError(ErrorCodes.SYSTEM_TIME_BUSY);
+			return system.acknowledgeTime();
+		},
 	};
 }

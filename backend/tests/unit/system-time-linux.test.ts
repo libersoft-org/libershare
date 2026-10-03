@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildTimesyncdDropIn, parseUnitLoadStates, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, type CommandRunner, type RunOutcome, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT } from '../../src/system-time.ts';
+import { canConfigureTimesyncdServer, competingNtpUnits, COMPETING_NTP_UNITS, parseAnyUnitActive, buildTimesyncdDropIn, parseUnitLoadStates, extractWords, extractWordsChecked, readNtpUnitsList, readTimedatedEnvironment, type OperationOutcome, TIMESYNCD_DROPIN_PATH, TIMESYNCD_UNIT } from '../../src/system-time.ts';
 
 describe('buildTimesyncdDropIn', () => {
 	it('writes a [Time] section with the server', () => {
@@ -420,11 +420,25 @@ describe('extractWords', () => {
 
 describe('readTimedatedEnvironment', () => {
 	/** Answer `systemctl show-environment` and `systemctl show -p Environment` separately. */
-	function systemctl(manager: RunOutcome, unit: RunOutcome): CommandRunner {
-		return async (_cmd, args) => (args[0] === 'show-environment' ? manager : unit);
+	function systemctl(manager: OperationOutcome, unit: OperationOutcome): () => Promise<import('../../src/system-time-linux.ts').TimedatedEnvironmentSources | null> {
+		return async () =>
+			manager.kind === 'ok' && unit.kind === 'ok'
+				? {
+						manager: manager.output,
+						unit: Object.fromEntries(
+							unit.output
+								.split(/\r?\n/)
+								.filter(Boolean)
+								.map(line => {
+									const at = line.indexOf('=');
+									return [line.slice(0, at), line.slice(at + 1)];
+								})
+						),
+					}
+				: null;
 	}
 
-	const ok = (output: string): RunOutcome => ({ kind: 'ok', output });
+	const ok = (output: string): OperationOutcome => ({ kind: 'ok', output });
 
 	/**
 	 * The unit's `systemctl show` answer, one `Key=Value` line per property systemd reports.
@@ -434,7 +448,7 @@ describe('readTimedatedEnvironment', () => {
 	 * two print an empty value. A fixture that printed it empty would have tested a host
 	 * shape that does not exist.
 	 */
-	function props(values: { LoadState?: string; Environment?: string; EnvironmentFiles?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): RunOutcome {
+	function props(values: { LoadState?: string; Environment?: string; EnvironmentFiles?: string; PassEnvironment?: string; UnsetEnvironment?: string } = {}): OperationOutcome {
 		const files = values.EnvironmentFiles === undefined ? '' : `EnvironmentFiles=${values.EnvironmentFiles}\n`;
 		return ok(`LoadState=${values.LoadState ?? 'loaded'}\nEnvironment=${values.Environment ?? ''}\n${files}PassEnvironment=${values.PassEnvironment ?? ''}\nUnsetEnvironment=${values.UnsetEnvironment ?? ''}\n`);
 	}
@@ -572,7 +586,7 @@ describe('readTimedatedEnvironment', () => {
 
 	/** Either source could be the one carrying the override, so neither may be skipped. */
 	it('reports an unknown environment when a source does not answer', async () => {
-		const failed: RunOutcome = { kind: 'failed', code: 1, output: 'Failed to get properties.\n' };
+		const failed: OperationOutcome = { kind: 'failed', code: 1, output: 'Failed to get properties.\n' };
 		expect(await readTimedatedEnvironment(systemctl(failed, ok('')))).toBeNull();
 		expect(await readTimedatedEnvironment(systemctl(ok(''), failed))).toBeNull();
 		expect(await readTimedatedEnvironment(systemctl({ kind: 'missing' }, ok('')))).toBeNull();

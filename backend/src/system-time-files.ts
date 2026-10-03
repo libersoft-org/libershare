@@ -3,6 +3,10 @@ import { dirname } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { DIRECTORY_SYNC_UNSUPPORTED, syncDirectory } from './file-durability.ts';
+import { NativeWorkerChannel } from './native/worker-host.ts';
+import { probeNativeTimeServiceAccess } from './native/linux/time-access-probe.ts';
+import type { NativeTimeServiceIdentity } from './native/linux/time-mutation-nss.ts';
+import { remainingSaveBudget } from './system-time-common.ts';
 
 export { syncDirectory };
 
@@ -157,7 +161,7 @@ async function readSnapshot(path: string, readOriginal: (path: string) => Promis
 const MAX_SYMLINK_HOPS = 40;
 
 /** Where a resolution went: the directories it passed through, and the file it ended at. */
-interface Resolution {
+export interface Resolution {
 	/**
 	 * Every directory the resolution passes through, outermost first, as the kernel would
 	 * reach them. Whether the service account may ENTER each one is decided by the caller -
@@ -189,7 +193,7 @@ interface Resolution {
  * `null` for a path that cannot be walked at all — an absence, or something this process may
  * not stat. Neither is evidence about the service account, and the write reports it anyway.
  */
-async function resolveForServiceAccount(path: string): Promise<Resolution> {
+export async function resolveForServiceAccount(path: string): Promise<Resolution> {
 	const nothing: Resolution = { traversed: [], target: null, directory: null };
 	const traversed: string[] = [];
 	let parts = path.split(/[/\\]+/).filter(Boolean);
@@ -251,7 +255,7 @@ export const TIME_SERVICE_UNIT = 'systemd-timesyncd.service';
 /**
  * Can the time service's own account reach `path`? Null when this host cannot be asked.
  *
- * `setpriv` runs `test` with nothing but that account's ids, so the answer comes from the
+ * A dedicated child drops to the account's ids, so the answer comes from the
  * kernel's own permission check - ACLs included. Only root may adopt another account, and
  * only Linux has this service, so everywhere else the caller falls back to the mode bits.
  */
@@ -262,7 +266,7 @@ export type ServiceAccountAccess = (path: string, mode: 'r' | 'x') => Promise<bo
  *
  * Not the same answer as `null`. Null is "this host cannot be asked at all" - no root, no
  * Linux - and the mode bits stand in because on such a host nothing real was written either.
- * This is a root Linux host whose `id` or `systemctl` query failed, and there NO stand-in is
+ * This is a root Linux host whose NSS or systemd query failed, and there NO stand-in is
  * honest: a probe under a partial group list answers for a different account than the one
  * that runs, and it errs in BOTH directions. A 0750 directory the service enters through a
  * group is refused without that group; a 0705 directory it is refused from - group class
@@ -278,7 +282,7 @@ export interface ServiceAccountUnknown {
 export interface ServiceAccountIdentity {
 	uid: number;
 	gid: number;
-	/** Group names, as `setpriv --groups` takes them; never empty. */
+	/** Numeric NSS group IDs; injected legacy probes may also supply group names. */
 	groups: string[];
 }
 
@@ -323,14 +327,6 @@ export function serviceAccountProbe(identity: ServiceAccountIdentity, mode: 'r' 
 /** The exit status of one probe process, or null when it could not be run at all. */
 export type ProbeRunner = (argv: string[]) => number | null;
 
-const spawnProbe: ProbeRunner = argv => {
-	try {
-		return Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' }).exitCode;
-	} catch {
-		return null;
-	}
-};
-
 /**
  * An access check for ONE operation: the identity is read on the first probe and shared by
  * the rest of that operation's probes, then let go.
@@ -345,7 +341,7 @@ const spawnProbe: ProbeRunner = argv => {
  * the operation needs - every directory on the path and the file itself are asked under the
  * same snapshot - and the next save reads again.
  */
-export function serviceAccountAccessForOperation(readIdentity: () => Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> = serviceAccountIdentity, runProbe: ProbeRunner = spawnProbe): ServiceAccountAccess {
+export function serviceAccountAccessForOperation(readIdentity: () => Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> = serviceAccountIdentity, runProbe?: ProbeRunner): ServiceAccountAccess {
 	let identity: Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> | undefined;
 	return async (path, mode) => {
 		identity ??= readIdentity();
@@ -354,54 +350,30 @@ export function serviceAccountAccessForOperation(readIdentity: () => Promise<Ser
 		// Nothing is probed under an identity that could not be established: the answer would
 		// be about some other account. Reported as it is, and the caller refuses on it.
 		if ('unknown' in resolved) return resolved;
-		// Only `test`'s own verdict counts. `setpriv` reports its own failures - a missing
-		// binary, an id it may not assume - with a different status, and reading those as
-		// "unreadable" would refuse a configuration nobody can prove is broken.
+		if (!runProbe) {
+			if (resolved.groups.some(group => !/^\d+$/.test(group))) return { unknown: 'The time service group IDs were not resolved through NSS' };
+			return probeNativeTimeServiceAccess({ uid: resolved.uid, gid: resolved.gid, groups: resolved.groups.map(Number), path, mode });
+		}
+		// Explicit legacy fixtures use test's exit status; production uses the native child.
 		const status = runProbe(serviceAccountProbe(resolved, mode, path));
 		return status === 0 ? true : status === 1 ? false : null;
 	};
 }
 
-/** Stdout of a short host query, or null when it could not be run or did not succeed. */
-function queryHost(argv: string[]): string | null {
-	try {
-		const child = Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', timeout: 5_000 });
-		return child.exitCode === 0 ? child.stdout.toString('utf8') : null;
-	} catch {
-		return null;
-	}
-}
-
-/**
- * The service account's ids and groups as the host has them NOW, or null when this host
- * cannot be asked: only root may adopt another account, and only Linux has this service, so
- * everywhere else the caller falls back to the mode bits.
- *
- * The ids come from the host's own passwd database; the groups from `id -Gn` and from the
- * unit systemd has loaded (`SupplementaryGroups=` is read through `systemctl show`, so a
- * drop-in counts once `daemon-reload` has seen it). Nothing is remembered between calls -
- * see {@link serviceAccountAccessForOperation} for why.
- */
+/** Root can ask the kernel under the service's NSS identity; other platforms retain their existing fallback. */
 async function serviceAccountIdentity(): Promise<ServiceAccountIdentity | null | ServiceAccountUnknown> {
 	if (process.platform !== 'linux' || process.getuid?.() !== 0) return null;
+	const timeoutMs = Math.min(5000, remainingSaveBudget() ?? 5000);
+	if (timeoutMs <= 0) return { unknown: 'The time service identity read exceeded its budget' };
+	const reader = new NativeWorkerChannel('read');
 	try {
-		const passwd = await readFile('/etc/passwd', 'utf8');
-		for (const line of passwd.split('\n')) {
-			const fields = line.split(':');
-			if (fields[0] !== TIME_SERVICE_ACCOUNT) continue;
-			const uid = Number(fields[2]);
-			const gid = Number(fields[3]);
-			if (!Number.isInteger(uid) || !Number.isInteger(gid)) return null;
-			// Either query failing is the whole identity failing: a list missing one side is
-			// not a smaller list, it is another account's (see ServiceAccountUnknown).
-			const memberships = queryHost(['/usr/bin/id', '-Gn', TIME_SERVICE_ACCOUNT]);
-			if (memberships === null) return { unknown: `the time service's group memberships could not be read (id -Gn ${TIME_SERVICE_ACCOUNT} failed)` };
-			const unitGroups = queryHost(['/usr/bin/systemctl', 'show', '-p', 'SupplementaryGroups', '--value', TIME_SERVICE_UNIT]);
-			if (unitGroups === null) return { unknown: `the groups ${TIME_SERVICE_UNIT} adds could not be read (systemctl show failed)` };
-			return { uid, gid, groups: serviceAccountGroups(memberships, unitGroups, String(gid)) };
-		}
-	} catch {}
-	return null;
+		const identity = await reader.call<NativeTimeServiceIdentity>({ method: 'linux.time.service-identity', args: { timeoutMs } }, timeoutMs);
+		return { uid: identity.uid, gid: identity.gid, groups: identity.groups.map(String) };
+	} catch {
+		return { unknown: 'The time service identity could not be established through NSS and systemd' };
+	} finally {
+		reader.close();
+	}
 }
 
 /**

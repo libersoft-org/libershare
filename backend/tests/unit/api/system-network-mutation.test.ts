@@ -2,6 +2,41 @@ import { describe, expect, it } from 'bun:test';
 import { restrictNetworkCapabilities, runAndPublishNetworkMutation } from '../../../src/api/system.ts';
 import { runNetworkMutation } from '../../../src/system-network.ts';
 import type { NetworkStateInfo } from '@shared';
+import { resolve } from 'node:path';
+
+it('keeps OS state readable and refuses changes when the native journal cannot be read', async () => {
+	const script = `
+		import { mock } from 'bun:test';
+		const time=await import('./src/system-time.ts'), volume=await import('./src/system-volume.ts'), network=await import('./src/system-network.ts'), helper=await import('./src/network-helper-client.ts');
+		let writes=0, broken=true;
+		const status={supported:true,nowMs:123,timezone:'UTC',stale:false,capabilities:{setClock:true,setTimezone:true,setNtpServer:true,setNtpEnabled:true}};
+		const state={known:true,detail:'full',stale:false,interfaces:[],capabilities:{ipv4:true,wifi:true,ipv4Elevation:true}};
+		mock.module('./src/system-time.ts',()=>({...time,getSystemTimeStatus:async()=>status}));
+		mock.module('./src/system-volume.ts',()=>({...volume,getSystemVolumeStatus:async()=>null}));
+		mock.module('./src/system-network.ts',()=>({...network,readNetworkState:async()=>state,applyIPv4Unlocked:async()=>{writes++;return state;}}));
+		mock.module('./src/network-helper-client.ts',()=>({...helper,warmElevationTrust:()=>{}}));
+		const {NativeMutationHost}=await import('./src/native/mutation-host.ts');
+		NativeMutationHost.prototype.state=async()=>{if(broken)throw Error('Invalid native mutation journal');};
+		NativeMutationHost.prototype.recover=async()=>{};
+		const {initSystemHandlers}=await import('./src/api/system.ts');
+		const handlers=initSystemHandlers({get:()=>'',set:async()=>{}},()=>{},()=>false,true,process.cwd());
+		try {
+			const time=await handlers.getTime(), network=await handlers.network();
+			const results=await Promise.allSettled([handlers.setNtpEnabled({enabled:false}),handlers.networkApply({interfaceID:'test0',config:{mode:'dhcp'},expected:{}})]);
+			broken=false;
+			console.log(JSON.stringify({time,network,rejected:results.map(item=>item.status),writes,recovered:await handlers.getTime()}));
+		} finally {await handlers.close();}
+	`;
+	const child = Bun.spawn([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../../..'), stdout: 'pipe', stderr: 'pipe' });
+	const [code, out, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+	if (code) throw new Error(error);
+	const result = JSON.parse(out);
+	expect(result.time).toMatchObject({ supported: true, nowMs: 123, stale: true, capabilities: { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false } });
+	expect(result.network).toMatchObject({ known: true, stale: true, capabilities: { ipv4: false, wifi: false, ipv4Elevation: false } });
+	expect(result.rejected).toEqual(['rejected', 'rejected']);
+	expect(result.writes).toBe(0);
+	expect(result.recovered.stale).toBe(false);
+});
 
 function state(): NetworkStateInfo {
 	return {
@@ -30,11 +65,7 @@ describe('network mutation publishing', () => {
 		expect(published).toEqual([fresh]);
 	});
 
-	it('reads the failed result before a queued change may begin', async () => {
-		// The read-back of a failed change and the next change both want the host
-		// lock. If the lock were released between the failure and the read, the
-		// queued change would run first and the "result" published for the failed
-		// one would really be the second change's outcome.
+	it('rejects another change while the failed mutation is still reading back', async () => {
 		const order: string[] = [];
 		let releaseRead: () => void = () => {};
 		const readBlocked = new Promise<void>(resolve => (releaseRead = resolve));
@@ -51,13 +82,18 @@ describe('network mutation publishing', () => {
 			},
 			() => order.push('publish')
 		).catch(() => {});
-		const queued = runNetworkMutation(async () => {
-			order.push('queued');
-		});
+		const refused = await runNetworkMutation(async () => {
+			order.push('unexpected-write');
+		}).catch(error => error);
+		expect(refused.code).toBe('NETCONFIG_BUSY');
 		await Promise.resolve();
 		releaseRead();
-		await Promise.all([failing, queued]);
-		expect(order).toEqual(['mutation', 'read-back:start', 'read-back:end', 'publish', 'queued']);
+		await failing;
+		expect(order).toEqual(['mutation', 'read-back:start', 'read-back:end', 'publish']);
+		await runNetworkMutation(async () => {
+			order.push('new-write');
+		});
+		expect(order[order.length - 1]).toBe('new-write');
 	});
 
 	it('hides write capabilities when the API has no authentication token', () => {
