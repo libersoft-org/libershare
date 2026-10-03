@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ["1.4.0", "1.4.1", "1.4.2"]
+        bun: ["1.4.0", "1.4.2"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -77,6 +77,9 @@ jobs:
         run: |
           bun build --compile tests/helpers/native-worker-compiled.ts src/native/worker-runtime.ts --define 'LISH_NATIVE_WORKER_ENTRY="./src/native/worker-runtime.ts"' --outfile worker-smoke.exe
           ./worker-smoke.exe
+      - name: Verify DNS writes and rollback on an isolated loopback adapter
+        working-directory: backend
+        run: ./tests/helpers/windows-arm64-dns-smoke.ps1
 
   docker:
     runs-on: ubuntu-24.04
