@@ -10,6 +10,7 @@ import { NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS } from './system-network-lin
 import { executeRecordedHelper } from './native/helper-results-executor.ts';
 import { helperRequestHash } from './native/helper-results-store.ts';
 import { runTimeAccessProbeArgument } from './native/linux/time-access-probe.ts';
+import { runDarwinClockProbeArgument } from './native/darwin/time-clock-probe.ts';
 
 const MAX_REQUEST_BYTES = 12 * 1024;
 
@@ -66,6 +67,7 @@ async function readRequest(args: string[]): Promise<{ request: NetworkHelperRequ
 }
 
 const args = process.argv.slice(2);
+if (args[0] === '--clock-probe') process.exit(args.length === 2 ? await runDarwinClockProbeArgument(args[1]!) : 3);
 if (args[0] === '--access-probe') process.exit(args.length === 2 ? await runTimeAccessProbeArgument(args[1]!).catch(() => 3) : 3);
 const reportWithExitCode = reportsWithExitCode(args);
 

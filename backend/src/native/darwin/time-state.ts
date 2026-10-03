@@ -3,7 +3,8 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import type { SystemTimeChanges } from '@shared';
 import { parseTzif, tzifOffsetAt } from '../tzif.ts';
 import { getNativeBootId } from '../process-identity.ts';
-import { darwinHostUptimeMs, openDarwinCoreTime, prepareDarwinClock, type DarwinClockParts } from './time-native.ts';
+import { darwinHostUptimeMs, openDarwinCoreTime, type DarwinClockParts } from './time-native.ts';
+import { prepareDarwinClockSafely } from './time-clock-probe.ts';
 import { darwinNtpFingerprint, readDarwinNtpFile } from './time-files.ts';
 import { parseNtpConfServer, parseZoneinfoLink } from '../../system-time-macos.ts';
 
@@ -63,14 +64,22 @@ export function darwinClockMatches(proof: DarwinClockProof, current: DarwinTimeS
 }
 
 /** Worker-only metadata; contents and xattrs never leave this process in a recovery receipt. */
-export function readDarwinTimeSnapshot(request: DarwinTimeSnapshotRequest = {}): DarwinTimeSnapshot {
-	const local = readDarwinTimeZone(), file = readDarwinNtpFile(), coreTime = openDarwinCoreTime();
+export async function readDarwinTimeSnapshot(request: DarwinTimeSnapshotRequest = {}): Promise<DarwinTimeSnapshot> {
+	const local = readDarwinTimeZone(),
+		file = readDarwinNtpFile(),
+		coreTime = openDarwinCoreTime();
 	try {
-		const utcMs = Date.now(), hostUptimeMs = darwinHostUptimeMs(), bootId = getNativeBootId();
-		const targetUtcMs = request.clock ? prepareDarwinClock(request.clock) : undefined;
+		const conversion = request.clock ? await prepareDarwinClockSafely(request.clock) : undefined;
+		const utcMs = Date.now(),
+			hostUptimeMs = darwinHostUptimeMs(),
+			bootId = getNativeBootId();
+		if (conversion && (conversion.reference.bootId !== bootId || readDarwinTimeZone()?.zone.fingerprint !== local?.zone.fingerprint)) throw new Error('The host timezone or boot changed during clock preparation');
+		const targetUtcMs = conversion?.targetUtcMs;
 		const targetNtpFingerprint = request.server === undefined ? undefined : darwinNtpFingerprint({ content: Buffer.from(`server ${request.server}\n`).toString('base64'), uid: file?.uid ?? 0, gid: file?.gid ?? 0, mode: file?.mode ?? 0o644, xattrs: file?.xattrs ?? {} })!;
 		return { utcMs, hostUptimeMs, bootId, zone: local?.zone ?? null, offsetMinutes: local ? tzifOffsetAt(parseTzif(local.bytes), Math.floor(utcMs / 1000)) / 60 : null, ntpEnabled: coreTime.symbols.TMIsAutomaticTimeEnabled(), ntpServer: file ? parseNtpConfServer(Buffer.from(file.content, 'base64').toString('utf8')) : null, ntpFingerprint: file?.fingerprint ?? null, ntpIdentity: file?.identity ?? null, ...(request.timezone ? { targetZone: prepareDarwinTimeZone(request.timezone, local?.zone ?? null) } : {}), ...(targetUtcMs === undefined ? {} : { targetClock: { targetUtcMs, hostUptimeMs, bootId } }), ...(targetNtpFingerprint ? { targetNtpFingerprint } : {}) };
-	} finally { coreTime.close(); }
+	} finally {
+		coreTime.close();
+	}
 }
 
 export function observeDarwinTimeRecovery(original: DarwinTimeSnapshot, changes: SystemTimeChanges, recovery: DarwinTimeRecovery | undefined, current: DarwinTimeSnapshot): { original: boolean; target: boolean } {

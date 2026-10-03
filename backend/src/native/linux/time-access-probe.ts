@@ -1,7 +1,5 @@
 import { FFIType, ptr, read } from 'bun:ffi';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { selfProcessCommand } from '../self-process.ts';
 import { loadSystemLibrary } from '../library.ts';
 import { resolveForServiceAccount } from '../../system-time-files.ts';
 import { TIMESYNCD_DROPIN_PATH } from '../../system-time-linux.ts';
@@ -58,14 +56,7 @@ export async function runTimeAccessProbeArgument(encoded: string): Promise<numbe
 
 export function timeAccessProbeCommand(request: TimeAccessProbeRequest): string[] {
 	if (!validRequest(request)) throw new Error('Invalid time service access request');
-	const modulePath = import.meta.path.replaceAll('\\', '/');
-	const compiled = modulePath.includes('/$bunfs/') || modulePath.includes('/~BUN/');
-	if (compiled) return [process.execPath, '--access-probe', JSON.stringify(request)];
-	const app = fileURLToPath(new URL('../../app.ts', import.meta.url));
-	const helper = fileURLToPath(new URL('../../network-helper.ts', import.meta.url));
-	const entry = process.argv[1] && resolve(process.argv[1]) === resolve(helper) ? helper : app;
-	if (!existsSync(entry)) throw new Error('The app entry point for the access probe is unavailable');
-	return [process.execPath, entry, '--access-probe', JSON.stringify(request)];
+	return selfProcessCommand('--access-probe', JSON.stringify(request));
 }
 
 export async function probeNativeTimeServiceAccess(request: TimeAccessProbeRequest): Promise<boolean | { unknown: string }> {

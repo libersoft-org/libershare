@@ -2,16 +2,59 @@ import { lchmodSync, lchownSync, renameSync, symlinkSync, unlinkSync } from 'nod
 import { randomUUID } from 'node:crypto';
 import { isValidNtpServer, type OperationOutcome } from '../../system-time-common.ts';
 import { DARWIN_LOCALTIME, prepareDarwinTimeZone, readDarwinTimeZone, type DarwinClockProof } from './time-state.ts';
-import { darwinHostUptimeMs, notifyDarwinTimezone, openDarwinCoreTime, prepareDarwinClock, setDarwinClock, type DarwinClockParts } from './time-native.ts';
+import { darwinHostUptimeMs, notifyDarwinTimezone, openDarwinCoreTime, readDarwinClockReference, setDarwinClock, type DarwinClockParts, type DarwinClockReference } from './time-native.ts';
+import { prepareDarwinClockSafely, sameDarwinClockReference, type DarwinClockProbeReply } from './time-clock-probe.ts';
 import { readDarwinNtpFile, syncDarwinTimeDirectory, writeDarwinNtpFile } from './time-files.ts';
-import { getNativeBootId } from '../process-identity.ts';
 
 export type DarwinTimeWrite =
 	| { readonly kind: 'clock'; readonly clock: DarwinClockParts; readonly zoneFingerprint: string | null }
 	| { readonly kind: 'timezone'; readonly timezone: string; readonly zoneFingerprint: string | null; readonly targetFingerprint: string }
 	| { readonly kind: 'server'; readonly server: string; readonly fileFingerprint: string | null; readonly fileIdentity: string | null; readonly enabled: boolean }
 	| { readonly kind: 'enabled'; readonly enabled: boolean };
-export interface DarwinTimeWriteResult { readonly outcome: OperationOutcome; readonly clock?: DarwinClockProof }
+export interface DarwinTimeWriteResult {
+	readonly outcome: OperationOutcome;
+	readonly clock?: DarwinClockProof;
+}
+
+export interface DarwinClockWriteDeps {
+	zoneFingerprint(): string | null;
+	reference(): DarwinClockReference;
+	ntpEnabled(): boolean;
+	convert(clock: DarwinClockParts): Promise<DarwinClockProbeReply>;
+	uptime(): number;
+	set(utcMs: number): number;
+}
+
+export async function executeDarwinClockWrite(request: Extract<DarwinTimeWrite, { kind: 'clock' }>, supplied?: DarwinClockWriteDeps): Promise<DarwinTimeWriteResult> {
+	const deps = supplied ?? {
+		zoneFingerprint: () => readDarwinTimeZone()?.zone.fingerprint ?? null,
+		reference: readDarwinClockReference,
+		ntpEnabled: () => {
+			const coreTime = openDarwinCoreTime();
+			try {
+				return coreTime.symbols.TMIsAutomaticTimeEnabled();
+			} finally {
+				coreTime.close();
+			}
+		},
+		convert: prepareDarwinClockSafely,
+		uptime: darwinHostUptimeMs,
+		set: setDarwinClock,
+	};
+	const refusal = (): DarwinTimeWriteResult => ({ outcome: { kind: 'failed', code: null, output: 'Automatic time synchronization is enabled', outcome: 'auto-sync-enabled', stateMayHaveChanged: false } });
+	const zone = deps.zoneFingerprint(),
+		before = deps.reference();
+	if (!zone || zone !== request.zoneFingerprint) throw new Error('The host timezone changed before the clock write');
+	if (deps.ntpEnabled()) return refusal();
+	const converted = await deps.convert(request.clock),
+		after = deps.reference();
+	if (!sameDarwinClockReference(before, converted.reference) || !sameDarwinClockReference(before, after) || deps.zoneFingerprint() !== zone) throw new Error('The host date, boot or timezone changed during clock preparation');
+	if (deps.ntpEnabled()) return refusal();
+	const hostUptimeMs = deps.uptime(),
+		errno = deps.set(converted.targetUtcMs);
+	if (errno) return { outcome: errno === 1 || errno === 13 ? { kind: 'denied', output: `settimeofday failed: errno ${errno}`, stateMayHaveChanged: false } : { kind: 'failed', code: errno, output: `settimeofday failed: errno ${errno}`, stateMayHaveChanged: false } };
+	return { outcome: { kind: 'ok', output: '' }, clock: { targetUtcMs: converted.targetUtcMs, hostUptimeMs, bootId: after.bootId } };
+}
 
 const unknown = (): OperationOutcome => ({ kind: 'unknown', output: 'CoreTime has not confirmed the requested state', endRule: { kind: 'boot' } });
 
@@ -37,16 +80,7 @@ export async function executeDarwinTimeWrite(request: DarwinTimeWrite): Promise<
 	let changed = false;
 	try {
 		if (request.kind === 'clock') {
-			const zone = readDarwinTimeZone()?.zone;
-			if (!zone || zone.fingerprint !== request.zoneFingerprint) throw new Error('The host timezone changed before the clock write');
-			const coreTime = openDarwinCoreTime();
-			try { if (coreTime.symbols.TMIsAutomaticTimeEnabled()) return { outcome: { kind: 'failed', code: null, output: 'Automatic time synchronization is enabled', outcome: 'auto-sync-enabled', stateMayHaveChanged: false } }; }
-			finally { coreTime.close(); }
-			const targetUtcMs = prepareDarwinClock(request.clock), hostUptimeMs = darwinHostUptimeMs(), bootId = getNativeBootId();
-			if (!bootId) throw new Error('Cannot identify the host boot before setting its clock');
-			const errno = setDarwinClock(targetUtcMs);
-			if (errno) return { outcome: errno === 1 || errno === 13 ? { kind: 'denied', output: `settimeofday failed: errno ${errno}`, stateMayHaveChanged: false } : { kind: 'failed', code: errno, output: `settimeofday failed: errno ${errno}`, stateMayHaveChanged: false } };
-			return { outcome: { kind: 'ok', output: '' }, clock: { targetUtcMs, hostUptimeMs, bootId } };
+			return await executeDarwinClockWrite(request);
 		}
 		if (request.kind === 'timezone') {
 			const before = readDarwinTimeZone()?.zone ?? null;
