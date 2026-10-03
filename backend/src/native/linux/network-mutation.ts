@@ -445,7 +445,13 @@ export async function applyNativeLinuxIPv4(context: NativeMutationContext, devic
 			}
 			let settled = false;
 			try {
-				settled = await rollbackSettled(() => all(checkpointDevice!, `${NM}.Device`), path => all(path, `${NM}.Connection.Active`), () => deps.now(), ms => deps.sleep(ms), rollbackDeadline);
+				settled = await rollbackSettled(
+					() => all(checkpointDevice!, `${NM}.Device`),
+					path => all(path, `${NM}.Connection.Active`),
+					() => deps.now(),
+					ms => deps.sleep(ms),
+					rollbackDeadline
+				);
 			} catch {
 				// A failed read leaves the rollback just as unconfirmed as a timeout does.
 			}

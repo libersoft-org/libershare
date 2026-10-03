@@ -263,7 +263,16 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 			try {
 				const rollbackDeadline = session.deps.now() + options.rollbackTimeoutMs;
 				await session.rollback(path!);
-				if (!(await rollbackSettled(() => session.all(path!, `${NM}.Device`), activePath => session.all(activePath, `${NM}.Connection.Active`), () => session.deps.now(), ms => session.deps.sleep(ms), rollbackDeadline))) throw new Error('Wi-Fi rollback did not settle');
+				if (
+					!(await rollbackSettled(
+						() => session.all(path!, `${NM}.Device`),
+						activePath => session.all(activePath, `${NM}.Connection.Active`),
+						() => session.deps.now(),
+						ms => session.deps.sleep(ms),
+						rollbackDeadline
+					))
+				)
+					throw new Error('Wi-Fi rollback did not settle');
 				// NM checkpoint rollback clears a prior manual-disconnect autoconnect block.
 				const rolledBack = await session.all(path!, `${NM}.Device`);
 				if (wifiValue(rolledBack, 'Autoconnect', 'b') !== metadata!.originalAutoconnect) {
