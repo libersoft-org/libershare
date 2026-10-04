@@ -1,6 +1,10 @@
-import { open } from 'fs/promises';
-import { join, resolve, sep } from 'path';
 import { type Database } from 'bun:sqlite';
+import { openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-files.ts';
+import { conservativeDatasetRoot } from './dataset-root.ts';
+import { DatasetWriteScope } from './dataset-write-scope.ts';
+import { readDatasetRange } from './dataset-chunk-io.ts';
+import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot, addDataset as dbAddDataset, relocateDataset as dbRelocateDataset } from '../db/lishs-roots.ts';
+import { getDatasetLinkBindings as dbGetDatasetLinkBindings, type DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { clearLishData, clearLishnetData } from '../db/database.ts';
 import { getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled } from '../db/lishs.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
@@ -10,11 +14,37 @@ export type { MissingChunk };
 
 export class DataServer {
 	private db: Database;
-	private openFile: typeof open;
+	private openRoot: typeof openDataset;
 
-	constructor(db: Database, openFile: typeof open = open) {
+	constructor(db: Database, openRoot: typeof openDataset = openDataset) {
 		this.db = db;
-		this.openFile = openFile;
+		this.openRoot = openRoot;
+	}
+
+	getDatasetRoot(lishID: LISHid, final = false): DatasetRoot | null {
+		return dbGetDatasetRoot(this.db, lishID, final);
+	}
+
+	setDatasetRoot(lishID: LISHid, root: DatasetRoot | null, final = false): void {
+		dbSetDatasetRoot(this.db, lishID, root, final);
+	}
+
+	addDataset(lish: IStoredLISH, root: DatasetRoot, finalRoot?: DatasetRoot): void {
+		dbAddDataset(this.db, lish, root, finalRoot);
+	}
+
+	getDatasetLinkBindings(lishID: LISHid): DatasetLinkBinding[] {
+		return dbGetDatasetLinkBindings(this.db, lishID);
+	}
+
+	relocateDataset(lishID: LISHid, root: DatasetRoot, clearFinal = false, bindings?: readonly DatasetLinkBinding[]): void {
+		dbRelocateDataset(this.db, lishID, root, clearFinal, bindings);
+	}
+
+	async openDataset(lishID: LISHid): Promise<SafeDataset> {
+		const meta = getLISHMeta(this.db, lishID);
+		if (!meta?.directory) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, lishID);
+		return this.openRoot(this.getDatasetRoot(lishID) ?? conservativeDatasetRoot(meta.directory));
 	}
 
 	get(lishID: LISHid): IStoredLISH | null {
@@ -209,15 +239,22 @@ export class DataServer {
 			return 'chunk_not_found';
 		}
 
-		const dataFilePath = join(meta.directory, location.filePath);
 		try {
 			const offset = location.chunkIndex * meta.chunkSize;
-			const fileHandle = Bun.file(dataFilePath);
-			const slice = fileHandle.slice(offset, offset + meta.chunkSize);
-			const arrayBuffer = await slice.arrayBuffer();
-			// console.log(`read chunk ${chunkID.slice(0, 8)}... from ${location.filePath} (index ${location.chunkIndex})`);
-			return new Uint8Array(arrayBuffer);
+			const dataset = await this.openDataset(lishID);
+			try {
+				const file = await dataset.openFile(location.filePath, 'read');
+				try {
+					const info = await file.stat();
+					return await readDatasetRange(file, offset, Math.max(0, Math.min(meta.chunkSize, info.size - offset)));
+				} finally {
+					await file.close();
+				}
+			} finally {
+				await dataset.close();
+			}
 		} catch (error: any) {
+			if (error.code === ErrorCodes.LISH_UNSAFE_PATH) throw error;
 			if (error.code === 'ENOENT') {
 				// The backing file vanished from disk. Stop claiming its chunks: reset them so
 				// further requests answer chunk_not_found (honest partial seeder). Report
@@ -227,27 +264,34 @@ export class DataServer {
 				console.warn(`[DataServer] ${location.filePath} missing on disk — reset ${reset} chunks of ${lishID.slice(0, 8)} for re-download`);
 				return 'file_missing';
 			}
-			console.error(`Error reading chunk from ${dataFilePath}:`, error.code ?? error.message);
+			console.error(`Error reading chunk from ${location.filePath}:`, error.code ?? error.message);
 			return 'io_error';
 		}
 	}
 
-	public async writeChunk(downloadDir: string, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array): Promise<void> {
-		if (!lish.files || fileIndex >= lish.files.length) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, String(fileIndex));
+	public async writeChunk(downloadDir: string | DatasetRoot, lish: ILISH, fileIndex: number, chunkIndex: number, data: Uint8Array, scope?: DatasetWriteScope): Promise<void> {
+		if (!Number.isSafeInteger(fileIndex) || fileIndex < 0 || !lish.files || fileIndex >= lish.files.length) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, String(fileIndex));
 		const file = lish.files[fileIndex]!;
-		const filePath = resolve(downloadDir, file.path);
-		if (!filePath.startsWith(resolve(downloadDir) + sep)) throw new CodedError(ErrorCodes.INVALID_FILE_INDEX, `Path traversal: ${file.path}`);
 		const offset = chunkIndex * lish.chunkSize;
-		const fd = await this.openFile(filePath, 'r+');
+		const length = Math.min(lish.chunkSize, file.size - offset);
+		if (!Number.isSafeInteger(lish.chunkSize) || lish.chunkSize <= 0 || !Number.isSafeInteger(file.size) || file.size < 0 || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= file.checksums.length || !Number.isSafeInteger(offset) || length <= 0 || data.length !== length) throw new CodedError(ErrorCodes.UPLOAD_INVALID_CHUNK);
+		const writes = scope ?? new DatasetWriteScope();
 		try {
-			let bytesWritten = 0;
-			while (bytesWritten < data.length) {
-				const result = await fd.write(data, bytesWritten, data.length - bytesWritten, offset + bytesWritten);
-				if (result.bytesWritten <= 0) throw Object.assign(new Error('File write made no progress'), { code: 'EIO' });
-				bytesWritten += result.bytesWritten;
-			}
+			await writes.write(typeof downloadDir === 'string' ? conservativeDatasetRoot(downloadDir) : downloadDir, lish, this.openRoot, async dataset => {
+				const fd = await dataset.openFile(file.path, 'write');
+				try {
+					let bytesWritten = 0;
+					while (bytesWritten < data.length) {
+						const count = await fd.write(data.subarray(bytesWritten), offset + bytesWritten);
+						if (!Number.isInteger(count) || count <= 0 || count > data.length - bytesWritten) throw Object.assign(new Error('File write made no progress'), { code: 'EIO' });
+						bytesWritten += count;
+					}
+				} finally {
+					await fd.close();
+				}
+			});
 		} finally {
-			await fd.close();
+			if (!scope) await writes.close();
 		}
 	}
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import { CodedError, ErrorCodes } from '@shared';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
@@ -70,6 +70,15 @@ describe('LISH factory-reset mutation drain', () => {
 		const writes: string[] = [];
 		const dataServer = {
 			get: () => ({ id: 'verify-reset', directory: '/tmp/verify-reset', chunkSize: 1024, checksumAlgo: 'sha256' }),
+			openDataset: async () => ({
+				prepare: async () => {},
+				openFile: async () => {
+					existsStarted();
+					await existsBlocked;
+					throw Object.assign(new Error('File disappeared'), { code: 'ENOENT' });
+				},
+				close: async () => {},
+			}),
 			getFilesForVerification: () => [
 				{
 					path: 'file.bin',
@@ -82,17 +91,6 @@ describe('LISH factory-reset mutation drain', () => {
 			markChunkVerified: () => writes.push('chunk-verified'),
 			markChunkFailed: () => writes.push('chunk-failed'),
 		};
-		const fileSpy = spyOn(Bun, 'file').mockImplementation(
-			() =>
-				({
-					size: 1024,
-					exists: async () => {
-						existsStarted();
-						await existsBlocked;
-						return false;
-					},
-				}) as never
-		);
 		const handlers = createHandlers(dataServer);
 
 		try {
@@ -112,7 +110,6 @@ describe('LISH factory-reset mutation drain', () => {
 			expect(writes).toEqual([]);
 		} finally {
 			handlers.resumeMutations();
-			fileSpy.mockRestore();
 		}
 	});
 });

@@ -31,7 +31,7 @@
 </script>
 
 <ImportWebForm {areaID} {position} {onBack} {parseURL} urlLabel={$t('lish.import.url')} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
-	{#snippet confirm({ data, onDone })}
-		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} />
+	{#snippet confirm({ data, onDone, onError })}
+		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} {onError} />
 	{/snippet}
 </ImportWebForm>

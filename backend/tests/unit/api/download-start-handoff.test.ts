@@ -43,6 +43,7 @@ for (const batch of [false, true])
 			} as unknown as Networks;
 			const data = {
 				get: () => ({ id, name: 'download', directory: null, files: [] }),
+				getDatasetRoot: (): null => null,
 				getAllChunkCount: () => 4,
 				getMissingChunks: () => ['chunk-0'],
 				isCompleteLISH: () => false,

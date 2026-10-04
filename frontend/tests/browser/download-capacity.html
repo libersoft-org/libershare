@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<link rel="icon" href="data:," />
+	<title>Download capacity notice regression</title>
+	<pre id="results">Running...</pre>
+	<div id="form"></div>
+	<script>
+		// This fixture has no backend. Vite's own websocket remains available.
+		const NativeSocket = window.WebSocket;
+		window.WebSocket = class extends EventTarget {
+			static CONNECTING = 0;
+			static OPEN = 1;
+			static CLOSING = 2;
+			static CLOSED = 3;
+			readyState = 0;
+			constructor(url, protocols) {
+				super();
+				if (new URL(url).pathname !== '/ws') return new NativeSocket(url, protocols);
+			}
+			send() {
+				throw new Error('Unexpected backend websocket request');
+			}
+			close() {
+				this.readyState = 3;
+			}
+		};
+		const nativeFetch = window.fetch.bind(window);
+		window.fetch = (input, options) => (new URL(input, location.href).pathname === '/status' ? Promise.resolve(Response.json({ ok: true, authRequired: false, authenticated: true })) : nativeFetch(input, options));
+	</script>
+	<script type="module">
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import SettingsDownload from '/src/pages/Settings/SettingsDownload.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { currentLanguage, translations } from '/src/scripts/language.ts';
+		import { storagePath, storageTempPath } from '/src/scripts/settings.ts';
+		const root = document.querySelector('#form');
+		const results = [];
+		const originalSet = api.settings.set;
+		let writes = 0;
+		api.settings.set = async () => {
+			writes++;
+			return true;
+		};
+		storagePath.set('/downloads/finished');
+		storageTempPath.set('/downloads/working');
+		let component;
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		try {
+			component = mount(SettingsDownload, { target: root, props: { areaID: 'capacity-test' } });
+			for (const lang of ['en', 'cs']) {
+				try {
+					const dictionary = await (await fetch(`/langs/${lang}.json`)).json();
+					const expected = dictionary.settings.download.completionCopyNotice;
+					assert(typeof expected === 'string' && expected.length > 0, 'Missing capacity translation');
+					currentLanguage.set(lang);
+					const deadline = Date.now() + 3000;
+					while (get(translations).settings?.download?.completionCopyNotice !== expected && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+					await tick();
+					const note = root.querySelector('.completion-copy-notice');
+					assert(note?.textContent.trim() === expected, 'Capacity notice is not translated');
+					assert(note.getBoundingClientRect().height > 0 && getComputedStyle(note).visibility !== 'hidden', 'Capacity notice is hidden');
+					assert(note.previousElementSibling.textContent.includes(dictionary.settings.download.directoryTemp), 'Notice is not next to the working directory');
+					assert(note.nextElementSibling.textContent.includes(dictionary.settings.download.directoryLISH), 'Notice is outside the download directory section');
+					const values = [...root.querySelectorAll('input')].map(input => input.value);
+					assert(values.includes('/downloads/finished') && values.includes('/downloads/working'), 'Directory inputs changed');
+					assert(writes === 0, 'Showing the notice wrote settings');
+					results.push({ lang, passed: true, notice: expected });
+				} catch (error) {
+					results.push({ lang, passed: false, error: error.message });
+				}
+			}
+		} finally {
+			if (component) await unmount(component);
+			api.settings.set = originalSet;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			window.downloadCapacityTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 2 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

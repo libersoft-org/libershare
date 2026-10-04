@@ -32,7 +32,7 @@
 </script>
 
 <ImportJSONForm {areaID} {position} {onBack} {parseJSON} jsonLabel={$t('lish.import.lishJSON')} placeholder={$t('lish.import.placeholder')} errorEmptyKey="lish.import.jsonRequired" {initialFilePath} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
-	{#snippet confirm({ data, onDone })}
-		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} />
+	{#snippet confirm({ data, onDone, onError })}
+		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} {onError} />
 	{/snippet}
 </ImportJSONForm>
