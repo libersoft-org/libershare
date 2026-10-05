@@ -35,13 +35,17 @@ jobs:
           ./test-shared.sh
           ./test-cli.sh
 
-  native-files:
+  # One job per operating system: platform checks join these as steps, and a new
+  # architecture is one more matrix entry rather than another job.
+  windows-native:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, macos-14]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+        include:
+          - runner: windows-2022
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -51,16 +55,38 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.13
+      - name: Require the native architecture
+        env:
+          EXPECTED_NATIVE_ARCH: ${{ matrix.arch }}
+        run: bun -e "if (process.platform !== 'win32' || process.arch !== process.env.EXPECTED_NATIVE_ARCH) throw new Error('A native Windows runner is required'); console.log(process.platform, process.arch, Bun.version)"
       - name: Install
         run: bun install --frozen-lockfile
       - name: Native dataset regressions
-        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-posix.test.ts tests/unit/lish/safe-dataset-files-windows.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts
+        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-windows.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts
       - name: Compile and run native file operations
         run: |
-          binary="$RUNNER_TEMP/dataset-native-smoke"
-          if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; fi
-          bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$binary"
-          "$binary"
+          bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke.exe"
+          "$RUNNER_TEMP/dataset-native-smoke.exe"
+
+  macos-native:
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Native dataset regressions
+        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-posix.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts
+      - name: Compile and run native file operations
+        run: |
+          bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke"
+          "$RUNNER_TEMP/dataset-native-smoke"
 
   docker:
     runs-on: ubuntu-24.04
