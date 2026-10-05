@@ -1,7 +1,7 @@
 import { DBusError } from './dbus.ts';
 import { WifiSession, WIFI_NM as NM, WIFI_NM_PATH as ROOT, wifiCall, wifiObjectPath, type WifiMutationDeps } from './wifi-client.ts';
 import { readWifiSecret, StoredWifiSecretUnavailable, type WifiRecoveryData } from './wifi-mutation.ts';
-import { wifiNumber, wifiPaths, wifiProfileFingerprint, wifiSecretFingerprint, wifiString, wifiValue } from './wifi-settings.ts';
+import { wifiNumber, wifiPaths, wifiProfileFingerprint, wifiProfilePinsBssid, wifiSecretFingerprint, wifiString, wifiValue } from './wifi-settings.ts';
 import type { NativeNetworkSettings } from './network-mutation.ts';
 
 export interface NativeWifiObservation {
@@ -96,7 +96,9 @@ export async function observeNativeLinuxWifi(value: unknown, timeoutMs: number, 
 			secretState = oldSecretMatches ? 'old' : newSecretMatches ? 'new' : 'other';
 		}
 		const originalSaved = metadata.originalActiveUuid ? profiles.get(metadata.originalActiveUuid) : undefined;
-		const originalAssociation = activeUuid === metadata.originalActiveUuid && (link.bssid?.toLowerCase() ?? null) === metadata.originalBssid && wifiValue(device, 'Autoconnect', 'b') === metadata.originalAutoconnect && (activeUuid === null ? wifiNumber(device, 'State') === 30 : activeValid && originalSaved?.path === activeProfilePath && originalSaved.fingerprint === metadata.originalActiveFingerprint);
+		// An unbound profile may come back on another access point of the same network.
+		const originalLink = activeUuid !== null && originalSaved && !wifiProfilePinsBssid(originalSaved.settings) ? link.bssid !== null : (link.bssid?.toLowerCase() ?? null) === metadata.originalBssid;
+		const originalAssociation = activeUuid === metadata.originalActiveUuid && originalLink && wifiValue(device, 'Autoconnect', 'b') === metadata.originalAutoconnect && (activeUuid === null ? wifiNumber(device, 'State') === 30 : activeValid && originalSaved?.path === activeProfilePath && originalSaved.fingerprint === metadata.originalActiveFingerprint);
 		const selectedRestored = metadata.selectedProfileUuid ? selected?.fingerprint === metadata.originalProfileFingerprint && oldSecretMatches : !desired;
 		const originalMatches = !cloneExists && originalAssociation && selectedRestored;
 		let desiredProfileMatches = false;
@@ -107,7 +109,7 @@ export async function observeNativeLinuxWifi(value: unknown, timeoutMs: number, 
 			const authentication = security ? wifiString(security, 'key-mgmt') : 'open';
 			desiredProfileMatches = metadata.desiredProfileFingerprint ? desired.fingerprint === metadata.desiredProfileFingerprint : ssid instanceof Uint8Array && Buffer.from(ssid).toString('hex') === metadata.targetSsidHex && authentication === metadata.targetAuthentication;
 		}
-		const targetMatches = metadata.operation === 'disconnect' ? activeUuid === null && link.bssid === null && wifiNumber(device, 'State') === 30 && wifiValue(device, 'Autoconnect', 'b') === false && (!metadata.originalActiveUuid || originalSaved?.fingerprint === metadata.originalActiveFingerprint) : !cloneExists && activeValid && activeUuid === metadata.desiredProfileUuid && desired?.path === activeProfilePath && link.bssid?.toLowerCase() === metadata.targetBssid && link.ssid !== null && Buffer.from(link.ssid).toString('hex') === metadata.targetSsidHex && desiredProfileMatches && newSecretMatches;
+		const targetMatches = metadata.operation === 'disconnect' ? activeUuid === null && link.bssid === null && wifiNumber(device, 'State') === 30 && wifiValue(device, 'Autoconnect', 'b') === false && (!metadata.originalActiveUuid || originalSaved?.fingerprint === metadata.originalActiveFingerprint) : !cloneExists && activeValid && activeUuid === metadata.desiredProfileUuid && desired?.path === activeProfilePath && (wifiProfilePinsBssid(desired.settings) ? link.bssid?.toLowerCase() === metadata.targetBssid : link.bssid !== null) && link.ssid !== null && Buffer.from(link.ssid).toString('hex') === metadata.targetSsidHex && desiredProfileMatches && newSecretMatches;
 		const partial = !cloneExists && metadata.credentialVerified && secretState === 'new' && desiredProfileMatches;
 		return { outcome: targetMatches ? 'target' : originalMatches ? 'original' : partial ? 'password-committed' : 'different', originalMatches, targetMatches, secretState, cloneExists };
 	} finally {

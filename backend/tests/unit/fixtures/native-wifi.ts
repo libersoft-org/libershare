@@ -31,7 +31,7 @@ export interface WifiFixture {
 	reads: WifiCall[];
 	records: WifiRecoveryData[];
 	agentScopes: WifiSecretScope[];
-	state: { active: string | null; autoconnect: boolean; candidates: string[]; flags: number; wpa: number; rsn: number; failure: string; unknown: string; failSecrets: boolean; expireAtCommit: boolean; remaining: number; clock: number; closed: boolean; pending: boolean; secretAgent: boolean; retained: boolean; rollbackBusy: number };
+	state: { active: string | null; autoconnect: boolean; candidates: string[]; flags: number; wpa: number; rsn: number; failure: string; unknown: string; failSecrets: boolean; expireAtCommit: boolean; remaining: number; clock: number; closed: boolean; pending: boolean; secretAgent: boolean; retained: boolean; rollbackBusy: number; linkBssid: string | null };
 	autoRollback(): void;
 }
 
@@ -44,7 +44,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 		if (!options.open && !options.flags) secrets.set(PROFILE, OLD_PASSWORD);
 	}
 	const originalActive = options.active ? PROFILE : null;
-	const state = { active: originalActive, autoconnect: !!options.active, candidates: [...profiles.keys()], flags: options.open ? 0 : 1, wpa: 0, rsn: options.open ? 0 : 0x188, failure: '', unknown: '', failSecrets: false, expireAtCommit: false, remaining: 355000, clock: 0, closed: false, pending: false, secretAgent: false, retained: false, rollbackBusy: 0 };
+	const state = { active: originalActive, autoconnect: !!options.active, candidates: [...profiles.keys()], flags: options.open ? 0 : 1, wpa: 0, rsn: options.open ? 0 : 0x188, failure: '', unknown: '', failSecrets: false, expireAtCommit: false, remaining: 355000, clock: 0, closed: false, pending: false, secretAgent: false, retained: false, rollbackBusy: 0, linkBssid: null };
 	const agentScopes: WifiSecretScope[] = [];
 	const writes: WifiCall[] = [],
 		reads: WifiCall[] = [],
@@ -110,7 +110,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 			return reply('');
 		},
 		scan: async () => [],
-		link: async () => ({ ssid: state.active ? 'Demo' : null, bssid: state.active ? BSSID : null, signal: state.active ? -38 : null }),
+		link: async () => ({ ssid: state.active ? 'Demo' : null, bssid: state.active ? (state.linkBssid ?? BSSID) : null, signal: state.active ? -38 : null }),
 		read: async (_endpoint, request) => {
 			reads.push(request);
 			if (request.member === 'GetDeviceByIpIface') return reply('o', DEVICE);

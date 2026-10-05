@@ -6,7 +6,7 @@ import { rollbackSettled, type NativeNetworkSettings } from './network-mutation.
 import type { NativeMutationContext } from '../mutation-host.ts';
 import type { JournalValue } from '../mutation-journal.ts';
 import { WifiSession, WIFI_NM as NM, WIFI_NM_PATH as ROOT, wifiCall, wifiObjectPath, type WifiMutationDeps, type WifiMutationOptions } from './wifi-client.ts';
-import { decodeWifiAccessPoint, wifiDictionary, wifiNumber, wifiPaths, wifiPersonalSecurity, wifiProfileCompatible, wifiProfileFingerprint, wifiSecretFingerprint, wifiString, wifiValue, type WifiAccessPoint, type WifiProperties } from './wifi-settings.ts';
+import { decodeWifiAccessPoint, wifiDictionary, wifiNumber, wifiPaths, wifiPersonalSecurity, wifiProfileCompatible, wifiProfileFingerprint, wifiProfilePinsBssid, wifiSecretFingerprint, wifiString, wifiValue, type WifiAccessPoint, type WifiProperties } from './wifi-settings.ts';
 
 export interface WifiRecoveryData {
 	version: 1;
@@ -94,17 +94,18 @@ function addedConnection(reply: DBusReply): { profilePath: string; activePath: s
 	return { profilePath: wifiObjectPath(reply.values[0]), activePath: wifiObjectPath(reply.values[1]) };
 }
 
-async function verifyAssociation(session: WifiSession, device: string, ap: WifiAccessPoint): Promise<void> {
+/** Check the link joined the selected network, and its exact access point when the profile is bound to one. */
+async function verifyAssociation(session: WifiSession, device: string, ap: WifiAccessPoint, pinned: boolean): Promise<void> {
 	const actual = await session.link(device);
-	if (actual.bssid?.toLowerCase() !== ap.bssid || actual.ssid !== Buffer.from(ap.ssid).toString('utf8')) throw new Error('NetworkManager did not connect to the selected Wi-Fi access point');
+	if ((pinned && actual.bssid?.toLowerCase() !== ap.bssid) || actual.ssid !== Buffer.from(ap.ssid).toString('utf8')) throw new Error('NetworkManager did not connect to the selected Wi-Fi access point');
 }
 
-async function activate(session: WifiSession, profilePath: string, uuid: string, device: string, path: string, ap: WifiAccessPoint): Promise<void> {
+async function activate(session: WifiSession, profilePath: string, uuid: string, device: string, path: string, ap: WifiAccessPoint, pinned: boolean): Promise<void> {
 	const deadline = session.deps.now() + session.options.activationTimeoutMs;
 	const reply = await session.write(wifiCall(ROOT, NM, 'ActivateConnection', 'ooo', [profilePath, path, ap.path]), session.options.activationTimeoutMs);
 	if (reply.signature !== 'o') throw new Error('Invalid Wi-Fi activation reply');
 	await session.waitActive(wifiObjectPath(reply.values[0]), profilePath, uuid, path, deadline);
-	await verifyAssociation(session, device, ap);
+	await verifyAssociation(session, device, ap, pinned);
 }
 
 async function assertProfile(session: WifiSession, profilePath: string, metadata: WifiRecoveryData): Promise<void> {
@@ -204,16 +205,17 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 			if ((createdSecurity ? wifiString(createdSecurity, 'key-mgmt') : 'open') !== authentication) throw new Error('Wi-Fi authentication changed during connection creation');
 			await record({ desiredProfileFingerprint: wifiProfileFingerprint(created) });
 			await session.waitActive(added.activePath, added.profilePath, metadata.desiredProfileUuid!, path, deadline);
-			await verifyAssociation(session, device, ap);
+			// The new profile carries the BSSID exactly when one was selected.
+			await verifyAssociation(session, device, ap, bssid !== null);
 			await record({ credentialVerified: true });
 		} else if (authentication === 'open') {
-			await activate(session, selectedPath!, metadata.desiredProfileUuid!, device, path, ap);
+			await activate(session, selectedPath!, metadata.desiredProfileUuid!, device, path, ap, wifiProfilePinsBssid(selected!));
 		} else if (pskFlags !== 0) {
 			const updated = structuredClone(selected);
 			updated['802-11-wireless-security']!['psk'] = variant('s', password);
 			await session.write(wifiCall(selectedPath!, `${NM}.Settings.Connection`, 'Update2', 'a{sa{sv}}ua{sv}', [updated, 0x20, {}]), options.updateTimeoutMs);
 			await record({ phase: 'committed' });
-			await activate(session, selectedPath!, metadata.desiredProfileUuid!, device, path, ap);
+			await activate(session, selectedPath!, metadata.desiredProfileUuid!, device, path, ap, wifiProfilePinsBssid(selected!));
 		} else {
 			const clone = structuredClone(selected);
 			delete clone['connection']!['uuid'];
@@ -226,7 +228,7 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 			const cloneUuid = wifiString((await session.settings(added.profilePath))['connection']!, 'uuid');
 			await record({ cloneUuid });
 			await session.waitActive(added.activePath, added.profilePath, cloneUuid, path, deadline);
-			await verifyAssociation(session, device, ap);
+			await verifyAssociation(session, device, ap, wifiProfilePinsBssid(selected));
 			await record({ phase: 'clone-active', credentialVerified: true });
 			const updated = structuredClone(selected);
 			updated['802-11-wireless-security']!['psk'] = variant('s', password);
@@ -235,7 +237,7 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 			originalMayHaveChanged = true;
 			await session.write(wifiCall(selectedPath!, `${NM}.Settings.Connection`, 'Update2', 'a{sa{sv}}ua{sv}', [updated, 0x20, {}]), options.updateTimeoutMs);
 			await record({ phase: 'committed' });
-			await activate(session, selectedPath!, metadata.desiredProfileUuid!, device, path, ap);
+			await activate(session, selectedPath!, metadata.desiredProfileUuid!, device, path, ap, wifiProfilePinsBssid(selected!));
 		}
 		await assertProfile(session, selectedPath!, metadata);
 		await session.finish();

@@ -111,6 +111,16 @@ export function wifiSecretFingerprint(salt: string, secret: string): string {
 	return createHash('sha256').update(`libershare-wifi\0${salt}\0`).update(secret).digest('hex');
 }
 
+/**
+ * Whether a profile is bound to one access point. An unbound profile names only the network, and
+ * the supplicant may associate with, or roam to, any access point that broadcasts it.
+ */
+export function wifiProfilePinsBssid(settings: NativeNetworkSettings): boolean {
+	const bssid = settings['802-11-wireless']?.['bssid'];
+	if (!bssid) return false;
+	return bssid.value instanceof Uint8Array ? bssid.value.length > 0 : typeof bssid.value === 'string' && bssid.value !== '';
+}
+
 export function wifiProfileFingerprint(settings: NativeNetworkSettings): string {
 	const copy = structuredClone(settings);
 	if (copy['connection']) delete copy['connection']['timestamp'];

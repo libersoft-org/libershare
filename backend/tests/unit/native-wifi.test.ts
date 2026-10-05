@@ -150,6 +150,22 @@ describe('native Wi-Fi transactions', () => {
 		expect(f.writes).toHaveLength(0);
 		expect(f.state.closed).toBe(true);
 	});
+	test('a saved profile not bound to one access point may land on another AP of the same network', async () => {
+		for (const flags of [0, 1]) {
+			const f = wifiFixture({ flags });
+			f.state.linkBssid = '02:00:00:00:00:09';
+			await connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps);
+			expect(f.state.active).toBe(PROFILE);
+			expect(f.writes.some(call => call.member === 'CheckpointRollback')).toBe(false);
+			expect((await observeNativeLinuxWifi(f.records[f.records.length - 1], 5000, f.deps)).outcome).toBe('target');
+		}
+	});
+	test('a profile bound to the selected access point still requires exactly that AP', async () => {
+		const f = wifiFixture({ existing: false });
+		f.state.linkBssid = '02:00:00:00:00:09';
+		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow('did not connect to the selected Wi-Fi access point');
+		expect(f.writes.some(call => call.member === 'CheckpointRollback')).toBe(true);
+	});
 	test('new protected profile is created once with the caller-selected AP', async () => {
 		const f = wifiFixture({ existing: false });
 		await connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps);
