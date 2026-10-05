@@ -539,7 +539,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		}
 		return runAndPublishNetworkMutation(
 			() => applyIPv4Unlocked(p.interfaceID, p.config, primary, true, p.expected),
-			() => readNetworkStateUnlocked(primary),
+			() => getNetworkState(),
 			state => broadcast('system:network', state)
 		);
 	}
@@ -551,7 +551,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		const primary = settings.get('network.primaryInterface') ?? '';
 		return runAndPublishNetworkMutation(
 			() => (nativeNetwork && process.platform === 'linux' ? nativeNetwork.wifi({ operation: 'disconnect', interfaceID }, () => disconnectWifiUnlocked(interfaceID, primary)) : disconnectWifiUnlocked(interfaceID, primary)),
-			() => readNetworkStateUnlocked(primary),
+			() => getNetworkState(),
 			state => broadcast('system:network', state)
 		);
 	}
@@ -571,7 +571,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 				const action = () => connectWifiUnlocked(p.interfaceID, p.ssid, p.password ?? '', primary, p.bssid ?? null, p.expectedSecurity, p.expectedSsidHex);
 				return nativeNetwork && process.platform === 'linux' ? nativeNetwork.wifi({ operation: 'connect', interfaceID: p.interfaceID, ssid: p.ssid, password: p.password ?? '', bssid: p.bssid ?? null, ...(p.expectedSecurity !== undefined ? { expectedSecurity: p.expectedSecurity } : {}), ...(p.expectedSsidHex !== undefined ? { expectedSsidHex: p.expectedSsidHex } : {}) }, action) : action();
 			},
-			() => readNetworkStateUnlocked(primary),
+			() => getNetworkState(),
 			state => broadcast('system:network', state)
 		);
 	}

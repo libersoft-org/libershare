@@ -38,6 +38,38 @@ it('keeps OS state readable and refuses changes when the native journal cannot b
 	expect(result.recovered.stale).toBe(false);
 });
 
+it('publishes the interrupted operation after a failed Wi-Fi change', async () => {
+	const script = `
+		import { mock } from 'bun:test';
+		const volume=await import('./src/system-volume.ts'), network=await import('./src/system-network.ts'), helper=await import('./src/network-helper-client.ts');
+		let failed=false;
+		const state={known:true,detail:'full',stale:false,interfaces:[],capabilities:{ipv4:true,wifi:true,ipv4Elevation:true}};
+		const fail=async()=>{failed=true;throw Error('association failed');};
+		mock.module('./src/system-volume.ts',()=>({...volume,getSystemVolumeStatus:async()=>null}));
+		mock.module('./src/system-network.ts',()=>({...network,readNetworkState:async()=>state,readNetworkStateUnlocked:async()=>state,connectWifiUnlocked:fail,disconnectWifiUnlocked:fail}));
+		mock.module('./src/network-helper-client.ts',()=>({...helper,warmElevationTrust:()=>{}}));
+		const {NativeMutationHost}=await import('./src/native/mutation-host.ts');
+		const {NativeNetworkChanges}=await import('./src/native/network-changes.ts');
+		NativeMutationHost.prototype.state=async()=>failed?{state:'interrupted',since:1,operation:'connectWifi'}:undefined;
+		NativeMutationHost.prototype.recover=async()=>{};
+		NativeNetworkChanges.prototype.wifi=async(_request,action)=>action();
+		const {initSystemHandlers}=await import('./src/api/system.ts');
+		const published=[];
+		const handlers=initSystemHandlers({get:()=>'',set:async()=>{}},(_event,value)=>published.push(value),()=>false,true,process.cwd());
+		try {
+			for (const run of [()=>handlers.wifiConnect({interfaceID:'wlan0',ssid:'Demo',password:'demo-password'}),()=>handlers.wifiDisconnect({interfaceID:'wlan0'})]) {
+				failed=false;
+				await run().catch(()=>{});
+			}
+			console.log(JSON.stringify(published.map(value=>value.mutation?.state ?? null)));
+		} finally {await handlers.close();}
+	`;
+	const child = Bun.spawn([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../../..'), stdout: 'pipe', stderr: 'pipe' });
+	const [code, out, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+	if (code) throw new Error(error);
+	expect(JSON.parse(out)).toEqual(['interrupted', 'interrupted']);
+});
+
 function state(): NetworkStateInfo {
 	return {
 		known: true,
