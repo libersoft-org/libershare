@@ -100,6 +100,8 @@ export class NetworkStateCache {
 			snapshot = await pending.promise;
 		} catch (err) {
 			if (this.inFlight === pending) this.inFlight = null;
+			// An invalidated read failing late says nothing about the current one.
+			if (this.generation !== generation) return this.read();
 			if (this.lastKnown) return { ...this.lastKnown, stale: true };
 			throw err;
 		}

@@ -737,6 +737,25 @@ describe('NetworkStateCache invalidation', () => {
 		expect(await cache.read()).toEqual(freshSnapshot);
 		expect(reads).toBe(2);
 	});
+
+	it('serves the fresh read, not a stale one, when an old in-flight read fails after it', async () => {
+		let rejectOld!: (error: Error) => void;
+		let resolveFresh!: (snapshot: NetworkSnapshot) => void;
+		const oldRead = new Promise<NetworkSnapshot>((_, reject) => (rejectOld = reject));
+		const freshRead = new Promise<NetworkSnapshot>(resolve => (resolveFresh = resolve));
+		let reads = 0;
+		const cache = new NetworkStateCache(() => (++reads === 1 ? oldRead : freshRead), 60_000);
+		const freshSnapshot = { interfaces: [], detail: 'full', ipv4ProfilesUnavailable: false } as NetworkSnapshot;
+
+		const staleCaller = cache.read();
+		cache.reset();
+		const postMutationCaller = cache.read();
+		resolveFresh(freshSnapshot);
+		expect(await postMutationCaller).toBe(freshSnapshot);
+		rejectOld(new Error('old read failed late'));
+		expect(await staleCaller).toBe(freshSnapshot);
+		expect(reads).toBe(2);
+	});
 });
 
 describe('readGenericInterfaces (every platform, including macOS)', () => {
