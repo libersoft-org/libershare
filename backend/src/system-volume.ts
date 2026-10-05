@@ -55,11 +55,50 @@ export function classifyMixerReadings(outputs: Array<string | null>): MixerResul
 	return { kind: 'no-device' };
 }
 
+/**
+ * Everything one operating system contributes to volume control. The shared layer maps results,
+ * serializes writes and polls; a new platform is one implementation plus one registry entry.
+ */
+export interface VolumePlatform {
+	read(): Promise<MixerResult>;
+	write(percent: number): Promise<MixerResult>;
+	/** A push source for OS-side changes, or none when the platform relies on polling alone. */
+	startMonitor?(emit: (status: VolumeStatus) => void, requestRefresh: () => void, onExit: () => void): VolumeMonitor;
+}
+
+const windowsVolume: VolumePlatform = {
+	read: async () => readWindowsVolume(),
+	write: async percent => writeWindowsVolume(percent),
+	startMonitor: (emit, _requestRefresh, onExit) => startWindowsMonitor(emit, onExit),
+};
+
+const linuxVolume: VolumePlatform = {
+	read: () => linuxVolumeReader.call<MixerResult>({ method: 'linux.volume.read', args: { timeoutMs: EXEC_TIMEOUT_MS - 100 } }, EXEC_TIMEOUT_MS),
+	write: percent => linuxVolumeWriter.call<MixerResult>({ method: 'linux.volume.write', args: { percent, timeoutMs: EXEC_TIMEOUT_MS } }),
+	startMonitor: (_emit, requestRefresh, onExit) => startLinuxMonitor(requestRefresh, onExit),
+};
+
+const macVolume: VolumePlatform = {
+	read: () => macVolumeReader.call<MixerResult>({ method: 'darwin.volume.read' }, EXEC_TIMEOUT_MS),
+	write: percent => macVolumeWriter.call<MixerResult>({ method: 'darwin.volume.write', args: { percent } }),
+};
+
+/** Platforms without a mixer implementation report a failed read rather than guessing at a device. */
+const genericVolume: VolumePlatform = {
+	read: async () => ({ kind: 'error' }),
+	write: async () => ({ kind: 'error' }),
+};
+
+const VOLUME_PLATFORMS: Partial<Record<NodeJS.Platform, VolumePlatform>> = { win32: windowsVolume, linux: linuxVolume, darwin: macVolume };
+
+/** The volume implementation for this host; a new platform adds one entry to {@link VOLUME_PLATFORMS}. */
+export function volumePlatform(platform: NodeJS.Platform = process.platform): VolumePlatform {
+	return VOLUME_PLATFORMS[platform] ?? genericVolume;
+}
+
 async function readMixer(): Promise<MixerResult> {
 	try {
-		if (process.platform === 'win32') return readWindowsVolume();
-		if (process.platform === 'darwin') return await macVolumeReader.call<MixerResult>({ method: 'darwin.volume.read' }, EXEC_TIMEOUT_MS);
-		return await linuxVolumeReader.call<MixerResult>({ method: 'linux.volume.read', args: { timeoutMs: EXEC_TIMEOUT_MS - 100 } }, EXEC_TIMEOUT_MS);
+		return await volumePlatform().read();
 	} catch {
 		return { kind: 'error' };
 	}
@@ -67,9 +106,7 @@ async function readMixer(): Promise<MixerResult> {
 
 async function writeMixer(pct: number): Promise<MixerResult> {
 	try {
-		if (process.platform === 'win32') return writeWindowsVolume(pct);
-		if (process.platform === 'darwin') return await macVolumeWriter.call<MixerResult>({ method: 'darwin.volume.write', args: { percent: pct } });
-		return await linuxVolumeWriter.call<MixerResult>({ method: 'linux.volume.write', args: { percent: pct, timeoutMs: EXEC_TIMEOUT_MS } });
+		return await volumePlatform().write(pct);
 	} catch {
 		return { kind: 'error' };
 	}
@@ -398,8 +435,8 @@ function startLinuxMonitor(requestRefresh: () => void, onExit: () => void): Volu
  */
 export function startVolumeMonitor(emit: (status: VolumeStatus) => void, requestRefresh: () => void, onExit: () => void): VolumeMonitor {
 	try {
-		if (process.platform === 'win32') return startWindowsMonitor(emit, onExit);
-		if (process.platform === 'linux') return startLinuxMonitor(requestRefresh, onExit);
+		const monitor = volumePlatform().startMonitor?.(emit, requestRefresh, onExit);
+		if (monitor) return monitor;
 	} catch (err) {
 		console.warn('[system-volume] Failed to start volume monitor:', (err as Error).message);
 	}
