@@ -19,7 +19,7 @@
 		const output = document.querySelector('#results');
 		const results = [];
 		const original = { call: api.call, on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe };
-		let component, host, changed, domain, calls, rejectAcknowledgement, pendingWrite, timeWrite;
+		let component, host, changed, domain, calls, rejectAcknowledgement, pendingWrite, timeWrite, failJoin;
 		const label = key => get(t)(key);
 		const assert = (condition, message) => {
 			if (!condition) throw new Error(message);
@@ -46,6 +46,10 @@
 			if (method === 'system.network' || method === 'system.getTime') return structuredClone(host);
 			if (method === 'system.listTimezones') return ['UTC'];
 			if (method === 'system.wifiScan') return [{ ssid: 'Demo Wi-Fi', bssid: '02:00:00:00:00:02', signal: 75, security: '', secured: false, supported: true, active: false }];
+			if (failJoin && method === 'system.wifiConnect') {
+				host.mutation = mutation('interrupted');
+				throw new Error('Association failed');
+			}
 			if (pendingWrite && method === 'system.networkApply') {
 				host.mutation = mutation('pending');
 				return structuredClone(host);
@@ -71,6 +75,7 @@
 			calls = [];
 			rejectAcknowledgement = false;
 			pendingWrite = false;
+			failJoin = false;
 			timeWrite = undefined;
 			host = domain === 'network' ? { known: true, detail: 'full', primaryID: 'wifi0', ipv4ProfilesUnavailable: false, capabilities: { ipv4: true, wifi: true, staticGatewayRequired: false }, interfaces: [{ id: 'wifi0', name: 'Demo adapter', medium: 'wireless', link: 'up', defaultRoute: true, mac: null, addresses: [{ family: 'ipv4', address: '192.0.2.10', prefixLength: 24 }], ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: true, gateway: '192.0.2.1', dns: [], wifi: { ssid: 'Connected Wi-Fi', signal: 80, radio: 'on' } }] } : { supported: true, nowMs: Date.UTC(2026, 0, 1), timezone: 'UTC', utcOffsetMinutes: 0, timezoneSource: 'intl', ntpEnabled: false, ntpSynchronized: false, ntpServer: 'time.example.org', clockHeldByUnmanagedDaemon: false, capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true } };
 			if (state) host.mutation = mutation(state);
@@ -116,11 +121,10 @@
 						if (domain === 'network') {
 							assert(disabled(button('settings.network.disconnect')), 'Disconnect is enabled');
 							button('settings.network.disconnect').click();
+							assert(disabled(button('settings.network.scan')), 'Scan is enabled');
 							button('settings.network.scan').click();
 							await settle();
-							const join = buttons().find(el => el.getAttribute('aria-label') === 'Demo Wi-Fi');
-							assert(disabled(join), 'Joining Wi-Fi is enabled');
-							join.click();
+							assert(!calls.includes('system.wifiScan'), 'A blocked form scanned Wi-Fi');
 						}
 						const refresh = button(domain === 'network' ? 'settings.systemMutation.refresh' : 'settings.time.reload');
 						assert(!disabled(refresh), 'Refresh is disabled');
@@ -177,6 +181,21 @@
 					assert(calls.length === count, 'Mutation state started automatic polling');
 				});
 			}
+			await test('network: a failed join that stays unresolved keeps scan off and the last list', 'network', undefined, async () => {
+				button('settings.network.scan').click();
+				await settle();
+				// An open network joins on selection.
+				failJoin = true;
+				buttons().find(el => el.getAttribute('aria-label') === 'Demo Wi-Fi').click();
+				await settle();
+				await settle();
+				assert(calls.includes('system.wifiConnect'), 'Join did not reach the API');
+				const listed = buttons().find(el => el.getAttribute('aria-label') === 'Demo Wi-Fi');
+				assert(!!listed, 'The last Wi-Fi list was cleared');
+				assert(disabled(listed), 'Joining Wi-Fi is enabled');
+				assert(disabled(button('settings.network.scan')), 'Scan is enabled');
+				assert(calls.filter(method => method === 'system.wifiScan').length === 1, 'The blocked form scanned again');
+			});
 			await test('network: a verified password without restored connection is explained', 'network', 'interrupted', async () => {
 				networkState.update(value => ({ ...value, mutation: { ...value.mutation, operation: 'wifiPasswordChanged' } }));
 				await settle();
@@ -226,7 +245,7 @@
 			if (component) await unmount(component);
 			Object.assign(api, original);
 			window.nativeMutationTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 16 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

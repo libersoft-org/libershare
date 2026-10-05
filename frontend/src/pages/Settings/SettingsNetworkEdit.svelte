@@ -179,11 +179,13 @@
 	}
 
 	async function refreshWifiNetworks(): Promise<void> {
+		// The host refuses a scan while a change is unresolved; keep the last list until it is.
+		if (writeBlocked) return;
 		scanning = true;
 		try {
 			networks = await scanWifiNetworks(interfaceID);
-		} catch {
-			networks = [];
+		} catch (error) {
+			if ((error as { code?: string }).code !== 'NETCONFIG_BUSY') networks = [];
 		} finally {
 			scanning = false;
 		}
@@ -233,7 +235,7 @@
 	}
 
 	async function scan(): Promise<void> {
-		if (scanning || busy) return;
+		if (scanning || busy || writeBlocked) return;
 		scanning = true;
 		clearMessage();
 		try {
@@ -757,7 +759,7 @@
 				<div class="toolbar">
 					<h3>{$t('settings.network.availableNetworks')}</h3>
 					<ButtonBar basePosition={[0, wifiBaseY]}>
-						<Button icon="/img/search.svg" label={scanning ? $t('settings.network.scanning') : $t('settings.network.scan')} position={[0, wifiBaseY]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={scanning || busy} onConfirm={scan} />
+						<Button icon="/img/search.svg" label={scanning ? $t('settings.network.scanning') : $t('settings.network.scan')} position={[0, wifiBaseY]} padding="0.9vh 1.4vh" fontSize="clamp(14px, 1.8vh, 18px)" disabled={scanning || busy || writeBlocked} onConfirm={scan} />
 					</ButtonBar>
 				</div>
 				{#if scanning}
