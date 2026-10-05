@@ -186,7 +186,9 @@
 				await settle();
 				// An open network joins on selection.
 				failJoin = true;
-				buttons().find(el => el.getAttribute('aria-label') === 'Demo Wi-Fi').click();
+				buttons()
+					.find(el => el.getAttribute('aria-label') === 'Demo Wi-Fi')
+					.click();
 				await settle();
 				await settle();
 				assert(calls.includes('system.wifiConnect'), 'Join did not reach the API');
