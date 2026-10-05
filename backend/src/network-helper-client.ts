@@ -260,9 +260,9 @@ export function windowsLauncherFailure(exitCode: unknown): NetworkHelperFailure 
 /** Legacy duration estimate; it is not passed to the launcher as a timeout. */
 export const WINDOWS_NETWORK_HELPER_TIMEOUT_MS: number = WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS + WINDOWS_NETWORK_ELEVATION_WAIT_MS + 20_000;
 
-async function runWindowsHelper(request: NetworkHelperRequest): Promise<NetworkHelperResponse> {
+async function runWindowsHelper(request: NetworkHelperRequest, answer: LauncherExitAnswer = windowsNetworkLauncherAnswer): Promise<NetworkHelperResponse> {
 	const launcher = windowsNetworkLauncherPath();
-	return runTrackedHelper(request, launcher, ['--request', encodeNetworkHelperRequest(request)], { cwd: dirname(launcher) });
+	return runTrackedHelper(request, launcher, ['--request', encodeNetworkHelperRequest(request)], { cwd: dirname(launcher), answer });
 }
 
 /** What the macOS helper launch needs, measured before anything is started. */
@@ -281,13 +281,37 @@ async function prepareMacHelper(helper: string): Promise<MacHelperLaunch> {
 	return { team: backend.team, expectedHash };
 }
 
-async function launchMacHelper(helper: string, request: NetworkHelperRequest, launch: MacHelperLaunch): Promise<NetworkHelperResponse> {
-	return runTrackedHelper(request, '/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encodeNetworkHelperRequest(request), launch.team, launch.expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL]);
+async function launchMacHelper(helper: string, request: NetworkHelperRequest, launch: MacHelperLaunch, answer?: LauncherExitAnswer): Promise<NetworkHelperResponse> {
+	return runTrackedHelper(request, '/usr/bin/osascript', ['-e', macNetworkHelperScript(), '--', helper, encodeNetworkHelperRequest(request), launch.team, launch.expectedHash, `${productIdentifier}.network-helper`, MAC_HELPER_SHELL], { ...(answer ? { answer } : {}) });
 }
 
-async function runLinuxHelper(helper: string, request: NetworkHelperRequest): Promise<NetworkHelperResponse> {
+async function runLinuxHelper(helper: string, request: NetworkHelperRequest, answer?: LauncherExitAnswer): Promise<NetworkHelperResponse> {
 	const pkexec = existsSync('/usr/bin/pkexec') ? '/usr/bin/pkexec' : '/bin/pkexec';
-	return runTrackedHelper(request, pkexec, linuxNetworkHelperArgs(helper), { stdin: JSON.stringify(request) });
+	return runTrackedHelper(request, pkexec, linuxNetworkHelperArgs(helper), { stdin: JSON.stringify(request), ...(answer ? { answer } : {}) });
+}
+
+/** How the launcher ended when the helper left no result, so the helper never began the change. */
+interface LauncherExit {
+	code: number | null;
+	/** Bounded text for the person. */
+	text: string;
+	/** Exit status first, then the launcher's own words, for classifying a declined prompt. */
+	diagnostic: string;
+}
+type LauncherExitAnswer = (exit: LauncherExit) => NetworkHelperResponse;
+
+const launcherErrorAnswer: LauncherExitAnswer = exit => ({ ok: false, error: exit.text });
+
+function windowsNetworkLauncherAnswer(exit: LauncherExit): NetworkHelperResponse {
+	return exit.code !== null && (exit.code === NETWORK_HELPER_EXIT.stale || WINDOWS_LAUNCHER_MESSAGES[exit.code]) ? windowsLauncherFailure(exit.code) : launcherErrorAnswer(exit);
+}
+
+/** A launcher that ended without a helper result still says whether the person declined. */
+function systemTimeLauncherAnswer(platform: NodeJS.Platform): LauncherExitAnswer {
+	return exit => {
+		const known = platform === 'win32' ? (exit.code === null ? undefined : WINDOWS_LAUNCHER_TIME_FAILURES[exit.code]) : AUTHORIZATION_DECLINED_RE.test(exit.diagnostic) ? systemTimeHelperFailure('elevation-declined', failureText(exit.diagnostic)) : undefined;
+		return { ok: true, time: known ?? systemTimeHelperFailure('error', exit.text) };
+	};
 }
 
 function helperRequest(operation: NetworkHelperOperation, uptime: () => number = osUptime): NetworkHelperRequest {
@@ -317,7 +341,7 @@ function acceptedHelperResult(record: HelperResultRecord | null, rule: HelperOpe
 	return record.phase === 'finished' && record.result?.outcome === 'known' ? record.result.response : null;
 }
 
-async function runTrackedHelper(request: NetworkHelperRequest, executable: string, args: string[], options: { stdin?: string; cwd?: string } = {}): Promise<NetworkHelperResponse> {
+async function runTrackedHelper(request: NetworkHelperRequest, executable: string, args: string[], options: { stdin?: string; cwd?: string; answer?: LauncherExitAnswer } = {}): Promise<NetworkHelperResponse> {
 	const context = requireNativeMutationContext(),
 		store = new HelperResultStore();
 	const rule: HelperOperationRule = { kind: 'helper', operationId: request.operationId, requestHash: helperRequestHash(request), cancelPath: request.cancelPath, launcher: null };
@@ -363,7 +387,9 @@ async function runTrackedHelper(request: NetworkHelperRequest, executable: strin
 		}
 		if (record !== null) return { known: false };
 		const stderr = streams[1].status === 'fulfilled' ? streams[1].value : '';
-		return { known: true, value: { ok: false, error: failureText(completion.error || inputError || stderr || `The privileged launcher exited with ${completion.code}`) } };
+		const status = `The privileged launcher exited with ${completion.code}`;
+		const exit: LauncherExit = { code: completion.code, text: failureText(completion.error || inputError || stderr || status), diagnostic: [status, completion.error, inputError, stderr].filter(Boolean).join(' ') };
+		return { known: true, value: (options.answer ?? launcherErrorAnswer)(exit) };
 	});
 }
 
@@ -413,7 +439,8 @@ export async function runElevatedSystemTime(changes: SystemTimeChanges, platform
 	const request = helperRequest({ operation: 'applySystemTime', changes, ...(remaining === null ? {} : { deadlineUptime: uptime() + remaining / 1000 }) }, uptime);
 	let response: NetworkHelperResponse;
 	try {
-		response = platform === 'win32' ? await runWindowsHelper(request) : macLaunch ? await launchMacHelper(helper, request, macLaunch) : await runLinuxHelper(helper, request);
+		const answer = systemTimeLauncherAnswer(platform);
+		response = platform === 'win32' ? await runWindowsHelper(request, answer) : macLaunch ? await launchMacHelper(helper, request, macLaunch, answer) : await runLinuxHelper(helper, request, answer);
 	} catch (error) {
 		// "We never got an answer" is not "nothing happened". A declined authorization is the
 		// one failure that proves the helper never ran; everything else here - a killed
