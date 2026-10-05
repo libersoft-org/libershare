@@ -4,6 +4,7 @@ import { type Settings } from '../settings.ts';
 import { type FactoryResetResponse } from '@shared';
 import { initUploadState } from '../protocol/lish-protocol.ts';
 import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
+import type { NetworkRestartManager } from './network-restart.ts';
 import { runFactoryReset } from './factory-reset.ts';
 import { initDownloadState, type TransferRestoreSnapshot } from './transfer.ts';
 import { Mutex } from 'async-mutex';
@@ -44,6 +45,8 @@ export interface FactoryResetOrchestratorDeps {
 	readonly restoreAllTransfers: (lishIDs: Set<string>, snapshot?: TransferRestoreSnapshot) => Promise<void>;
 	/** Re-opens transfer admission after the reset barrier is no longer active. */
 	readonly resumeAllTransfers: () => void;
+	readonly restartManager: NetworkRestartManager;
+
 	/**
 	 * Broadcasts a WebSocket event to subscribed clients, skipping `except` when given.
 	 */
@@ -78,20 +81,30 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			// Wiping only the peerstore (wipePeers) does not require an identity change
 			// but still needs the node stopped so the datastore is not in use.
 			//
-			// Settings belong here too. Part of them is read when the node is BUILT — the
-			// listening port, mDNS, UPnP, relay, peer exchange — so restoring the defaults
-			// without a restart leaves the running node on the old ones while the UI, and
-			// every later read of the settings, already shows the new. The two would only
-			// agree again after some unrelated restart.
+			// Settings belong here when the reset changes what the node is BUILT from — the
+			// listening port, mDNS, UPnP, relay, peer exchange: restoring those defaults without
+			// a restart would leave the running node on the old ones while the UI already shows
+			// the new. A reset that only changes the language or a speed limit needs no restart;
+			// the limits are applied live, the same classification a single settings write uses.
 			// Downloads include data currently served by upload streams. Stopping the node
 			// closes those streams before their database rows are removed; clearing only the
 			// in-memory counters would still leave an in-flight stream using wiped state.
-			const restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers || wipeSettings;
+			let restartNode = wipeDownloads || wipeIdentity || wipeNetworks || wipePeers;
 			// Close lishnet writes now, but do not wait for an older join/leave yet. A stalled
 			// runtime operation is cancelled only after the fallible transfer preparation has
 			// succeeded, so a failed prepare can safely release admission without poisoning the
 			// still-running node's dial controller.
-			const networkMaintenance = restartNode ? await networks.prepareMaintenance() : undefined;
+			// The settings session comes first, as it does for a settings change that restarts the
+			// node: taken after the maintenance lease, the two could each wait for the other.
+			const settingsHold = wipeSettings ? await settings.holdWrites() : undefined;
+			let networkMaintenance: Awaited<ReturnType<typeof networks.prepareMaintenance>> | undefined;
+			try {
+				restartNode ||= wipeSettings && deps.restartManager.needsRestart(settings.getDefaults().network);
+				networkMaintenance = restartNode ? await networks.prepareMaintenance() : undefined;
+			} catch (error) {
+				settingsHold?.release();
+				throw error;
+			}
 			let transferAdmissionClosed = false;
 			let lishMutationAdmissionClosed = false;
 			let transferRuntimeSafe = true;
@@ -115,6 +128,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				await networks.startEnabledNetworks();
 				try {
 					await restoreAllTransfers(enabledDownloads, transferRestoreSnapshot);
+					deps.restartManager.clearPendingRestore();
 					transferRuntimeSafe = true;
 				} catch (error) {
 					transferRuntimeSafe = false;
@@ -149,13 +163,18 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 							await stopVerifyAll();
 							transferRuntimeSafe = false;
 							try {
-								transferRestoreSnapshot = await clearAllTransfers();
+								const cleared = await clearAllTransfers();
+								transferRestoreSnapshot = deps.restartManager.retainPendingRestore(cleared);
 							} catch (error) {
+								deps.restartManager.rememberFailedPreparation(error);
 								transferRuntimeSafe = (error as { runtimeRestored?: boolean })?.runtimeRestored === true;
 								throw error;
 							}
 						}
 						if (restartNode) {
+							// The catalog goes but the peer store stays: queue the peers now, while the
+							// running node still knows them, so the restart removes them first.
+							if (wipeNetworks && !wipePeers) networks.recordPeersForCatalogReset();
 							try {
 								networks.getNetwork().cancelRunOperations();
 								await networkMaintenance?.drain();
@@ -180,7 +199,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 						? async () => {
 								// Re-apply runtime knobs from the restored defaults (limits are module state),
 								// also when the save failed: the defaults are live in memory either way.
-								await persistAndApplyNetworkLimits(settings, () => settings.reset());
+								await persistAndApplyNetworkLimits(settings, () => settingsHold!.reset());
 							}
 						: undefined,
 					restart: restartNode ? restartNodeAndTransfers : undefined,
@@ -188,6 +207,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 			} finally {
 				resumeTransfers();
 				networkMaintenance?.release();
+				settingsHold?.release();
 			}
 
 			// Everyone else is told to reload, because identity, networks and state moved under

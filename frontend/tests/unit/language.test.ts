@@ -7,7 +7,23 @@
  * the SvelteKit runtime.
  */
 import { test, expect } from 'bun:test';
-import { createTranslationLoader } from '../../src/scripts/language.ts';
+import { createTranslationLoader, translations, translateError } from '../../src/scripts/language.ts';
+import { get } from 'svelte/store';
+
+for (const lang of ['cs', 'en']) {
+	test(`move refusal codes have readable ${lang} translations`, async () => {
+		const previous = get(translations);
+		try {
+			translations.set(await Bun.file(new URL(`../../static/langs/${lang}.json`, import.meta.url)).json());
+			const messages = lang === 'cs' ? ['Soubor se během operace změnil.', 'Systém zde neumí zajistit bezpečné odstranění'] : ['The file changed during the operation.', 'The system cannot safely remove'];
+			for (const [index, code] of ['FS_FILE_CHANGED', 'FS_MOVE_UNSUPPORTED'].entries()) {
+				expect(translateError(Object.assign(new Error(code), { code })).startsWith(messages[index]!)).toBe(true);
+			}
+		} finally {
+			translations.set(previous);
+		}
+	});
+}
 
 type Resolver = (value: any) => void;
 

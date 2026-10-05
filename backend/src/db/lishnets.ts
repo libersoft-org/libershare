@@ -1,4 +1,5 @@
 import { type Database } from 'bun:sqlite';
+import { initPeerCleanupTable } from './peer-cleanup.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
 import { canonicalMultiaddr } from '../protocol/multiaddr-utils.ts';
 
@@ -33,6 +34,8 @@ export function cleanBootstrapList(peers: string[]): string[] {
 }
 
 export function initLISHnetsTables(db: Database): void {
+	// The cleanup queue of left lishnets lives with the catalog it is written together with.
+	initPeerCleanupTable(db);
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishnets (
 			id              INTEGER PRIMARY KEY AUTOINCREMENT,

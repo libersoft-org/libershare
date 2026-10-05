@@ -9,7 +9,7 @@
 	import { navigateTo } from '../../scripts/navigation.ts';
 	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
 	import { api } from '../../scripts/api.ts';
-	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, type NetworkFormData } from '../../scripts/lishNetwork.ts';
+	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, replaceNetworks, setNetworkEnabled, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses, networkMeshStates, type MeshState } from '../../scripts/networks.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -125,7 +125,7 @@
 		const { [network.networkID]: _err, ...restErrors } = networkErrors;
 		networkErrors = restErrors;
 		try {
-			await api.lishnets.setEnabled(network.networkID, newEnabled);
+			await setNetworkEnabled(network.networkID, newEnabled);
 		} catch (e: any) {
 			networkErrors = { ...networkErrors, [network.networkID]: translateError(e) };
 		}
@@ -142,7 +142,7 @@
 		const newY = newIndex + 1 + nodeInfoOffset;
 		navHandle.controller.select([0, newY]);
 		// Save new order to backend
-		await api.lishnets.replace(networks);
+		await replaceNetworks(networks);
 	}
 
 	async function closeExport(): Promise<void> {

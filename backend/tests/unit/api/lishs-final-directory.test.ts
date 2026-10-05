@@ -177,7 +177,7 @@ describe('download finalization admission', () => {
 			chunkSize: 1024,
 			checksumAlgo: 'sha256',
 			name: 'Finalize admitted test',
-			files: [{ path: 'payload.bin', size: 16, checksums: ['deadbeef'] }],
+			files: [{ path: 'payload.bin', size: 16, checksums: [new Bun.CryptoHasher('sha256').update('complete payload').digest('hex')] }],
 			directory: tempDir,
 			finalDirectory: finalDir,
 			chunks: ['deadbeef'],

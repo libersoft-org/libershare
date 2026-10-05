@@ -2,7 +2,8 @@ import { get, writable, type Writable } from 'svelte/store';
 import { minMessageSizeFor, DEFAULT_MAX_RELAY_RESERVATIONS, isRelayReservationLimit, type CompressionAlgorithm } from '@shared';
 import { api } from './api.ts';
 import { defaultWidgetVisibility, type FooterPosition, type FooterWidget } from './footerWidgets.ts';
-import { currentLanguage, languages } from './language.ts';
+import { currentLanguage, languages, translateError, tt } from './language.ts';
+import { addNotification } from './notifications.ts';
 // Types
 export type CursorSize = 'small' | 'medium' | 'large';
 export const cursorSizes: Record<CursorSize, string> = {
@@ -80,12 +81,16 @@ async function updateSetting<T>(store: Writable<T>, path: string, value: T): Pro
 	try {
 		await api.settings.set(path, value);
 	} catch (error) {
+		// A network setting can be saved and still fail to go live (a port in use): say so, and
+		// show what the backend really holds rather than the value typed into the screen.
 		console.error(`[Settings] Error saving ${path}:`, error);
+		addNotification(tt('settings.applyFailed', { detail: translateError(error) }), 'error');
+		await loadSettings();
 	}
 }
 
 // Load all settings from backend
-export async function loadSettings(): Promise<void> {
+export async function loadSettings(options: { throwOnError?: boolean } = {}): Promise<void> {
 	try {
 		const [settings, defaults] = await Promise.all([api.settings.list(), api.settings.getDefaults()]);
 		settingsDefaults = defaults;
@@ -166,6 +171,7 @@ export async function loadSettings(): Promise<void> {
 		gamepadDeadzone.set(settings.input.gamepadDeadzone);
 	} catch (error) {
 		console.error('[Settings] Error loading settings:', error);
+		if (options.throwOnError) throw error;
 	}
 }
 

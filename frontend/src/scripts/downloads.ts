@@ -370,7 +370,15 @@ export async function initDownloads(): Promise<void> {
 			);
 		});
 
-		// lishs:move — LISH data moved (broadcast from backend)
+		// Cleanup failure does not invalidate the committed destination.
+		api.on('lishs:move:cleanup', (data: { lishID: string; warnings?: { retainedPath?: string }[] }) => {
+			const lish = get(downloads).find(d => d.id === data.lishID);
+			if (!lish) return;
+			const paths = [...new Set((data.warnings ?? []).map(warning => warning.retainedPath).filter((path): path is string => typeof path === 'string' && path.length > 0))];
+			const message = [tt('downloads.moveCleanupWarning', { name: lish.name }), ...paths.map(path => tt('downloads.moveRetainedPath', { path }))].join('\n');
+			addNotification(message, 'warning');
+		});
+
 		api.on('lishs:move', (data: { lishID: string; directory: string }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
 			if (lish) addNotification(tt('downloads.moveSuccess', { name: lish.name }), 'success');
@@ -806,6 +814,7 @@ export async function initDownloads(): Promise<void> {
 	api.subscribe('lishs:remove');
 	api.subscribe('lishs:verify');
 	api.subscribe('lishs:move');
+	api.subscribe('lishs:move:cleanup');
 	api.subscribe('lishs:move:status');
 	api.subscribe('lishs:move:progress');
 	api.subscribe('transfer.download:progress');

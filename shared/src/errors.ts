@@ -20,6 +20,7 @@ const errorCodes = [
 	'LISH_INVALID_CHUNK_SIZE',
 	'LISH_CHUNK_SIZE_TOO_LARGE',
 	'LISH_INVALID_MANIFEST',
+	'LISH_UNSAFE_PATH',
 	'LISH_UNSUPPORTED_CHECKSUM',
 	'LISH_UNEXPECTED_ARRAY',
 	'LISH_CREATE_CANCELLED',
@@ -60,6 +61,7 @@ const errorCodes = [
 	// empty listing on purpose: "I have nothing for you" is final, this one is a state
 	// both sides are still converging on, so the caller may ask again.
 	'PEER_LISTING_NOT_AUTHORIZED',
+	'PEER_LIST_TOO_LARGE',
 
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',
@@ -67,6 +69,7 @@ const errorCodes = [
 	'IO_NOT_FOUND',
 	'DIRECTORY_ACCESS_DENIED',
 	'DISK_FULL',
+	'DISK_SPACE_UNAVAILABLE',
 
 	// Filesystem (FileBrowser)
 	'FS_NOT_FOUND',
@@ -77,6 +80,8 @@ const errorCodes = [
 	'FS_IS_DIRECTORY',
 	'FS_NOT_DIRECTORY',
 	'FS_BUSY',
+	'FS_FILE_CHANGED',
+	'FS_MOVE_UNSUPPORTED',
 	'FS_NO_SPACE',
 	'FS_READ_ONLY',
 	'FS_NAME_TOO_LONG',
@@ -93,6 +98,7 @@ const errorCodes = [
 	// Utils
 	'INVALID_JSON',
 	'INVALID_SETTINGS_BACKUP',
+	'SETTINGS_SAVED_NOT_APPLIED',
 	'INVALID_IDENTITY_BACKUP',
 	'MISSING_PARAMETER',
 	'UNSUPPORTED_COMPRESSION',

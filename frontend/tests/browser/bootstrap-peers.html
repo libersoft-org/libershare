@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Bootstrap peer summary regression</title>
+	<pre id="results">Running...</pre>
+	<div id="peers"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, tick } from 'svelte';
+		import { translations } from '/src/scripts/language.ts';
+		import SettingsLISHNetworkPeers from '/src/pages/Settings/SettingsLISHNetworkPeers.svelte';
+
+		const peerID = '12D3KooWQyNzs3o2PqCdxmSAxmn8AG5FDnbmTiSx3QRwsKTXaT3E';
+		const peers = ['connected', 'timeout', 'error', 'identity-mismatch'].map((status, index) => ({
+			multiaddr: `/ip4/192.0.2.${index + 1}/tcp/9090/p2p/${peerID}`,
+			expectedPeerID: peerID,
+			actualPeerID: status === 'connected' ? peerID : null,
+			status,
+			origin: 'configured',
+			lastError: null,
+			updatedAt: 0,
+		}));
+		const network = { networkID: 'summary-test', name: 'Test network', description: '', created: '2026-01-01T00:00:00Z', enabled: true, bootstrapPeers: peers.map(peer => peer.multiaddr) };
+		await new Promise(resolve => {
+			const unsubscribe = translations.subscribe(value => {
+				if (value.settings?.lishNetwork)
+					queueMicrotask(() => {
+						unsubscribe();
+						resolve();
+					});
+			});
+		});
+		mount(SettingsLISHNetworkPeers, { target: document.querySelector('#peers'), props: { areaID: 'summary-test', network, status: { networkID: network.networkID, peers } } });
+		await tick();
+		const results = [];
+		async function check(name, change, addressCount) {
+			try {
+				change();
+				await tick();
+				const summary = document.querySelector('[data-status]');
+				if (summary?.dataset.status !== 'partial') throw new Error('A filtered address hid the partial peer state');
+				if (document.querySelectorAll('.address-line').length !== addressCount) throw new Error('Address filtering did not take effect');
+				const label = document.querySelector('.summary').title;
+				if (!label.includes('1') || !label.includes('3')) throw new Error('Summary lost the full address counts');
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		await check('one connected address and three failures stay partial', () => {}, 4);
+		await check(
+			'searching only the connected address preserves the warning',
+			() => {
+				const search = document.querySelector('input');
+				search.value = '192.0.2.1';
+				search.dispatchEvent(new Event('input', { bubbles: true }));
+			},
+			1
+		);
+		await check(
+			'the problems filter preserves the connected count',
+			() => {
+				const search = document.querySelector('input');
+				search.value = '';
+				search.dispatchEvent(new Event('input', { bubbles: true }));
+				const filter = document.querySelector('select');
+				filter.value = 'problems';
+				filter.dispatchEvent(new Event('change', { bubbles: true }));
+			},
+			3
+		);
+		window.bootstrapPeersTestResults = results;
+		document.documentElement.dataset.testStatus = results.every(result => result.passed) ? 'passed' : 'failed';
+		document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+	</script>
+</html>

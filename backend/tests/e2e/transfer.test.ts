@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses, nodeTransferProbe } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
-import type { ILISHDetail, ILISHListResult } from '@shared';
+import type { ILISHDetail, ILISHListResult, SuccessResponse } from '@shared';
 
 /**
  * Real transfers between three isolated backend processes over the public API: node0 creates
@@ -15,6 +15,7 @@ import type { ILISHDetail, ILISHListResult } from '@shared';
 const EVENT_TIMEOUT = 60_000;
 const PAYLOAD_SIZE = 2 * 1024 * 1024;
 const CHUNK_SIZE = 64 * 1024;
+const SMALL_FILE_COUNT = 200;
 const NETWORK_ID = crypto.randomUUID();
 
 let nodes: TestClient[] = [];
@@ -41,6 +42,9 @@ function findFile(dir: string, name: string): string | null {
 function downloadedHash(nodeIndex: number, name = 'payload.bin'): string {
 	const path = findFile(join(getNodeDataDir(nodeIndex), 'storage', 'finished'), name);
 	if (!path) throw new Error(`${name} not found on node${nodeIndex}`);
+	if (name === 'payload.bin') {
+		for (let i = 0; i < SMALL_FILE_COUNT; i++) expect(readFileSync(join(dirname(path), `small-${i}.txt`), 'utf8')).toBe(`small payload ${i}`);
+	}
 	return sha256(readFileSync(path));
 }
 
@@ -50,13 +54,21 @@ async function downloadState(node: TestClient, id: string): Promise<ILISHDetail>
 	return detail;
 }
 
+async function waitForVerification(node: TestClient, id: string): Promise<void> {
+	await waitFor(
+		'import verification',
+		() => node.call<ILISHListResult>('lishs.list'),
+		list => list.verifying !== id && !list.pendingVerification.includes(id)
+	);
+}
+
 async function expectStoppedDownload(nodeIndex: number, id: string): Promise<ILISHDetail> {
 	await nodeTransferProbe(nodeIndex, 'drain-downloads');
 	const node = nodes[nodeIndex]!;
 	const paused = await downloadState(node, id);
 	expect(paused.verifiedChunks).toBeGreaterThan(0);
 	expect(paused.verifiedChunks).toBeLessThan(paused.totalChunks);
-	const deadline = Date.now() + 3000;
+	const deadline = Date.now() + 5000;
 	do {
 		await Bun.sleep(100);
 		const current = await downloadState(node, id);
@@ -91,7 +103,9 @@ beforeAll(async () => {
 	const payload = randomBytes(PAYLOAD_SIZE);
 	payloadHash = sha256(payload);
 	writeFileSync(join(source, 'payload.bin'), payload);
+	for (let i = 0; i < SMALL_FILE_COUNT; i++) writeFileSync(join(source, `small-${i}.txt`), `small payload ${i}`);
 	({ lishID } = await nodes[0]!.call('lishs.create', { dataPath: source, name: 'e2e payload', addToSharing: true, chunkSize: CHUNK_SIZE }, 120_000));
+	await waitForVerification(nodes[0]!, lishID);
 
 	// One private network, bootstrapped from node0's bound address. Loopback would be simpler, but
 	// the dial filter deliberately refuses 127.0.0.0/8 (a remote peer can never reach it).
@@ -125,6 +139,7 @@ beforeAll(async () => {
 		// The manifest travels over P2P from the seeder; autoStartDownloading is off, so the
 		// tests decide when each download starts.
 		await node.call('lishnets.addPeerLish', { lishID, peerID: seederPeerID, networkID: NETWORK_ID }, 60_000);
+		await waitForVerification(node, lishID);
 	}
 }, 240_000);
 
@@ -140,9 +155,9 @@ describe('download from one seeder', () => {
 			// A fast local transfer may report its only non-zero progress with the peer already gone.
 			const progress = nodes[1]!.waitForEvent('transfer.download:progress', (d: any) => d.lishID === lishID && d.downloadedChunks > 0, EVENT_TIMEOUT);
 			const complete = nodes[1]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === lishID, EVENT_TIMEOUT * 2);
-			await nodes[1]!.call('transfer.enableDownload', { lishID });
+			expect(await nodes[1]!.call<SuccessResponse>('transfer.enableDownload', { lishID })).toEqual({ success: true });
 			const first = await progress;
-			expect(first.totalChunks).toBe(PAYLOAD_SIZE / CHUNK_SIZE);
+			expect(first.totalChunks).toBe(PAYLOAD_SIZE / CHUNK_SIZE + SMALL_FILE_COUNT);
 			await complete;
 			expect(downloadedHash(1)).toBe(payloadHash);
 		},
@@ -165,7 +180,7 @@ describe('download from a second seeder, paused and resumed', () => {
 
 			nodes[2]!.clearHistory();
 			await nodeTransferProbe(2, 'hold-second-write', lishID);
-			await nodes[2]!.call('transfer.enableDownload', { lishID });
+			expect(await nodes[2]!.call<SuccessResponse>('transfer.enableDownload', { lishID })).toEqual({ success: true });
 			const started = await waitFor(
 				'partial download',
 				() => downloadState(nodes[2]!, lishID),
@@ -216,8 +231,9 @@ describe('active transfers', () => {
 			);
 			await nodes[0]!.call('settings.set', { path: 'network.maxUploadSpeed', value: 128 });
 			await nodes[2]!.call('lishnets.addPeerLish', { lishID: uploadID, peerID: seederPeerID, networkID: NETWORK_ID });
+			await waitForVerification(nodes[2]!, uploadID);
 			nodes[2]!.clearHistory();
-			await nodes[2]!.call('transfer.enableDownload', { lishID: uploadID });
+			expect(await nodes[2]!.call<SuccessResponse>('transfer.enableDownload', { lishID: uploadID })).toEqual({ success: true });
 			const activeUploads = () => nodes[0]!.call<Array<{ lishID: string; type: string; peers: number }>>('transfer.getActiveTransfers');
 			await waitFor('active upload', activeUploads, transfers => transfers.some(t => t.lishID === uploadID && t.type === 'uploading' && t.peers > 0));
 			const started = await waitFor(

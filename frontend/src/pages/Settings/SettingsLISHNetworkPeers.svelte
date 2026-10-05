@@ -7,9 +7,9 @@
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { type BootstrapStatus, type BootstrapPeerStatus, type LISHNetworkConfig } from '@shared';
 	import { productNetworkList } from '@shared';
-	import { api } from '../../scripts/api.ts';
 	import { shortenPeerID } from '../../scripts/utils.ts';
-	import { fetchPublicNetworks } from '../../scripts/lishNetwork.ts';
+	import { fetchPublicNetworks, updateNetworkBootstrapPeers } from '../../scripts/lishNetwork.ts';
+	import { bootstrapGroupKey, summarizeBootstrapGroup, type BootstrapGroupSummary } from '../../scripts/bootstrapPeerGroup.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -52,13 +52,17 @@
 		timeout: '--color-error',
 		error: '--color-error',
 	};
-	/** Lower rank = healthier; a group of addresses reports its healthiest status. */
-	const STATUS_RANK: Record<BootstrapPeerStatus['status'], number> = {
-		connected: 0,
-		pending: 1,
-		'identity-mismatch': 2,
-		timeout: 3,
-		error: 4,
+	const SUMMARY_ICONS: Record<BootstrapGroupSummary, string> = {
+		healthy: '/img/check.svg',
+		partial: '/img/warning.svg',
+		problem: '/img/cross.svg',
+		pending: '/img/info.svg',
+	};
+	const SUMMARY_COLORS: Record<BootstrapGroupSummary, string> = {
+		healthy: '--color-success',
+		partial: '--color-warning',
+		problem: '--color-error',
+		pending: '--secondary-foreground',
 	};
 
 	/** One table row: all address entries observed for the same peer identity. */
@@ -88,7 +92,7 @@
 	let groupedPeers = $derived.by(() => {
 		const groups = new Map<string, PeerGroup>();
 		for (const p of filteredPeers) {
-			const key = p.expectedPeerID ?? p.actualPeerID ?? p.multiaddr;
+			const key = bootstrapGroupKey(p);
 			let g = groups.get(key);
 			if (!g) groups.set(key, (g = { key, peerID: p.expectedPeerID ?? p.actualPeerID, entries: [] }));
 			g.entries.push(p);
@@ -100,8 +104,26 @@
 	let showMorePos = $derived<NavPos>([0, pagedGroups.length + 2]);
 	let backPos = $derived<NavPos>([0, pagedGroups.length + 2 + (hasMore ? 1 : 0)]);
 
-	function groupStatus(g: PeerGroup): BootstrapPeerStatus['status'] {
-		return g.entries.reduce((best, p) => (STATUS_RANK[p.status] < STATUS_RANK[best] ? p.status : best), g.entries[0]!.status);
+	/** Every address of each identity, whatever the filter shows: the summary is about the whole peer. */
+	let allByIdentity = $derived.by(() => {
+		const groups = new Map<string, BootstrapPeerStatus[]>();
+		for (const p of allPeers) {
+			const key = bootstrapGroupKey(p);
+			const entries = groups.get(key);
+			if (entries) entries.push(p);
+			else groups.set(key, [p]);
+		}
+		return groups;
+	});
+
+	function groupSummary(g: PeerGroup): ReturnType<typeof summarizeBootstrapGroup> {
+		return summarizeBootstrapGroup(allByIdentity.get(g.key) ?? g.entries);
+	}
+
+	function summaryLabel(g: PeerGroup): string {
+		const { summary, counts } = groupSummary(g);
+		const text = $t(`settings.lishNetwork.bootstrap.group${summary[0]!.toUpperCase()}${summary.slice(1)}`);
+		return `${text} (${tt('settings.lishNetwork.bootstrap.groupCounts', { connected: String(counts.connected), failing: String(counts.failing), pending: String(counts.pending) })})`;
 	}
 
 	function groupOrigins(g: PeerGroup): BootstrapPeerStatus['origin'][] {
@@ -136,10 +158,10 @@
 				addNotification($t('settings.lishNetwork.bootstrap.refreshNoMatch'), 'warning');
 				return;
 			}
-			const next = await api.lishnets.updateBootstrapPeers(network.networkID, match.bootstrapPeers);
+			const next = await updateNetworkBootstrapPeers(network.networkID, match.bootstrapPeers, $t('settings.lishNetwork.bootstrap.refreshSuccess'));
+			if (!next) return;
 			onUpdated?.(next);
 			network = next;
-			addNotification($t('settings.lishNetwork.bootstrap.refreshSuccess'), 'success');
 		} catch (e) {
 			addNotification(translateError(e), 'error');
 		} finally {
@@ -282,10 +304,10 @@
 					{#each pagedGroups as group, i (group.key)}
 						<TableRow position={[0, i + 2]} onConfirm={() => openPeerDetail(group)}>
 							<TableCell>
-								<Icon img={STATUS_ICONS[groupStatus(group)]} size="2vh" padding="0" colorVariable={STATUS_COLORS[groupStatus(group)]} alt={statusLabel(groupStatus(group))} />
+								<span class="summary" title={summaryLabel(group)}><Icon img={SUMMARY_ICONS[groupSummary(group).summary]} size="2vh" padding="0" colorVariable={SUMMARY_COLORS[groupSummary(group).summary]} alt={summaryLabel(group)} /></span>
 							</TableCell>
 							<TableCell>
-								<span class="peer-id" title={group.peerID ?? ''} data-testid="bootstrap-peer-{network.networkID}-{group.key}" data-status={groupStatus(group)} data-origin={groupOrigins(group).join(',')}>{shortenPeerID(group.peerID)}</span>
+								<span class="peer-id" title={group.peerID ?? ''} data-testid="bootstrap-peer-{network.networkID}-{group.key}" data-status={groupSummary(group).summary} data-origin={groupOrigins(group).join(',')}>{shortenPeerID(group.peerID)}</span>
 							</TableCell>
 							<TableCell>
 								<div class="addresses">

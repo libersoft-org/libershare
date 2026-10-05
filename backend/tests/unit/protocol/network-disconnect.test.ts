@@ -299,6 +299,64 @@ describe('Network.disconnectPeer — a peer claimed while it is being let go', (
 		expect(merges[merges.length - 1]!.tags[KEEP_ALIVE]).toBeUndefined();
 	});
 
+	it('reports a leave cut short by the run ending while connections close as unfinished', async () => {
+		const { network, deleted } = claimable();
+		(network as any).node.getConnections = (): unknown[] => [
+			{
+				close: async (): Promise<void> => {
+					(network as any).runEpoch++;
+				},
+			},
+		];
+
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('incomplete');
+		expect(deleted).toEqual([]);
+	});
+
+	it('reports a peer claimed during a failed delete as kept', async () => {
+		const { network, subscribers } = claimable();
+		(network as any).node.peerStore.delete = async (): Promise<void> => {
+			subscribers.push(PEER_ID);
+			throw new Error('disk full');
+		};
+
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('kept');
+	});
+
+	it('does not confirm a purge whose tag restoration recreated the peer after deletion', async () => {
+		const { network, subscribers } = claimable();
+		let exists = true;
+		(network as any).node.peerStore.delete = async () => {
+			exists = false;
+			subscribers.push(PEER_ID);
+		};
+		(network as any).node.peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }) => {
+			exists = true;
+			if (patch.tags[KEEP_ALIVE] !== undefined) subscribers.length = 0;
+		};
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('incomplete');
+		expect(exists).toBe(true);
+	});
+
+	it('reports a purge skipped for a claim that is gone again by the end as unfinished', async () => {
+		const { network, deleted, subscribers } = claimable();
+		// Another lishnet claims the peer while its connections close, so the purge keeps the
+		// record; that lishnet is left again during the keep-alive restore the claim triggers.
+		(network as any).node.getConnections = (): unknown[] => [
+			{
+				close: async (): Promise<void> => {
+					subscribers.push(PEER_ID);
+				},
+			},
+		];
+		(network as any).node.peerStore.merge = async (_pid: unknown, patch: { tags: Record<string, unknown> }): Promise<void> => {
+			if (patch.tags[KEEP_ALIVE] !== undefined) subscribers.length = 0;
+		};
+
+		expect(await network.disconnectPeer(PEER_ID, NET)).toBe('incomplete');
+		expect(deleted).toEqual([]);
+	});
+
 	it('still tears down a peer nobody claims', async () => {
 		const { network, hungUp, deleted } = claimable();
 

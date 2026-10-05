@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled } from '../../../src/db/lishnets.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { initLISHnetsTables, addLISHnet, getLISHnet, setLISHnetEnabled, updateLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
+import { generateKeyPair } from '@libp2p/crypto/keys';
+import { peerIdFromPrivateKey } from '@libp2p/peer-id';
+import { listPeerCleanup, recordPeerClaim, recordPeerCleanup } from '../../../src/db/peer-cleanup.ts';
 
 /**
  * Enable and disable of one lishnet must produce the state the LAST request asked
@@ -58,16 +64,28 @@ function makeMockNet() {
 			this.unsubscribed.push(id);
 			this.topicPeers.delete(id);
 		},
-		isBootstrapOrRelayPeer(): boolean {
+		isBootstrapOrRelayPeer(_peerID?: string): boolean {
 			return false;
 		},
-		async disconnectPeer(pid: string): Promise<void> {
+		/** Per-peer answer of a leave's disconnect; a peer not listed is removed. */
+		disconnectOutcome: new Map<string, 'released' | 'kept' | 'incomplete'>(),
+		/** Peers whose disconnect never finishes, as when the app closes mid-leave. */
+		hangOn: new Set<string>(),
+		async disconnectPeer(pid: string): Promise<'released' | 'kept' | 'incomplete'> {
 			if (this.disconnectGate) await this.disconnectGate;
+			if (this.hangOn.has(pid)) await new Promise<void>(() => {});
 			this.disconnected.push(pid);
+			return this.disconnectOutcome.get(pid) ?? 'released';
+		},
+		isRelayPeer(_peerID?: string): boolean {
+			return false;
+		},
+		isClaimedByJoinedNetwork(_peerID?: string): boolean {
+			return false;
 		},
 		/** Bootstrap addresses the running node currently treats as configured. */
 		configured: new Set<string>(),
-		pruneConfiguredBootstrapPeer(): void {},
+		pruneConfiguredBootstrapPeer(_peerID?: string, _networkID?: string): void {},
 		resetBootstrapStatus(): void {},
 		pruneBootstrapAddresses(addresses: string[]): void {
 			for (const address of addresses) this.configured.delete(address);
@@ -86,7 +104,7 @@ function makeMockNet() {
 }
 
 function makeNetworks(net: ReturnType<typeof makeMockNet>, db: Database, joined: string[]) {
-	const networks = Object.create(Networks.prototype) as Networks;
+	const networks = new Networks(db, '.', {} as never, {} as never);
 	(networks as any).db = db;
 	(networks as any).network = net;
 	(networks as any).joinedNetworks = new Set(joined);
@@ -137,8 +155,8 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 		// previous holder resumes, so the disable had already unsubscribed and dropped the
 		// membership by the time the enable looked — and the enable reported the leave as its
 		// own outcome, making the API broadcast `left` for a call that had joined.
-		expect(enabled).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: NAMED });
-		expect(disabled).toEqual({ found: true, transitioned: true, joined: false, applied: true, network: NAMED });
+		expect(enabled).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: NAMED });
+		expect(disabled).toEqual({ found: true, stored: true, transitioned: true, joined: false, applied: true, network: NAMED });
 		// The join really did happen — it subscribed the topic before it parked — so saying
 		// so and then saying it was undone is the honest report. Cancelling it half-way is
 		// what left the subscription and the dials behind with nobody to clean them up.
@@ -229,7 +247,7 @@ describe('Networks.setEnabled — serialised per lishnet', () => {
 
 		const result = await networks.setEnabled(NET, true);
 
-		expect(result).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: NAMED });
+		expect(result).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: NAMED });
 		expect(net.subscribed).toEqual([NET]);
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 	});
@@ -291,7 +309,7 @@ describe('Networks.delete — terminal against a concurrent enable', () => {
 		const [deleted, enabled] = await Promise.all([deleting, enabling]);
 
 		expect(deleted).toBe(true);
-		expect(enabled).toEqual({ found: false, transitioned: false, joined: false, applied: false });
+		expect(enabled).toEqual({ found: false, stored: false, transitioned: false, joined: false, applied: false });
 		expect(getLISHnet(db, NET)).toBeUndefined();
 		// The three things that must agree: no row, not joined, not subscribed.
 		expect((networks as any).joinedNetworks.has(NET)).toBe(false);
@@ -369,16 +387,18 @@ describe('Networks.setEnabled — what the result claims', () => {
 		// before either reconcile ran, so by the enable's turn the desired state was already
 		// "disabled" and it had nothing to apply. `transitioned: false` with `joined: false`
 		// is what the API needs to hear — it must not broadcast a join that did not happen.
-		expect(holdingResult).toEqual({ found: true, transitioned: true, joined: false, applied: true, network: NAMED });
-		expect(olderResult).toEqual({ found: true, transitioned: false, joined: false, applied: true, network: NAMED });
-		expect(newerResult).toEqual({ found: true, transitioned: false, joined: false, applied: true, network: NAMED });
+		expect(holdingResult).toEqual({ found: true, stored: true, transitioned: true, joined: false, applied: true, network: NAMED });
+		// Its own state — enabled — was overruled before it could be applied, so it is not applied
+		// either, even though the node did reach the state the newer request asked for.
+		expect(olderResult).toEqual({ found: true, stored: true, transitioned: false, joined: false, applied: false, network: NAMED });
+		expect(newerResult).toEqual({ found: true, stored: true, transitioned: false, joined: false, applied: true, network: NAMED });
 		expect(getLISHnet(db, NET)!.enabled).toBe(false);
 	});
 
 	it('an enable of an already-joined network reports no transition', async () => {
 		const { networks } = makeNetworks(net, db, [NET]);
 
-		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: false, joined: true, applied: true, network: NAMED });
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, stored: true, transitioned: false, joined: true, applied: true, network: NAMED });
 	});
 
 	/**
@@ -439,14 +459,14 @@ describe('Networks.setEnabled — what the result claims', () => {
 		release();
 		const [, result] = await Promise.all([adding, enabling]);
 
-		expect(result).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: { networkID: 'net-new', name: 'New' } });
+		expect(result).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: { networkID: 'net-new', name: 'New' } });
 	});
 
 	it('a real enable reports the transition it settled', async () => {
 		setLISHnetEnabled(db, NET, false);
 		const { networks } = makeNetworks(net, db, []);
 
-		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: NAMED });
+		expect(await networks.setEnabled(NET, true)).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: NAMED });
 	});
 });
 
@@ -712,7 +732,7 @@ describe('Networks — operations that change the set of lishnets', () => {
 		// net-b shares nothing with net-a — no bootstrap peers of its own, so it has no dial
 		// to wait on — and neither of these may wait on net-a's.
 		expect(await networks.add({ ...rowOf(NET_B), name: 'B', bootstrapPeers: [] })).toBe(true);
-		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, transitioned: true, joined: true, applied: true, network: { networkID: NET_B, name: 'B' } });
+		expect(await networks.setEnabled(NET_B, true)).toEqual({ found: true, stored: true, transitioned: true, joined: true, applied: true, network: { networkID: NET_B, name: 'B' } });
 		expect(getLISHnet(db, NET)!.enabled).toBe(true);
 
 		gate.resolve();
@@ -779,5 +799,312 @@ describe('Networks — operations that change the set of lishnets', () => {
 		// the add was still joining it: subscribed, in joinedNetworks, and no row at all.
 		expect(getLISHnet(db, NET_B)).toBeDefined();
 		expect((networks as any).joinedNetworks.has(NET_B)).toBe(true);
+	});
+});
+
+/**
+ * Detailed outcomes of every lishnet write: `stored` says the request's state was saved,
+ * `applied` that the running node was in THAT state when the request finished, `transitioned`
+ * that this request changed membership. A plain boolean used to report all three at once.
+ */
+describe('Networks detailed mutation outcomes', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+	const row = (id: string, enabled: boolean, peers: string[] = [BOOTSTRAP]) => ({ networkID: id, name: id, description: '', bootstrapPeers: peers, enabled, created: new Date().toISOString() });
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		net = makeMockNet();
+	});
+
+	it('reports nothing stored for a duplicate add or a write to a missing network', async () => {
+		addLISHnet(db, row(NET, false));
+		const { networks } = makeNetworks(net, db, []);
+		expect(await networks.addDetailed(row(NET, true))).toEqual({ stored: false, applied: false, transitioned: false, value: false });
+		expect(await networks.updateDetailed(row('missing', true))).toEqual({ stored: false, applied: false, transitioned: false, value: false });
+		expect(await networks.deleteDetailed('missing')).toEqual({ stored: false, applied: false, transitioned: false, value: false });
+		expect((await networks.updateBootstrapPeersDetailed('missing', [])).stored).toBe(false);
+	});
+
+	it('reports an enabled add as stored, applied and transitioned', async () => {
+		const { networks } = makeNetworks(net, db, []);
+		expect(await networks.addDetailed(row('new', true))).toMatchObject({ stored: true, applied: true, transitioned: true, joined: true, value: true });
+	});
+
+	it('reports a bootstrap-only edit as applied without a transition', async () => {
+		addLISHnet(db, row(NET, true));
+		const { networks } = makeNetworks(net, db, [NET]);
+		const next = '/ip4/192.0.2.2/tcp/9090/p2p/12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+		expect(await networks.updateBootstrapPeersDetailed(NET, [next])).toMatchObject({ stored: true, applied: true, transitioned: false, joined: true });
+	});
+
+	it('does not report an update applied when a newer one overwrote it', async () => {
+		addLISHnet(db, row(NET, true));
+		net.topicPeers.set(NET, ['p-only-a']);
+		const gate = deferred();
+		net.disconnectGate = gate.promise;
+		const { networks } = makeNetworks(net, db, [NET]);
+		const holding = networks.setEnabled(NET, false);
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		const older = networks.updateDetailed(row(NET, true));
+		const newer = networks.updateDetailed(row(NET, false));
+		gate.resolve();
+		const [, olderResult, newerResult] = await Promise.all([holding, older, newer]);
+		expect(olderResult).toMatchObject({ stored: true, applied: false, transitioned: false });
+		expect(newerResult).toMatchObject({ stored: true, applied: true });
+	});
+
+	it('combines a replace: applied when every network was, transitioned when any was', async () => {
+		addLISHnet(db, row(NET, true));
+		addLISHnet(db, row('other', false));
+		const { networks } = makeNetworks(net, db, [NET]);
+		const result = await networks.replaceDetailed([]);
+		expect(result).toMatchObject({ stored: true, applied: true, transitioned: true, value: true });
+		expect(result.items?.map(item => [item.networkID, item.transitioned])).toEqual([
+			[NET, true],
+			['other', false],
+		]);
+	});
+});
+
+/**
+ * A leave that is interrupted — the app closed while it hung up peers — used to leave those
+ * peers in the peer store, and the next start redialled them. The peers to clean up are now
+ * recorded in the same transaction as the catalog write and removed before the next start,
+ * except where a lishnet that stays enabled still uses them.
+ */
+describe('persistent peer cleanup of left lishnets', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+	const OTHER = 'net-b';
+	const BOOTSTRAP_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const P1 = '12D3KooWQyNzs3o2PqCdxmSAxmn8AG5FDnbmTiSx3QRwsKTXaT3E';
+	const P2 = '12D3KooWEY6ZDNCzJHyfVDQ1VbnvCH3DXcuW1YdB3EkF3kqr8Kw5';
+	const row = (id: string, enabled: boolean, peers: string[] = []) => ({ networkID: id, name: id, description: '', bootstrapPeers: peers, enabled, created: new Date().toISOString() });
+	const pending = (): string[] => listPeerCleanup(db).map(r => `${r.networkID}/${r.peerID}`);
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, row(NET, true, [BOOTSTRAP]));
+		addLISHnet(db, row(OTHER, true));
+		net = makeMockNet();
+		net.topicPeers.set(NET, [P1, P2]);
+		net.topicPeers.set(OTHER, [P2]);
+	});
+
+	/**
+	 * Switch NET off with a leave that never finishes: its first hang-up waits forever, as when
+	 * the app is closed mid-leave. Resolves once the leave has recorded its peers and started.
+	 */
+	async function interruptedDisable(networks: Networks): Promise<void> {
+		net.disconnectGate = new Promise<void>(() => {});
+		void networks.setEnabled(NET, false);
+		for (let i = 0; i < 200 && !net.unsubscribed.includes(NET); i++) await Bun.sleep(5);
+		expect(net.unsubscribed).toContain(NET);
+	}
+
+	it('records the leaving peers and the lishnet that still uses one of them', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+	});
+
+	it('retains the ownership rows of a peer kept for another lishnet', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		// Ownership must survive until the remaining lishnet leaves as well.
+		expect(pending().sort()).toEqual([`${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+	});
+
+	it('keeps a relay candidate queued while its live connection is protected', async () => {
+		net.isRelayPeer = (pid?: string): boolean => pid === P1;
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		expect(pending().some(entry => entry.endsWith(`/${P1}`))).toBe(true);
+	});
+
+	it('writes nothing when recording fails: the catalog and the queue go together', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		db.run('DROP TABLE pending_peer_cleanup');
+		await expect(networks.setEnabled(NET, false)).rejects.toThrow();
+		expect(getLISHnet(db, NET)!.enabled).toBe(true);
+	});
+
+	it('removes only unprotected peers before the next start, and a later leave frees the rest', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		const deleted: string[] = [];
+		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
+
+		const { networks: restartedOnce } = makeNetworks(makeMockNet(), db, []);
+		await (restartedOnce as any).replayPeerCleanup(node);
+		expect(deleted.sort()).toEqual([BOOTSTRAP_ID, P1].sort());
+		// P2 is still used by the enabled OTHER lishnet: kept, rows and all.
+		expect(pending().sort()).toEqual([`${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+
+		// OTHER is switched off too (while the node is down, nothing is joined): P2 goes next time.
+		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
+		await restarted.setEnabled(OTHER, false);
+		deleted.length = 0;
+		await (restarted as any).replayPeerCleanup(node);
+		expect(deleted).toEqual([P2]);
+		expect(pending()).toEqual([]);
+	});
+
+	it('also queues a peer that joined between the catalog write and the leave', async () => {
+		const late = peerIdFromPrivateKey(await generateKeyPair('Ed25519')).toString();
+		// The write sees the membership of that moment; the leave that follows sees one more peer.
+		let reads = 0;
+		const seen = net.getTopicPeers.bind(net);
+		net.getTopicPeers = (id: string): string[] => (id === NET && reads++ > 0 ? [...seen(id), late] : seen(id));
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		expect(pending()).toContain(`${NET}/${late}`);
+	});
+
+	it('never queues a bootstrap address whose peer part is not a peer ID', async () => {
+		updateLISHnet(db, { ...getLISHnet(db, NET)!, bootstrapPeers: [BOOTSTRAP, '/ip4/192.0.2.9/tcp/4001/p2p/not-a-peer'] });
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		expect(pending().some(entry => entry.endsWith('/not-a-peer'))).toBe(false);
+	});
+
+	it('starts past a queued row that names no peer, and drops it', async () => {
+		recordPeerCleanup(db, NET, ['not-a-peer'], 'old-version');
+		const { networks } = makeNetworks(makeMockNet(), db, []);
+		const deleted: string[] = [];
+		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
+		await (networks as any).replayPeerCleanup(node);
+		expect(deleted).not.toContain('not-a-peer');
+		expect(pending().some(entry => entry.endsWith('/not-a-peer'))).toBe(false);
+	});
+
+	it('keeps the queue when a removal fails', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await interruptedDisable(networks);
+		const node = {
+			peerStore: {
+				delete: async () => {
+					throw new Error('disk full');
+				},
+			},
+		};
+		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
+		await expect((restarted as any).replayPeerCleanup(node)).rejects.toThrow('disk full');
+		expect(pending().length).toBe(4);
+	});
+
+	it('queues the peers of a network an import switches off, with the catalog write', async () => {
+		// Only the catalog write sees the members: the queue has to come from it, not the leave.
+		let reads = 0;
+		const seen = net.getTopicPeers.bind(net);
+		net.getTopicPeers = (id: string): string[] => (id === NET && reads++ > 0 ? [] : seen(id));
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		net.disconnectGate = new Promise<void>(() => {});
+		const dir = mkdtempSync(join(tmpdir(), 'lish-import-off-'));
+		try {
+			const file = join(dir, 'net.lishnet');
+			writeFileSync(file, JSON.stringify({ networkID: NET, name: NET, description: '', bootstrapPeers: [BOOTSTRAP], created: new Date().toISOString() }));
+			void networks.importFromFile(file, false);
+			for (let i = 0; i < 200 && !net.unsubscribed.includes(NET); i++) await Bun.sleep(5);
+			expect(pending()).toContain(`${NET}/${P1}`);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('queues every joined network for a reset that clears the catalog but not the peer store', async () => {
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		networks.recordPeersForCatalogReset();
+		expect(pending().sort()).toEqual([`${NET}/${BOOTSTRAP_ID}`, `${NET}/${P1}`, `${NET}/${P2}`, `${OTHER}/${P2}`].sort());
+	});
+});
+
+describe('peer cleanup decided peer by peer', () => {
+	let db: Database;
+	let net: ReturnType<typeof makeMockNet>;
+	const OTHER = 'net-b';
+	const BOOTSTRAP_ID = '12D3KooWPvH1oQjQZS8TtucG4NsW2PsnW87jwMAiRLKgrNGS17fo';
+	const P1 = '12D3KooWQyNzs3o2PqCdxmSAxmn8AG5FDnbmTiSx3QRwsKTXaT3E';
+	const P2 = '12D3KooWEY6ZDNCzJHyfVDQ1VbnvCH3DXcuW1YdB3EkF3kqr8Kw5';
+	const pending = (): string[] => listPeerCleanup(db).map(r => `${r.networkID}/${r.peerID}`);
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		initLISHnetsTables(db);
+		addLISHnet(db, { networkID: NET, name: NET, description: '', bootstrapPeers: [BOOTSTRAP], enabled: true, created: new Date().toISOString() });
+		addLISHnet(db, { networkID: OTHER, name: OTHER, description: '', bootstrapPeers: [], enabled: true, created: new Date().toISOString() });
+		net = makeMockNet();
+		net.topicPeers.set(NET, [P1, P2]);
+		net.topicPeers.set(OTHER, []);
+	});
+
+	it('queues its own bootstrap even while the node still treats it as configured', async () => {
+		// Before the leave prunes it, the node answers "bootstrap" for the leaving lishnet's own peer.
+		const configured = new Set([BOOTSTRAP_ID]);
+		net.isBootstrapOrRelayPeer = (pid: string): boolean => configured.has(pid);
+		net.pruneConfiguredBootstrapPeer = (pid?: string): void => void configured.delete(pid!);
+		net.hangOn.add(BOOTSTRAP_ID);
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		void networks.setEnabled(NET, false);
+		for (let i = 0; i < 200 && !net.unsubscribed.includes(NET); i++) await Bun.sleep(5);
+		expect(pending()).toContain(`${NET}/${BOOTSTRAP_ID}`);
+	});
+
+	it('keeps the rows of a peer whose removal did not finish', async () => {
+		net.disconnectOutcome.set(P1, 'incomplete');
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending()).toEqual([`${NET}/${P1}`]);
+	});
+
+	it('retains an unfinished removal while a joined lishnet claims the peer', async () => {
+		// The claim came up after the disconnect last looked, and nothing persists it.
+		net.disconnectOutcome.set(P1, 'incomplete');
+		net.isClaimedByJoinedNetwork = (pid?: string): boolean => pid === P1;
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		await networks.setEnabled(NET, false);
+		expect(pending()).toEqual([`${NET}/${P1}`]);
+	});
+
+	it('settles a peer another lishnet took over during the leave, before the leave ends', async () => {
+		// P1 is claimed by a joined lishnet by the time the leave reaches it; P2 then hangs.
+		net.disconnectOutcome.set(P1, 'kept');
+		net.hangOn.add(P2);
+		const { networks } = makeNetworks(net, db, [NET, OTHER]);
+		void networks.setEnabled(NET, false);
+		for (let i = 0; i < 200 && !net.disconnected.includes(P1); i++) await Bun.sleep(5);
+		await Bun.sleep(10);
+		recordPeerClaim(db, OTHER, [P1]);
+		const deleted: string[] = [];
+		const node = { peerStore: { delete: async (peerID: { toString(): string }) => void deleted.push(peerID.toString()) } };
+		const { networks: restarted } = makeNetworks(makeMockNet(), db, []);
+		await (restarted as any).replayPeerCleanup(node);
+		expect(deleted).not.toContain(P1);
+		expect(deleted).toContain(P2);
+	});
+});
+
+describe('detailed network import', () => {
+	it('reports a network stored but not applied when the node is down', async () => {
+		const db = new Database(':memory:');
+		initLISHnetsTables(db);
+		const net = makeMockNet();
+		net.isRunning = () => false;
+		const { networks } = makeNetworks(net, db, []);
+		const dir = mkdtempSync(join(tmpdir(), 'lish-import-detailed-'));
+		try {
+			const file = join(dir, 'net.lishnet');
+			writeFileSync(file, JSON.stringify({ networkID: 'net-imported', name: 'Imported', description: '', bootstrapPeers: [], created: new Date().toISOString() }));
+			const outcome = await networks.importFromFileDetailed(file, true);
+			expect(outcome.stored).toBe(true);
+			expect(outcome.value.map(n => n.networkID)).toEqual(['net-imported']);
+			expect(outcome.items).toEqual([expect.objectContaining({ networkID: 'net-imported', stored: true, applied: false })]);
+			expect(outcome.applied).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

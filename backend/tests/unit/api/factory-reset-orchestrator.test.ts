@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'bun:test';
 import { buildFactoryResetHandler } from '../../../src/api/factory-reset-orchestrator.ts';
-import type { FactoryResetOrchestratorDeps } from '../../../src/api/factory-reset-orchestrator.ts';
+import { makeDeps } from '../helpers/factory-reset.ts';
 import { initIdentityHandlers } from '../../../src/api/identity.ts';
-import { NetworkMutationGate } from '../../../src/lishnet/lishnets.ts';
+import { NetworkMutationGate, type Networks } from '../../../src/lishnet/lishnets.ts';
+import { initDownloadState, initTransferHandlers } from '../../../src/api/transfer.ts';
+import type { DataServer } from '../../../src/lish/data-server.ts';
+import type { Settings } from '../../../src/settings.ts';
+import { tmpdir } from 'os';
 
 /** A real Ed25519 private key protobuf, base64 — the identity handler decodes it. */
 const KEY = 'CAESQNs1s0lYRIvIzKjEJ3T0XEZ1TaL1U0bVuaGfDJtzFfnXV7mfNBLSK0bBsJ1uZE3BhmVBXwS5OW1L4gAzxdPKAAA=';
@@ -10,96 +14,6 @@ const KEY = 'CAESQNs1s0lYRIvIzKjEJ3T0XEZ1TaL1U0bVuaGfDJtzFfnXV7mfNBLSK0bBsJ1uZE3
 // ---------------------------------------------------------------------------
 // Minimal stub helpers
 // ---------------------------------------------------------------------------
-
-/** Build a stub Networks object with controllable per-method behaviour. */
-function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['networks'] {
-	const network = {
-		clearDatastore: overrides['clearDatastore'] ?? (() => Promise.resolve()),
-		clearIdentityKey: overrides['clearIdentityKey'] ?? (() => Promise.resolve()),
-		clearPeerstore: overrides['clearPeerstore'] ?? (() => Promise.resolve()),
-		cancelRunOperations: overrides['cancelRunOperations'] ?? (() => {}),
-	};
-	return {
-		beginMaintenance: overrides['beginMaintenance'] ?? (() => Promise.resolve(() => {})),
-		prepareMaintenance:
-			overrides['prepareMaintenance'] ??
-			(() =>
-				Promise.resolve({
-					drain: () => Promise.resolve(),
-					release: () => {},
-				})),
-		stopAllNetworks: overrides['stopAllNetworks'] ?? (() => Promise.resolve()),
-		startEnabledNetworks: overrides['startEnabledNetworks'] ?? (() => Promise.resolve()),
-		getNetwork: () => network,
-	} as any;
-}
-
-/** Build a stub DataServer. */
-function makeDataServer(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['dataServer'] {
-	return {
-		clearLishs: overrides['clearLishs'] ?? (() => {}),
-		clearLishnets: overrides['clearLishnets'] ?? (() => {}),
-		getDownloadEnabledLishs: overrides['getDownloadEnabledLishs'] ?? (() => new Set<string>()),
-		getUploadEnabledLishs: overrides['getUploadEnabledLishs'] ?? (() => new Set<string>()),
-		setDownloadEnabled: () => {},
-		setUploadEnabled: () => {},
-	} as any;
-}
-
-/**
- * Build a stub Settings object: reset publishes defaults with the required network knob
- * fields, and get() reads the live document the way the orchestrator applies limits from it.
- */
-function makeSettings(overrides: Record<string, () => any> = {}): FactoryResetOrchestratorDeps['settings'] {
-	let live: any = { network: { maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: 128 * 1024 * 1024 } };
-	return {
-		get: overrides['get'] ?? (() => live),
-		reset:
-			overrides['reset'] ??
-			(() => {
-				live = structuredClone(live);
-				return Promise.resolve(live);
-			}),
-	} as any;
-}
-
-/** Build a fully-wired deps object with optional per-dep overrides. */
-function makeDeps(
-	overrides: {
-		networks?: Partial<ReturnType<typeof makeNetworks>>;
-		dataServer?: Partial<ReturnType<typeof makeDataServer>>;
-		settingsOverride?: Record<string, () => any>;
-		networkOverride?: Record<string, () => any>;
-		dataServerOverride?: Record<string, () => any>;
-		stopVerifyAll?: () => Promise<any>;
-		stopCreate?: () => Promise<any>;
-		pauseAllLISHMutations?: () => Promise<void>;
-		resumeAllLISHMutations?: () => void;
-		pauseAllTransfers?: () => Promise<void>;
-		clearAllTransfers?: () => Promise<any>;
-		clearUploadRuntime?: () => void;
-		restoreAllTransfers?: (lishIDs: Set<string>, snapshot?: unknown) => Promise<void>;
-		resumeAllTransfers?: () => void;
-		broadcastFn?: (event: string, data: any, except?: unknown) => void;
-		log?: string[];
-	} = {}
-): FactoryResetOrchestratorDeps {
-	return {
-		networks: makeNetworks(overrides.networkOverride ?? {}),
-		dataServer: makeDataServer(overrides.dataServerOverride ?? {}),
-		settings: makeSettings(overrides.settingsOverride ?? {}),
-		stopVerifyAll: overrides.stopVerifyAll ?? (() => Promise.resolve()),
-		stopCreate: overrides.stopCreate ?? (() => Promise.resolve()),
-		pauseAllLISHMutations: overrides.pauseAllLISHMutations ?? (() => Promise.resolve()),
-		resumeAllLISHMutations: overrides.resumeAllLISHMutations ?? (() => {}),
-		pauseAllTransfers: overrides.pauseAllTransfers ?? (() => Promise.resolve()),
-		clearAllTransfers: overrides.clearAllTransfers ?? (() => Promise.resolve()),
-		clearUploadRuntime: overrides.clearUploadRuntime ?? (() => {}),
-		restoreAllTransfers: overrides.restoreAllTransfers ?? (() => Promise.resolve()),
-		resumeAllTransfers: overrides.resumeAllTransfers ?? (() => {}),
-		broadcastFn: overrides.broadcastFn ?? (() => {}),
-	};
-}
 
 // ---------------------------------------------------------------------------
 // Category ordering
@@ -922,5 +836,122 @@ describe('buildFactoryResetHandler — settings persistence failure', () => {
 		expect(settingsResult).toEqual({ category: 'settings', ok: false, detail: 'Settings file now contains the new settings, but durability could not be confirmed (EIO).' });
 		expect(res.success).toBe(false);
 		expect(downloadLimiter.getLimit()).toBe(77 * 1024);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// A failed transfer restore, through the real transfer handlers
+// ---------------------------------------------------------------------------
+
+describe('buildFactoryResetHandler — failed restore through the real transfer handlers', () => {
+	it('reports the reset as failed, keeps transfers closed and leaves every stored intent alone', async () => {
+		const persisted: Array<{ lishID: string; enabled: boolean }> = [];
+		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
+		const transferNetworks = {
+			getRunningNetwork: (): any => ({ onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true }),
+			getEnabled: (): any[] => [{ networkID: 'net-a' }],
+			isJoined: (id: string): boolean => id === 'net-a',
+			set onNetworkLeft(_cb: unknown) {},
+			set onNetworkJoined(_cb: unknown) {},
+		} as unknown as Networks;
+		// A is an ordinary unfinished download; B's LISH has gone.
+		const transferData = {
+			clearError: () => {},
+			setError: () => {},
+			getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
+			get: (lishID: string): any => (lishID === 'lish-a' ? { id: 'lish-a', name: 'a', directory: null, files: [] } : null),
+			getAllChunkCount: () => 4,
+			isCompleteLISH: () => false,
+			getMissingChunks: () => ['chunk-0'],
+			resetVerification: () => {},
+		} as unknown as DataServer;
+		const events: string[] = [];
+		const handlers = initTransferHandlers(
+			transferNetworks,
+			transferData,
+			tmpdir(),
+			() => {},
+			(event: string, data: any) => events.push(`${event}:${data.lishID}`),
+			{ get: () => false } as unknown as Settings
+		);
+		const resumed: string[] = [];
+		const deps = makeDeps({
+			dataServerOverride: { getDownloadEnabledLishs: () => new Set(['lish-a', 'lish-b']), setDownloadEnabled: () => {} },
+			restoreAllTransfers: (ids, snapshot) => handlers.restoreAll(ids, snapshot as never),
+			resumeAllTransfers: () => resumed.push('resume'),
+		});
+
+		const response = await buildFactoryResetHandler(deps)({ downloads: false, settings: true, identity: false, networks: false, peers: false });
+
+		expect(response.success).toBe(false);
+		expect(resumed).toEqual([]);
+		expect(events.filter(event => event.startsWith('transfer.download:enabled'))).toEqual([]);
+		expect(persisted).toEqual([]);
+		// Nothing is running; both downloads are still wanted, as the stored intent says.
+		const transfers = handlers.getActiveTransfers();
+		expect(transfers.filter(t => t.type === 'downloading' || t.type === 'allocating')).toEqual([]);
+		expect(transfers.filter(t => t.type === 'download-enabled').map(t => t.lishID)).toEqual(['lish-a', 'lish-b']);
+	});
+});
+
+describe('buildFactoryResetHandler — a restore a failed settings restart still owes', () => {
+	it('restores the pending transfers, not the empty runtime, and settles them', async () => {
+		const pending = new Map([['lish-x', { networkIDs: ['net-x'], originalNetworkIDs: ['net-x'], disabled: false, suspended: false }]]);
+		let restoredWith: unknown;
+		const deps = makeDeps({
+			clearAllTransfers: async () => new Map(),
+			restoreAllTransfers: async (_ids, snapshot) => {
+				restoredWith = snapshot;
+			},
+		});
+		deps.restartManager.retainPendingRestore(pending);
+
+		await buildFactoryResetHandler(deps as never)({ peers: true, identity: false, settings: false, downloads: false, networks: false });
+
+		expect(restoredWith).toBe(pending);
+		expect(deps.restartManager.pendingRestore()).toBeNull();
+	});
+});
+
+describe('buildFactoryResetHandler — a settings reset that touches nothing the node is built from', () => {
+	it('does not stop the node', async () => {
+		const actions: string[] = [];
+		const same = { network: { incomingPort: 9090, maxDownloadSpeed: 0 } };
+		const deps = makeDeps({
+			settingsOverride: { list: () => ({ ...same, network: { ...same.network, maxDownloadSpeed: 500 } }), getDefaults: () => same },
+			networkOverride: {
+				stopAllNetworks: () => {
+					actions.push('stop');
+					return Promise.resolve();
+				},
+			},
+		});
+		await buildFactoryResetHandler(deps)({ settings: true, identity: false, downloads: false, networks: false, peers: false });
+		expect(actions).toEqual([]);
+	});
+});
+
+describe('buildFactoryResetHandler — a catalog reset that keeps the peer store', () => {
+	it('queues the peers while the node still runs, before it is stopped', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({
+			networkOverride: {
+				recordPeersForCatalogReset: () => void actions.push('queue-peers'),
+				stopAllNetworks: () => {
+					actions.push('stop');
+					return Promise.resolve();
+				},
+			},
+		});
+		await buildFactoryResetHandler(deps)({ networks: true, peers: false, settings: false, identity: false, downloads: false });
+		expect(actions.indexOf('queue-peers')).toBeGreaterThanOrEqual(0);
+		expect(actions.indexOf('queue-peers')).toBeLessThan(actions.indexOf('stop'));
+	});
+
+	it('leaves the queue alone when the peer store is wiped as well', async () => {
+		const actions: string[] = [];
+		const deps = makeDeps({ networkOverride: { recordPeersForCatalogReset: () => void actions.push('queue-peers') } });
+		await buildFactoryResetHandler(deps)({ networks: true, peers: true, settings: false, identity: false, downloads: false });
+		expect(actions).toEqual([]);
 	});
 });

@@ -14,12 +14,24 @@
 		enableSharing?: boolean | undefined;
 		enableDownloading?: boolean | undefined;
 		onDone: () => void;
+		onError: (error: unknown) => void;
 	}
-	let { lishs, downloadPath, position, enableSharing, enableDownloading, onDone }: Props = $props();
+	let { lishs, downloadPath, position, enableSharing, enableDownloading, onDone, onError }: Props = $props();
 	let overwriteQueue = $state<ILISH[]>([]);
 	let newLISHs = $state<ILISH[]>([]);
 	let processing = $state(true);
 	let currentOverwriteLISH = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
+
+	async function runImport(operation: () => Promise<void>): Promise<void> {
+		processing = true;
+		try {
+			await operation();
+		} catch (error) {
+			onError(error);
+		} finally {
+			processing = false;
+		}
+	}
 
 	async function processLISHs(): Promise<void> {
 		const toConfirm: ILISH[] = [];
@@ -32,16 +44,13 @@
 		newLISHs = toAdd;
 		if (toConfirm.length > 0) {
 			overwriteQueue = toConfirm;
-			processing = false;
 		} else await finishImport();
 	}
 
 	async function confirmOverwrite(): Promise<void> {
 		if (currentOverwriteLISH) {
-			processing = true;
 			await api.lishs.importFromJSON(JSON.stringify(currentOverwriteLISH), downloadPath, true, enableSharing, enableDownloading);
 			overwriteQueue = overwriteQueue.slice(1);
-			processing = false;
 		}
 		if (overwriteQueue.length === 0) await finishImport();
 	}
@@ -52,7 +61,6 @@
 	}
 
 	async function finishImport(): Promise<void> {
-		processing = true;
 		for (const lish of newLISHs) {
 			await api.lishs.importFromJSON(JSON.stringify(lish), downloadPath, undefined, enableSharing, enableDownloading);
 		}
@@ -61,7 +69,7 @@
 	}
 
 	onMount(() => {
-		processLISHs();
+		void runImport(processLISHs);
 	});
 </script>
 
@@ -88,5 +96,5 @@
 		</div>
 	</Dialog>
 {:else if currentOverwriteLISH}
-	<ConfirmDialog title={$t('common.import')} message={$t('lish.import.confirmOverwrite', { name: currentOverwriteLISH.name || currentOverwriteLISH.id, id: currentOverwriteLISH.id })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={confirmOverwrite} onBack={skipOverwrite} />
+	<ConfirmDialog title={$t('common.import')} message={$t('lish.import.confirmOverwrite', { name: currentOverwriteLISH.name || currentOverwriteLISH.id, id: currentOverwriteLISH.id })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={() => runImport(confirmOverwrite)} onBack={() => runImport(skipOverwrite)} />
 {/if}

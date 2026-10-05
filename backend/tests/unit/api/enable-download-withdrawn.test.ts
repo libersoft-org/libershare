@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { tmpdir } from 'os';
 import { initTransferHandlers, initDownloadState, removeDownloadState } from '../../../src/api/transfer.ts';
+import { initUploadState } from '../../../src/protocol/lish-protocol.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
 import { type Settings } from '../../../src/settings.ts';
@@ -30,6 +31,7 @@ const settings = { get: (): boolean => false } as unknown as Settings;
 
 describe('enableDownload — withdrawn while starting', () => {
 	beforeEach(() => {
+		initUploadState(new Set(), () => {});
 		initDownloadState(new Set<string>(), () => {});
 	});
 
@@ -41,6 +43,7 @@ describe('enableDownload — withdrawn while starting', () => {
 			// `directory: null` keeps the start on the no-pre-flight path, so the only
 			// thing between entry and registration is the downloader init below.
 			get: (): any => ({ id: LISH_ID, name: 'x', directory: null, files: [] }),
+			getDatasetRoot: (): null => null,
 			getAllChunkCount: (): number => 4,
 			isCompleteLISH: (): boolean => false,
 			getMissingChunks: (): string[] => {
@@ -66,6 +69,7 @@ describe('enableDownload — withdrawn while starting', () => {
 			clearError: (): void => {},
 			setError: (): void => {},
 			get: (): any => ({ id: LISH_ID, name: 'x', directory: null, files: [] }),
+			getDatasetRoot: (): null => null,
 			getAllChunkCount: (): number => 4,
 			isCompleteLISH: (): boolean => false,
 			getMissingChunks: (): string[] => ['chunk-0'],
