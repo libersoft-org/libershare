@@ -17,15 +17,44 @@ import { join } from 'node:path';
 export type SystemTimeOperation = { kind: 'clock'; clock: NonNullable<SystemTimeChanges['clock']> } | { kind: 'timezone'; timezone: string } | { kind: 'server'; server: string; syncRunning: boolean } | { kind: 'enabled'; enabled: boolean };
 export type TimeOperationRunner = (operation: SystemTimeOperation) => Promise<SystemTimeResult>;
 
+/**
+ * Everything one operating system contributes to time settings. The shared layer validates,
+ * budgets and re-reads; a new platform is one implementation plus one entry in
+ * {@link TIME_PLATFORMS} and in `SystemPlatform`.
+ */
+export interface TimePlatform {
+	readStatus(): Promise<PlatformStatus>;
+	run(operation: SystemTimeOperation): Promise<SystemTimeResult>;
+}
+
+/** Every supported platform must have an implementation: the `Record` makes a missing one a type error. */
+const TIME_PLATFORMS: Record<SystemPlatform, TimePlatform> = {
+	linux: {
+		readStatus: () => readLinuxStatus(),
+		run: operation => {
+			if (operation.kind === 'server') return applyTimesyncdDropIn(operation.server, operation.syncRunning);
+			return runLinuxTimeOperation(api => (operation.kind === 'clock' ? api.clock(operation.clock) : operation.kind === 'timezone' ? api.timezone(operation.timezone) : api.ntpEnabled(operation.enabled)));
+		},
+	},
+	win32: {
+		readStatus: () => readWindowsStatus(),
+		run: operation => runWindowsTimeOperation(api => (operation.kind === 'clock' ? api.clock(operation.clock) : operation.kind === 'timezone' ? api.timezone(operation.timezone) : operation.kind === 'server' ? api.server(operation.server) : api.ntpEnabled(operation.enabled))),
+	},
+	darwin: {
+		readStatus: () => readMacStatus(),
+		run: operation => runDarwinTimeOperation(api => (operation.kind === 'clock' ? api.clock(operation.clock) : operation.kind === 'timezone' ? api.timezone(operation.timezone) : operation.kind === 'server' ? api.server(operation.server) : api.enabled(operation.enabled))),
+	},
+};
+
+/** The time implementation for a platform, or `null` where time settings are unsupported. */
+export function timePlatform(platform: string = process.platform): TimePlatform | null {
+	return isSupportedPlatform(platform) ? TIME_PLATFORMS[platform] : null;
+}
+
 async function nativeTimeOperation(operation: SystemTimeOperation): Promise<SystemTimeResult> {
-	const platform = process.platform;
-	if (platform === 'linux') {
-		if (operation.kind === 'server') return applyTimesyncdDropIn(operation.server, operation.syncRunning);
-		return runLinuxTimeOperation(api => (operation.kind === 'clock' ? api.clock(operation.clock) : operation.kind === 'timezone' ? api.timezone(operation.timezone) : api.ntpEnabled(operation.enabled)));
-	}
-	if (platform === 'win32') return runWindowsTimeOperation(api => (operation.kind === 'clock' ? api.clock(operation.clock) : operation.kind === 'timezone' ? api.timezone(operation.timezone) : operation.kind === 'server' ? api.server(operation.server) : api.ntpEnabled(operation.enabled)));
-	if (platform === 'darwin') return runDarwinTimeOperation(api => (operation.kind === 'clock' ? api.clock(operation.clock) : operation.kind === 'timezone' ? api.timezone(operation.timezone) : operation.kind === 'server' ? api.server(operation.server) : api.enabled(operation.enabled)));
-	return result('unsupported', `Time settings are unavailable on ${platform}`);
+	const platform = timePlatform();
+	if (!platform) return result('unsupported', `Time settings are unavailable on ${process.platform}`);
+	return platform.run(operation);
 }
 
 /**
@@ -129,9 +158,7 @@ export function resetHostTimezones(): void {
 
 /** Dispatch the OS half of the status read to the backend for this platform. */
 function readPlatformStatus(platform: SystemPlatform): Promise<PlatformStatus> {
-	if (platform === 'linux') return readLinuxStatus();
-	if (platform === 'win32') return readWindowsStatus();
-	return readMacStatus();
+	return TIME_PLATFORMS[platform].readStatus();
 }
 
 /**

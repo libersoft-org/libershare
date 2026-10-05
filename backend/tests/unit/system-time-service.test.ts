@@ -1,6 +1,6 @@
 import type { TimesyncdOperations } from '../../src/native/linux/time-mutation-dropin.ts';
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type WindowsModeState } from '../../src/system-time.ts';
+import { applySystemTimeSettings, timePlatform, withSaveBudget, remainingSaveBudget, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, FOLLOW_UP_BUDGET_MS, WRITE_TIMEOUT_MS, type WindowsModeState } from '../../src/system-time.ts';
 import { applyTimesyncdFixture as applyTimesyncdDropIn } from '../helpers/system-time-timesyncd.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_NETWORK_HELPER_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_HELPER_BUDGET_MS, WINDOWS_ELEVATION_PROMPT_ALLOWANCE_MS, WINDOWS_ELEVATION_WAIT_MS, WINDOWS_NETWORK_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
@@ -228,5 +228,12 @@ describe('finishing one save', () => {
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
+	});
+});
+
+describe('time platform registry', () => {
+	it('has an implementation for every supported platform and none elsewhere', () => {
+		for (const platform of ['win32', 'linux', 'darwin']) expect(timePlatform(platform)).not.toBeNull();
+		expect(timePlatform('aix')).toBeNull();
 	});
 });
