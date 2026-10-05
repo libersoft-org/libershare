@@ -115,7 +115,7 @@ RUN rustup target add x86_64-pc-windows-msvc
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh \
-	&& bash /tmp/bun-install.sh \
+	&& bash /tmp/bun-install.sh bun-v1.4.2 \
 	&& rm /tmp/bun-install.sh
 ENV PATH="/root/.bun/bin:${PATH}"
 
