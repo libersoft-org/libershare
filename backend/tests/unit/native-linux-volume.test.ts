@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { CFunction, FFIType, ptr, type Pointer } from 'bun:ffi';
 import { linuxVolume, type LinuxVolumeBackends } from '../../src/native/linux/pulse-volume.ts';
-import { PulseSession, PulseTimeout, closeAllPulseSessions } from '../../src/native/linux/pulse.ts';
+import { PulseSession, PulseTimeout, PulseWriteIssued, closeAllPulseSessions } from '../../src/native/linux/pulse.ts';
 import type { PulseSymbols } from '../../src/native/linux/pulse-native.ts';
 
 it('does not let libpulse start an external audio daemon', () => {
@@ -188,6 +188,36 @@ describe('native Linux volume', () => {
 			expect(await linuxVolume({ timeoutMs: 5000 }, undefined, deps)).toEqual({ kind: 'ok', volume: 42 });
 			expect(count).toBe(1);
 		}
+	});
+	it('treats a written volume whose read-back fails as issued, not as a refusal', async () => {
+		const fixture = pulseFixture(),
+			session = new PulseSession(fixture.api);
+		const api = fixture.api as unknown as Record<string, (...args: unknown[]) => unknown>;
+		const write = api['pa_context_set_sink_volume_by_name']!;
+		api['pa_context_set_sink_volume_by_name'] = (...args) => {
+			api['pa_context_get_sink_info_by_name'] = () => 0;
+			return write(...args);
+		};
+		try {
+			await expect(session.write(37, performance.now() + 1000)).rejects.toBeInstanceOf(PulseWriteIssued);
+		} finally {
+			session.close();
+		}
+	});
+	it('never writes ALSA after a Pulse write was issued', async () => {
+		let count = 0;
+		const deps: LinuxVolumeBackends = {
+			pulse: async () => {
+				throw new PulseWriteIssued();
+			},
+			alsa: () => {
+				count++;
+				return { kind: 'ok', volume: 42 };
+			},
+			now: () => 0,
+		};
+		expect(await linuxVolume({ timeoutMs: 5000 }, 37, deps)).toEqual({ kind: 'error' });
+		expect(count).toBe(0);
 	});
 	it('never starts ALSA after the shared budget expires', async () => {
 		let now = 0,

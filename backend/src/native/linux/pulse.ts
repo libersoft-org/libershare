@@ -7,6 +7,8 @@ export function closeAllPulseSessions(): void {
 }
 
 export class PulseTimeout extends Error {}
+/** The volume request reached the server, so its effect is unknown and no other mixer may be written. */
+export class PulseWriteIssued extends Error {}
 export interface PulseSink {
 	name: string;
 	channels: number;
@@ -127,20 +129,36 @@ export class PulseSession {
 		if (performance.now() >= deadline) throw new PulseTimeout('Pulse deadline exhausted');
 		const volume = new Uint8Array(132);
 		this.api.pa_cvolume_set(ptr(volume), sink.channels, Math.round((percent * 65536) / 100));
+		let answered = false;
 		let success = false;
 		const callback = this.callback(
 			(_context, ok) => {
+				answered = true;
 				success = ok !== 0;
 			},
 			[FFIType.ptr, FFIType.i32, FFIType.ptr]
 		);
 		const name = Buffer.from(sink.name + '\0');
 		try {
-			await this.operation(this.api.pa_context_set_sink_volume_by_name(this.context, ptr(name), ptr(volume), callback.ptr, null), () => success, deadline);
+			const request = this.api.pa_context_set_sink_volume_by_name(this.context, ptr(name), ptr(volume), callback.ptr, null);
+			if (!Number(request)) throw new Error('Pulse operation unavailable');
+			try {
+				await this.operation(request, () => success, deadline);
+			} catch (error) {
+				// Only an answered refusal proves the sink is unchanged.
+				if (answered && !success) throw error;
+				throw new PulseWriteIssued('Pulse volume write did not settle');
+			}
 		} finally {
 			this.release(callback);
 		}
-		return (await this.sink(deadline)).volume;
+		try {
+			const written = (await this.sink(deadline)).volume;
+			if (Number.isFinite(written) && written >= 0 && written <= 100) return written;
+		} catch {
+			// Reported below: the write already happened.
+		}
+		throw new PulseWriteIssued('Pulse volume was written but could not be read back');
 	}
 	async subscribe(changed: () => void, deadline: number): Promise<void> {
 		const events = this.callback(

@@ -1,6 +1,6 @@
 import type { MixerResult } from '../../system-volume.ts';
 import { alsaVolume } from './alsa.ts';
-import { PulseSession, PulseTimeout } from './pulse.ts';
+import { PulseSession, PulseTimeout, PulseWriteIssued } from './pulse.ts';
 
 export interface LinuxVolumeRequest {
 	timeoutMs: number;
@@ -35,7 +35,8 @@ export async function linuxVolume(request: LinuxVolumeRequest, percent?: number,
 		if (deps.now() >= deadline) return { kind: 'error' };
 		if (Number.isFinite(volume) && volume >= 0 && volume <= 100) return { kind: 'ok', volume };
 	} catch (error) {
-		if (error instanceof PulseTimeout || deps.now() >= deadline) return { kind: 'error' };
+		// After an issued Pulse write, an ALSA fallback would be a second write to a possibly different control.
+		if (error instanceof PulseTimeout || error instanceof PulseWriteIssued || deps.now() >= deadline) return { kind: 'error' };
 	}
 	if (deps.now() >= deadline) return { kind: 'error' };
 	try {
