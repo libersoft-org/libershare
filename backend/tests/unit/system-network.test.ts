@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { ptr, type Pointer } from 'bun:ffi';
 import { parseWindowsNetworkState, readConnectionAttributes } from '../../src/system-network-windows.ts';
 import { dbmToQuality, parseIwLink, parseLinuxNetworkState } from '../../src/system-network-linux.ts';
-import { assertReadProducedSomething, assertWifiConfigurableInterface, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, runNetworkMutation, type NetworkSnapshot } from '../../src/system-network.ts';
+import { assertReadProducedSomething, assertWifiConfigurableInterface, networkPlatform, NetworkStateCache, prefixFromNetmask, readGenericInterfaces, readNetworkState, resolvePrimaryID, resetNetworkStateCache, runNetworkMutation, type NetworkSnapshot } from '../../src/system-network.ts';
 import { ErrorCodes, type NetInterfaceInfo } from '@shared';
 
 /**
@@ -833,5 +833,16 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('r
 		release();
 		expect(await read).toBe(false);
 		await mutation;
+	});
+});
+
+describe('network platform registry', () => {
+	it('gives every supported platform a full reader and others a read-only fallback', async () => {
+		for (const platform of ['win32', 'linux', 'darwin'] as const) expect(networkPlatform(platform).detail).toBe('full');
+		const generic = networkPlatform('aix');
+		expect(generic.detail).toBe('addressesOnly');
+		expect(await generic.capabilities()).toEqual({ ipv4: false, wifi: false, staticGatewayRequired: false });
+		await expect(generic.applyIPv4('eth0', { mode: 'dhcp' }, { addressingChanged: true, requireLease: false })).rejects.toMatchObject({ code: ErrorCodes.NETCONFIG_UNSUPPORTED });
+		await expect(generic.scanWifi('wlan0')).rejects.toMatchObject({ code: ErrorCodes.NETCONFIG_UNSUPPORTED });
 	});
 });

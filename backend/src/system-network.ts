@@ -5,10 +5,11 @@ import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWif
 import { applyNativeWindowsIPv4 } from './native/win32/network-mutation.ts';
 import { requireNativeMutationContext } from './native/mutation-context.ts';
 import { NativeWorkerChannel } from './native/worker-host.ts';
-import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi, type LinuxNetworkRead } from './system-network-linux.ts';
+import { applyLinuxIPv4, connectLinuxWifi, disconnectLinuxWifi, readLinuxCapabilities, readLinuxNetworkState, scanLinuxWifi } from './system-network-linux.ts';
 import { applyMacIPv4, connectMacWifi, disconnectMacWifi, isMacWifiConfigurable, isMacWritable, readMacNetworkState, scanMacWifi } from './system-network-macos.ts';
 import { assertMacWifiMutationIdle } from './system-network-corewlan.ts';
 import { networkHelperAvailable, runElevatedNetworkHelper } from './network-helper-client.ts';
+import type { NetworkPlatform } from './system-network-platform.ts';
 
 /**
  * Host network state and configuration, dispatched per platform.
@@ -125,9 +126,9 @@ export class NetworkStateCache {
 }
 
 const stateCache = new NetworkStateCache(async () => {
-	const detail: NetworkStateInfo['detail'] = process.platform === 'win32' || process.platform === 'linux' || process.platform === 'darwin' ? 'full' : 'addressesOnly';
-	const read = await readPlatform();
-	return { interfaces: assertReadProducedSomething(read.interfaces), detail, ipv4ProfilesUnavailable: read.ipv4ProfilesUnavailable };
+	const platform = networkPlatform();
+	const read = await platform.read();
+	return { interfaces: assertReadProducedSomething(read.interfaces), detail: platform.detail, ipv4ProfilesUnavailable: read.ipv4ProfilesUnavailable };
 });
 
 const mutationMutex = new Mutex();
@@ -198,12 +199,6 @@ export async function readNetworkStateUnlocked(primaryInterface: string = ''): P
 		snapshot = { interfaces: readGenericInterfaces(), detail: 'addressesOnly', ipv4ProfilesUnavailable: false };
 	}
 	return { interfaces: snapshot.interfaces, primaryID: resolvePrimaryID(snapshot.interfaces, primaryInterface), detail: snapshot.detail, known: true, capabilities: await readCapabilities(), ipv4ProfilesUnavailable: snapshot.ipv4ProfilesUnavailable, ...(snapshot.stale ? { stale: true } : {}) };
-}
-
-async function readPlatform(): Promise<LinuxNetworkRead> {
-	if (process.platform === 'linux') return readLinuxNetworkState();
-	const interfaces = process.platform === 'win32' ? await readWindows() : process.platform === 'darwin' ? await readMacNetworkState() : readGenericInterfaces();
-	return { interfaces, ipv4ProfilesUnavailable: false };
 }
 
 /**
@@ -378,8 +373,15 @@ function helperAvailableForCapabilities(platform: NodeJS.Platform): Promise<bool
 	return networkHelperAvailable(platform).catch(() => false);
 }
 
-async function probeCapabilities(): Promise<NetCapabilities> {
-	if (process.platform === 'win32') {
+/** Refuse every change on a platform with only the runtime's address list: there is nothing to apply it with. */
+function unsupportedChange(): Promise<never> {
+	return Promise.reject(new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'network changes are not available on this platform'));
+}
+
+const windowsNetwork: NetworkPlatform = {
+	detail: 'full',
+	read: async () => ({ interfaces: await readWindows(), ipv4ProfilesUnavailable: false }),
+	capabilities: async () => {
 		// The Get/Set-Net* cmdlets refuse outright without an elevated token, so the
 		// capability is that token — probed before the user reaches Save rather than
 		// user when Save fails.
@@ -391,23 +393,81 @@ async function probeCapabilities(): Promise<NetCapabilities> {
 		// adapter at all. A host with no radio, or a stripped image with no WLAN
 		// stack, lists none and the screen offers nothing.
 		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi: capability.wifi, staticGatewayRequired: false };
-	} else if (process.platform === 'linux') {
+	},
+	assertIdle: () => assertWindowsWifiMutationIdle(),
+	applyIPv4: async (interfaceID, config, options) => {
+		if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
+		await applyNativeWindowsIPv4(requireNativeMutationContext(), interfaceID, config, options);
+	},
+	scanWifi: interfaceID => scanWindowsWifi(assertWindowsGuid(interfaceID)),
+	joinWifi: (interfaceID, password, network) => {
+		if (!network.ssidHex) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Windows did not report the Wi-Fi network identity');
+		return connectWindowsWifi(assertWindowsGuid(interfaceID), network.ssid, password, network.security, network.ssidHex);
+	},
+	disconnectWifi: interfaceID => disconnectWindowsWifi(assertWindowsGuid(interfaceID)),
+};
+
+const linuxNetwork: NetworkPlatform = {
+	detail: 'full',
+	read: () => readLinuxNetworkState(),
+	capabilities: async () => {
 		const capability = await readLinuxCapabilities();
 		if (capability.ipv4Elevation && !(await helperAvailableForCapabilities('linux'))) return { ...capability, ipv4: false, ipv4Elevation: false };
 		return capability;
-	} else if (process.platform === 'darwin') {
+	},
+	assertIdle: () => {},
+	applyIPv4: (interfaceID, config, options) => applyLinuxIPv4(assertDeviceName(interfaceID), config, options.addressingChanged, options.requireLease),
+	scanWifi: interfaceID => scanLinuxWifi(assertDeviceName(interfaceID)),
+	joinWifi: (interfaceID, password, network) => connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid),
+	disconnectWifi: interfaceID => disconnectLinuxWifi(assertDeviceName(interfaceID)),
+};
+
+const macNetwork: NetworkPlatform = {
+	detail: 'full',
+	read: async () => ({ interfaces: await readMacNetworkState(), ipv4ProfilesUnavailable: false }),
+	capabilities: async () => {
 		// networksetup persists a change and is present on every macOS install, so
 		// addressing is editable. Wi-Fi is editable only while macOS is willing to
 		// tell us the network names: see isMacWifiConfigurable.
 		const [native, wifi] = await Promise.all([isMacWritable(), isMacWifiConfigurable()]);
 		const elevated = !native && (await helperAvailableForCapabilities('darwin'));
 		return { ipv4: native || elevated, ...(elevated && { ipv4Elevation: true }), wifi, staticGatewayRequired: true };
-	} else {
-		// Everything else reads through os.networkInterfaces(), which cannot even
-		// report whether an address came from DHCP. Offering to edit a configuration
-		// we cannot describe would be worse than not offering it.
-		return { ipv4: false, wifi: false, staticGatewayRequired: false };
-	}
+	},
+	// CoreWLAN joins run outside the shared lock; only an address change must wait for them.
+	assertIdle: kind => {
+		if (kind === 'ipv4') assertMacWifiMutationIdle();
+	},
+	applyIPv4: (interfaceID, config, options) => applyMacIPv4(assertDeviceName(interfaceID), config, options.addressingChanged, options.requireLease),
+	scanWifi: interfaceID => scanMacWifi(assertDeviceName(interfaceID)),
+	joinWifi: (interfaceID, password, network) => connectMacWifi(assertDeviceName(interfaceID), network.ssid, password, network.security, network.bssid, network.ssidHex),
+	disconnectWifi: interfaceID => disconnectMacWifi(assertDeviceName(interfaceID)),
+};
+
+/**
+ * Every other platform reads through os.networkInterfaces(), which cannot even report whether an
+ * address came from DHCP. Offering to edit a configuration we cannot describe would be worse than
+ * not offering it.
+ */
+const genericNetwork: NetworkPlatform = {
+	detail: 'addressesOnly',
+	read: async () => ({ interfaces: readGenericInterfaces(), ipv4ProfilesUnavailable: false }),
+	capabilities: async () => ({ ipv4: false, wifi: false, staticGatewayRequired: false }),
+	assertIdle: () => {},
+	applyIPv4: unsupportedChange,
+	scanWifi: unsupportedChange,
+	joinWifi: unsupportedChange,
+	disconnectWifi: unsupportedChange,
+};
+
+const NETWORK_PLATFORMS: Partial<Record<NodeJS.Platform, NetworkPlatform>> = { win32: windowsNetwork, linux: linuxNetwork, darwin: macNetwork };
+
+/** The network implementation for this host; a new platform adds one entry to {@link NETWORK_PLATFORMS}. */
+export function networkPlatform(platform: NodeJS.Platform = process.platform): NetworkPlatform {
+	return NETWORK_PLATFORMS[platform] ?? genericNetwork;
+}
+
+function probeCapabilities(): Promise<NetCapabilities> {
+	return networkPlatform().capabilities();
 }
 
 async function readCapabilities(): Promise<NetCapabilities> {
@@ -460,8 +520,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 	let usedHelper = false;
 	try {
 		await run(async () => {
-			if (process.platform === 'win32') assertWindowsWifiMutationIdle();
-			if (process.platform === 'darwin') assertMacWifiMutationIdle();
+			networkPlatform().assertIdle('ipv4');
 			if (supported.ipv4Elevation) {
 				if (!allowPrivilegeEscalation) throw new Error('network helper cannot recursively request privileges');
 				// The helper reads the host again on its own; it gets the baseline this
@@ -472,14 +531,7 @@ export async function applyIPv4Unlocked(interfaceID: string, config: NetIPv4Conf
 				usedHelper = true;
 				return;
 			}
-			if (process.platform === 'win32') {
-				if (!isWindowsInterfaceID(interfaceID)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-				await applyNativeWindowsIPv4(requireNativeMutationContext(), interfaceID, desired, { addressingChanged, requireLease });
-			} else if (process.platform === 'darwin') {
-				await applyMacIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
-			} else {
-				await applyLinuxIPv4(assertDeviceName(interfaceID), desired, addressingChanged, requireLease);
-			}
+			await networkPlatform().applyIPv4(interfaceID, desired, { addressingChanged, requireLease });
 		});
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
@@ -500,7 +552,7 @@ export async function scanWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
 	// A scan is a device operation; letting it overlap an apply on the same host
 	// would race NetworkManager and let the scan read a half-applied state.
 	return runNetworkMutation(async () => {
-		if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
+		await run(async () => networkPlatform().assertIdle('wifi'));
 		await assertWirelessInterface(interfaceID);
 		try {
 			return await run(() => scanPlatformWifi(interfaceID));
@@ -524,7 +576,7 @@ export async function connectWifiUnlocked(interfaceID: string, ssid: string, pas
 	if (bssid !== null && typeof bssid !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid bssid');
 	if (expectedSecurity !== undefined && (typeof expectedSecurity !== 'string' || expectedSecurity.length > 64 || /[\0\r\n]/.test(expectedSecurity))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi security');
 	if (expectedSsidHex !== undefined && (typeof expectedSsidHex !== 'string' || !/^(?:[0-9a-f]{2}){1,32}$/i.test(expectedSsidHex))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid expected Wi-Fi identity');
-	if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
+	await run(async () => networkPlatform().assertIdle('wifi'));
 	await assertWirelessInterface(interfaceID);
 	let available: NetWifiNetwork[];
 	try {
@@ -593,9 +645,7 @@ export function isValidWifiPassword(password: unknown): password is string {
  * neither is accepted where the other belongs.
  */
 function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
-	if (process.platform === 'win32') return scanWindowsWifi(assertWindowsGuid(interfaceID));
-	if (process.platform === 'darwin') return scanMacWifi(assertDeviceName(interfaceID));
-	return scanLinuxWifi(assertDeviceName(interfaceID));
+	return networkPlatform().scanWifi(interfaceID);
 }
 
 /**
@@ -605,12 +655,7 @@ function scanPlatformWifi(interfaceID: string): Promise<NetWifiNetwork[]> {
  * receive the selected BSSID when the scanner provides one.
  */
 function joinPlatformWifi(interfaceID: string, password: string, network: NetWifiNetwork): Promise<void> {
-	if (process.platform === 'win32') {
-		if (!network.ssidHex) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Windows did not report the Wi-Fi network identity');
-		return connectWindowsWifi(assertWindowsGuid(interfaceID), network.ssid, password, network.security, network.ssidHex);
-	}
-	if (process.platform === 'darwin') return connectMacWifi(assertDeviceName(interfaceID), network.ssid, password, network.security, network.bssid, network.ssidHex);
-	return connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid);
+	return networkPlatform().joinWifi(interfaceID, password, network);
 }
 
 /** Validate a Windows adapter id before it addresses the WLAN service. Same boundary check as {@link assertDeviceName}. */
@@ -795,14 +840,10 @@ export function disconnectWifi(interfaceID: string, primaryInterface: string = '
 /** Disconnect for callers that already own the host mutation lock. */
 export async function disconnectWifiUnlocked(interfaceID: string, primaryInterface: string = ''): Promise<NetworkStateInfo> {
 	if (typeof interfaceID !== 'string') throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'invalid interface');
-	if (process.platform === 'win32') await run(async () => assertWindowsWifiMutationIdle());
+	await run(async () => networkPlatform().assertIdle('wifi'));
 	await assertWirelessInterface(interfaceID);
 	try {
-		await run(() => {
-			if (process.platform === 'win32') return disconnectWindowsWifi(assertWindowsGuid(interfaceID));
-			if (process.platform === 'darwin') return disconnectMacWifi(assertDeviceName(interfaceID));
-			return disconnectLinuxWifi(assertDeviceName(interfaceID));
-		});
+		await run(() => networkPlatform().disconnectWifi(interfaceID));
 	} catch (error) {
 		resetNetworkCapabilitiesCache();
 		throw error;
