@@ -324,9 +324,11 @@ export async function applyNativeLinuxIPv4(context: NativeMutationContext, devic
 	let checkpointMayExist = false;
 	let checkpointDeadline = Infinity;
 	let unknown = false;
+	// Once the checkpoint has been rolled back, no later read has to leave room for another rollback.
+	let rolledBack = false;
 	let endpoint: BoundDBusEndpoint | undefined;
 	const available = (): number => Math.min(context.remainingMs(), checkpointDeadline - deps.now());
-	const requireBudget = (stepMs: number, reserve = true): void => {
+	const requireBudget = (stepMs: number, reserve = !rolledBack): void => {
 		if (available() < stepMs + (reserve ? options.rollbackTimeoutMs + options.checkpointSafetyMs : 0)) throw new NativeMutationStopped();
 	};
 	const request = (path: string, iface: string, member: string, signature = '', args: DBusValue[] = []): MutationRequest => ({ path, interface: iface, member, signature, args });
@@ -441,6 +443,8 @@ export async function applyNativeLinuxIPv4(context: NativeMutationContext, devic
 				// An answered rollback consumes the checkpoint, so its timer can no longer revert anything.
 				answered = true;
 				checkpointMayExist = false;
+				checkpointDeadline = Infinity;
+				rolledBack = true;
 				const result = record(reply.values[0]);
 				if (reply.signature !== 'a{su}' || result[checkpointDevice!] !== 0 || Object.values(result).some(code => code !== 0)) throw new Error('NetworkManager failed to roll back the checkpoint');
 			} catch (rollbackError) {

@@ -211,6 +211,15 @@ describe('journaled NetworkManager IPv4 transaction', () => {
 		expect(f.writes.map(call => call.member)).toEqual(['CheckpointCreate', 'Update2', 'ActivateConnection', 'CheckpointDestroy', 'CheckpointRollback']);
 		expect(f.state.pending).toBe(true);
 	});
+	test('a completed rollback is confirmed without reserving time for another one', async () => {
+		const f = fixture();
+		f.state.failure = 'Update2';
+		// Enough to roll back (95 s + 30 s), not enough to also reserve that again for a 5 s read.
+		f.state.remainingAtFailure = 128_000;
+		await expect(applyNativeLinuxIPv4(f.context, 'eth0', { mode: 'dhcp', dns: [] }, options, f.deps)).rejects.toBeInstanceOf(DBusError);
+		expect(f.writes[f.writes.length - 1]!.member).toBe('CheckpointRollback');
+		expect(f.state.pending).toBe(false);
+	});
 	test('unknown update or activation never triggers rollback or retry', async () => {
 		for (const member of ['Update2', 'ActivateConnection']) {
 			const f = fixture();
