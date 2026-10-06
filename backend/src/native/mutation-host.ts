@@ -3,6 +3,7 @@ import { hasNativeExecutionEnded, type NativeEndObservation, type NativeEndRule,
 import { DBusTransportError, type DBusReply } from './linux/dbus.ts';
 import { NativeWorkerChannel, NativeWorkerFailure } from './worker-host.ts';
 import { resolve } from 'node:path';
+import { dispatchDeadlinePassed } from './mutation-context.ts';
 
 export interface NativeMutationState {
 	readonly state: NativeMutationRecord['phase'];
@@ -169,7 +170,7 @@ export class NativeMutationHost {
 			},
 			call: async <V>(rule: NativeEndRule, invoke: () => Promise<NativeInvocation<V>>): Promise<V> => {
 				if (unknown || inCall) throw new NativeMutationUnknown();
-				if (budget.stopped || performance.now() >= deadline) throw new NativeMutationStopped();
+				if (budget.stopped || performance.now() >= deadline || dispatchDeadlinePassed()) throw new NativeMutationStopped();
 				inCall = true;
 				// Before dispatch, a crash must retain the rule for this exact receiver.
 				try {
@@ -180,7 +181,7 @@ export class NativeMutationHost {
 				}
 				let result: NativeInvocation<V>;
 				try {
-					if (budget.stopped || performance.now() >= deadline) {
+					if (budget.stopped || performance.now() >= deadline || dispatchDeadlinePassed()) {
 						throw new NativeMutationStopped();
 					}
 					result = await invoke();

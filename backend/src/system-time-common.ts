@@ -1,4 +1,5 @@
-import { requireNativeMutationContext } from './native/mutation-context.ts';
+import { requireNativeMutationContext, withDispatchDeadline } from './native/mutation-context.ts';
+import { NativeMutationStopped } from './native/mutation-host.ts';
 import type { NativeEndRule } from './native/mutation-proof.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isIP } from 'node:net';
@@ -419,7 +420,17 @@ export async function runOperations(platform: SystemPlatform, operations: readon
 	};
 	for (const operation of operations) {
 		if (now() >= deadline) return stop(operation, 'error', 'the time configuration budget expired before the next operation', false);
-		const value = await operation.run(signal);
+		let value: OperationOutcome;
+		try {
+			// The request's own deadline, not the mutation host's longer one, decides whether a write may still start.
+			value = await withDispatchDeadline(
+				() => now() >= deadline,
+				() => operation.run(signal)
+			);
+		} catch (error) {
+			if (error instanceof NativeMutationStopped) return stop(operation, 'error', 'the time configuration budget expired before the write was sent', false);
+			throw error;
+		}
 		if (value.kind === 'unknown') return requireNativeMutationContext().pending(value.endRule);
 		if (value.kind === 'ok') {
 			steps.push({ command: operation.describe, ok: true });

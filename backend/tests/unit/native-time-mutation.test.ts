@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DBusError, type DBusReply } from '../../src/native/linux/dbus.ts';
 import { LinuxTimeMutations, type LinuxTimeMutationDeps } from '../../src/native/linux/time-mutation.ts';
-import { NativeMutationUnknown, type NativeMutationContext } from '../../src/native/mutation-host.ts';
+import { NativeMutationStopped, NativeMutationUnknown, type NativeMutationContext } from '../../src/native/mutation-host.ts';
 import { withNativeMutationContext } from '../../src/native/mutation-context.ts';
 import { clockMatchesRecovery } from '../../src/native/time-changes.ts';
 import { sameTimezoneSource, type LinuxTimeSnapshot, type LinuxTimeRecovery } from '../../src/native/linux/time-mutation-state.ts';
@@ -158,6 +158,16 @@ describe('native time operations', () => {
 		expect(await f.run(f.api.timezone('Europe/Prague'))).toMatchObject({ kind: 'failed', stateMayHaveChanged: true });
 		f.setCurrent({ ...snapshot, timezone: otherZone });
 		expect((await f.run(f.api.timezone('Europe/Prague'))).kind).toBe('ok');
+	});
+
+	test('a timezone or clock write the deadline stopped before dispatch reports nothing changed', async () => {
+		for (const operation of [(f: ReturnType<typeof fixture>) => f.api.timezone('Europe/Prague'), (f: ReturnType<typeof fixture>) => f.api.clock({ hours: 12, minutes: 0, seconds: 0 })]) {
+			const f = fixture();
+			f.setInvoke(async () => {
+				throw new NativeMutationStopped();
+			});
+			expect(await f.run(operation(f))).toMatchObject({ kind: 'failed', stateMayHaveChanged: false });
+		}
 	});
 
 	test('unknown SetTime stops before readback', async () => {

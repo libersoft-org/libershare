@@ -1,7 +1,7 @@
 import { NativeDBusMutation } from './mutation.ts';
 import { DBusError, DBusTransportError } from './dbus.ts';
 import { NativeWorkerChannel, NativeWorkerFailure } from '../worker-host.ts';
-import { NativeMutationUnknown, type NativeMutationContext } from '../mutation-host.ts';
+import { NativeMutationStopped, NativeMutationUnknown, type NativeMutationContext } from '../mutation-host.ts';
 import { requireNativeMutationContext } from '../mutation-context.ts';
 import { recordLinuxTimeRecovery, sameTimezoneSource, type LinuxTimeSnapshot, type LinuxTimeSnapshotRequest } from './time-mutation-state.ts';
 import type { BoundDBusEndpoint, DBusEndpointRequest } from './dbus-worker.ts';
@@ -89,7 +89,7 @@ export class LinuxTimeMutations {
 							await this.deps.pause(100);
 							continue;
 						}
-						const unsent = (error instanceof DBusTransportError && !error.mayHaveBeenSent) || (error instanceof NativeWorkerFailure && !error.mayHaveRun);
+						const unsent = error instanceof NativeMutationStopped || (error instanceof DBusTransportError && !error.mayHaveBeenSent) || (error instanceof NativeWorkerFailure && !error.mayHaveRun);
 						return failure(error, !notStarted && !unsent);
 					}
 					try {
@@ -131,7 +131,7 @@ export class LinuxTimeMutations {
 				try {
 					const after = await this.snapshot(context);
 					if (refusal) {
-						const unsent = (refusal instanceof DBusTransportError && !refusal.mayHaveBeenSent) || (refusal instanceof NativeWorkerFailure && !refusal.mayHaveRun);
+						const unsent = refusal instanceof NativeMutationStopped || (refusal instanceof DBusTransportError && !refusal.mayHaveBeenSent) || (refusal instanceof NativeWorkerFailure && !refusal.mayHaveRun);
 						return failure(refusal, !unsent);
 					}
 					return sameTimezoneSource(after.timezone, before.targetTimezone!) ? { kind: 'ok', output: '' } : { kind: 'failed', code: null, output: 'The host timezone file does not match the requested timezone', stateMayHaveChanged: true };

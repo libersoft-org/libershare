@@ -1,7 +1,10 @@
 import { expect, test } from 'bun:test';
 import { runOperations, withSaveBudget, type SystemOperation } from '../../src/system-time-common.ts';
-import { NativeMutationUnknown, type NativeMutationContext } from '../../src/native/mutation-host.ts';
-import { withNativeMutationContext } from '../../src/native/mutation-context.ts';
+import { NativeMutationHost, NativeMutationUnknown, type NativeMutationContext } from '../../src/native/mutation-host.ts';
+import { requireNativeMutationContext, withNativeMutationContext } from '../../src/native/mutation-context.ts';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('an active native operation may finish after the budget but no next write begins', async () => {
 	let clock = 0;
@@ -102,4 +105,49 @@ test('unknown execution keeps its end proof and never enters a following operati
 test('an explicit native refusal retains its outcome rather than inspecting localized text', async () => {
 	const result = await runOperations('linux', [{ describe: 'clock', run: async () => ({ kind: 'failed', code: null, output: 'The host changed', outcome: 'stale', stateMayHaveChanged: false }) }]);
 	expect(result).toMatchObject({ outcome: 'stale', changed: false, stateMayHaveChanged: false });
+});
+
+test('a write is not sent once the request budget ran out while it was being prepared', async () => {
+	// The mutation host has its own, longer budget; the request's deadline must still hold at dispatch.
+	const directory = await mkdtemp(join(tmpdir(), 'time-dispatch-deadline-'));
+	const host = new NativeMutationHost(directory);
+	let clock = 0,
+		dispatched = 0;
+	try {
+		const outcome = await host.run(
+			{ domain: 'time', operation: 'applySystemTime', requestHash: 'c'.repeat(64), recoveryData: {}, timeoutMs: 60_000 },
+			context =>
+				withNativeMutationContext(context, () =>
+					withSaveBudget(
+						() =>
+							runOperations(
+								'linux',
+								[
+									{
+										describe: 'timezone',
+										run: async () => {
+											// A slow snapshot read and journal write before the change is sent.
+											await requireNativeMutationContext().recordRecovery({ prepared: true });
+											clock = 150;
+											return requireNativeMutationContext().call({ kind: 'executor' }, async () => {
+												dispatched++;
+												return { known: true, value: { kind: 'ok', output: '' } };
+											});
+										},
+									},
+								],
+								() => clock
+							),
+						() => clock,
+						100
+					)
+				),
+			async () => 'completed'
+		);
+		expect(dispatched).toBe(0);
+		expect(outcome).toMatchObject({ state: 'completed', value: { success: false, changed: false, stateMayHaveChanged: false } });
+	} finally {
+		expect(await host.closeAndDrain()).toBe(true);
+		await rm(directory, { recursive: true, force: true });
+	}
 });
