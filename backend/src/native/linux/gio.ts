@@ -29,12 +29,17 @@ export async function openLinuxPath(request: LinuxOpenRequest): Promise<void> {
 	if (!request.path.startsWith('/') || request.path.includes('\0')) throw new Error('Invalid local path');
 	if (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0) throw new Error('Invalid open timeout');
 	const deadline = performance.now() + Math.min(10000, request.timeoutMs);
-	const bus = new SystemBus({ bus: 'user' });
+	// Only handlers that D-Bus itself activates need the display in its environment. GIO launches
+	// the registered handler directly, so a session without a user bus can still open the file.
+	let bus: SystemBus | undefined;
 	try {
+		bus = new SystemBus({ bus: 'user' });
 		const reply = await bus.call({ kind: 'read', destination: 'org.freedesktop.DBus', path: '/org/freedesktop/DBus', interface: 'org.freedesktop.DBus', member: 'UpdateActivationEnvironment', signature: 'a{ss}', args: [environment], timeoutUsec: BigInt(Math.max(1, Math.floor((deadline - performance.now()) * 1000))) });
 		if (reply.type === 'error') throw new DBusError(reply);
+	} catch (error) {
+		console.warn('[open] The user session bus did not take the display environment:', (error as Error).message);
 	} finally {
-		bus.close();
+		bus?.close();
 	}
 	if (performance.now() >= deadline) throw new Error('Opening local file timed out');
 	const gio = (library ??= loadSystemLibrary('libgio-2.0.so.0', symbols)).symbols;
