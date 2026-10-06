@@ -121,6 +121,31 @@ describe('native Windows IPv4 transaction', () => {
 		]);
 		expect((await observeNativeWindowsIPv4(f.saved(), 1000, f.deps)).target).toBe(true);
 	});
+	test('an automatic family left out of the request may report other servers afterwards', async () => {
+		// Measured on Windows: right after a reset to automatic the IPv6 family reports
+		// a different server list on the next read, with no write to that family.
+		const start = initial();
+		start.dns = start.dns.map(policy => (policy.family === 23 ? { ...policy, automatic: true, servers: [] } : policy));
+		const f = fixture(start);
+		const read = f.deps.read,
+			write = f.deps.write;
+		let written = false;
+		f.deps.write = async request => {
+			written = true;
+			return write(request);
+		};
+		f.deps.read = async (id, timeout) => {
+			const value = await read(id, timeout);
+			return written ? { ...value, dns: value.dns.map(policy => (policy.family === 23 && policy.automatic ? { ...policy, servers: ['fec0:0:0:ffff::1'] } : policy)) } : value;
+		};
+		await applyNativeWindowsIPv4(f.context, guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] }, { addressingChanged: false, requireLease: true }, f.deps);
+		expect(f.calls.map(call => call.step.kind === 'dns' && call.step.policy.family)).toEqual([2]);
+		expect((await observeNativeWindowsIPv4(f.saved(), 1000, f.deps)).target).toBe(true);
+		// The untouched host still counts as the original state after a crash.
+		const untouched = fixture(start);
+		untouched.deps.read = async () => ({ ...structuredClone(start), dns: start.dns.map(policy => (policy.automatic ? { ...policy, servers: ['fec0:0:0:ffff::1'] } : policy)) });
+		expect((await observeNativeWindowsIPv4({ ...f.saved(), snapshot: start, fingerprint: windowsIPv4Fingerprint(start) }, 1000, untouched.deps)).original).toBe(true);
+	});
 	test('static apply replaces both stores, waits for Preferred and preserves the route metric', async () => {
 		const f = fixture();
 		await applyNativeWindowsIPv4(f.context, guid, staticConfig, { addressingChanged: true, requireLease: true }, f.deps);

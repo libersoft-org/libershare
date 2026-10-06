@@ -139,7 +139,7 @@ export function windowsIPv4Fingerprint(snapshot: WindowsIPv4Snapshot): string {
 		routes: snapshot.stores[store].routes.map(({ path: _path, validLifetime, ...row }) => ({ ...row, infinite: validLifetime === WINDOWS_INFINITE_LIFETIME })).sort((a, b) => a.gateway.localeCompare(b.gateway)),
 	}));
 	return createHash('sha256')
-		.update(JSON.stringify({ guid: snapshot.guid, mac: snapshot.mac, stores, dns: snapshot.dns.map(policy => ({ family: policy.family, automatic: policy.automatic, servers: dnsKey(policy.servers) })) }))
+		.update(JSON.stringify({ guid: snapshot.guid, mac: snapshot.mac, stores, dns: snapshot.dns.map(policy => ({ family: policy.family, policy: dnsPolicyKey(policy) })) }))
 		.digest('hex');
 }
 
@@ -177,8 +177,10 @@ export function assertWindowsIPv4Target(current: WindowsIPv4Snapshot, saved: Win
 		}
 }
 
+/** An automatic family is compared by its policy only: its servers come from DHCP or router adverts and move on their own. */
 function dnsPolicyKey(policy: WindowsDnsPolicy | undefined): string {
-	return policy ? `${policy.automatic}:${dnsKey(policy.servers)}` : 'none';
+	if (!policy) return 'none';
+	return policy.automatic ? 'automatic' : `manual:${dnsKey(policy.servers)}`;
 }
 
 export function isWindowsIPv4Recovery(value: unknown): value is WindowsIPv4Recovery {
