@@ -31,4 +31,23 @@ describe('noise crypto inputs', () => {
 		const opened = noiseCrypto.chaCha20Poly1305Decrypt(Buffer.from(sealed), nonce, ad, key).subarray();
 		expect(Buffer.from(opened).toString()).toBe('chunk payload over a noise stream');
 	});
+
+	it('stays wire-compatible with the pure-JS cipher in both directions, with associated data', () => {
+		const key = new Uint8Array(32).fill(5);
+		const nonce = new Uint8Array(12).fill(2);
+		const ad = new Uint8Array([1, 2, 3, 4]);
+		const plaintext = new Uint8Array(70_000).map((_, i) => i & 0xff);
+		const ours = noiseCrypto.chaCha20Poly1305Encrypt(plaintext, nonce, ad, key).subarray();
+		expect(pureJsCrypto.chaCha20Poly1305Decrypt(ours, nonce, ad, key).subarray()).toEqual(plaintext);
+		const theirs = pureJsCrypto.chaCha20Poly1305Encrypt(plaintext, nonce, ad, key).subarray();
+		expect(noiseCrypto.chaCha20Poly1305Decrypt(Buffer.from(theirs), nonce, ad, key).subarray()).toEqual(plaintext);
+	});
+
+	it('rejects a tampered ciphertext', () => {
+		const key = new Uint8Array(32).fill(5);
+		const nonce = new Uint8Array(12);
+		const sealed = noiseCrypto.chaCha20Poly1305Encrypt(new Uint8Array(100).fill(1), nonce, new Uint8Array(0), key).subarray().slice();
+		sealed[10]! ^= 1;
+		expect(() => noiseCrypto.chaCha20Poly1305Decrypt(sealed, nonce, new Uint8Array(0), key)).toThrow();
+	});
 });
