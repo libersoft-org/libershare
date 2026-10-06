@@ -217,3 +217,40 @@ describe('pubsub replies still dialing at drain', () => {
 		});
 	}
 });
+
+describe('pubsub search cancelled by the drain', () => {
+	afterEach(() => resetUploadState());
+
+	it('answers the same search again after resume', async () => {
+		const LISH = 'pubsub-search-resume';
+		const lish = { id: LISH, name: 'Shared', files: [{ size: 1 }] };
+		const network = new Network('/tmp/pubsub-search-resume', { list: () => [lish] } as never, {} as never);
+		const internals = network as unknown as Record<string, any>;
+		internals['node'] = { peerId: { toString: () => 'self' }, getMultiaddrs: () => [] };
+		internals['canServePubsubRequestTo'] = () => true;
+		internals['isDirectPeer'] = () => true;
+		internals['isJoinedToLishnet'] = () => true;
+		let dials = 0;
+		// First dial hangs until the drain aborts it; the next one opens a stream that answers.
+		const stream = new StuckClosingStream();
+		internals['dialProtocolByPeerId'] = (_peer: string, _protocol: string, signal?: AbortSignal) => {
+			dials++;
+			if (dials > 1) return Promise.resolve({ stream });
+			return new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('dial aborted')), { once: true }));
+		};
+		enableUpload(LISH);
+		const search = { type: 'searchLishs', searchID: 'resume-search', query: 'shared' };
+
+		internals['lishHandlers'].dispatchSearch(search, 'net-a', 'peer-asker');
+		for (let i = 0; i < 100 && dials === 0; i++) await Bun.sleep(5);
+		await network.pauseLISHProtocolHandlersAndDrain();
+		network.resumeLISHProtocolHandlers();
+
+		internals['lishHandlers'].dispatchSearch(search, 'net-a', 'peer-asker');
+		for (let i = 0; i < 100 && stream.sent.length === 0; i++) await Bun.sleep(5);
+		expect(dials).toBe(2);
+		expect(stream.sent).toHaveLength(1);
+		await network.pauseLISHProtocolHandlersAndDrain();
+		network.resumeLISHProtocolHandlers();
+	});
+});

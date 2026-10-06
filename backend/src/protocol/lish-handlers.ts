@@ -255,6 +255,7 @@ export class LISHServingHandlers {
 		if (matches.length === 0) return;
 		trace(`[NET] searchLishs ${data.searchID.slice(0, 8)} from ${fromPeerID.slice(0, 12)}: ${matches.length} match(es)`);
 		let client: LISHClient | undefined;
+		let sent = false;
 		const onAbort = (): void => client?.abort(new Error('pubsub replies stopped'));
 		signal?.addEventListener('abort', onAbort, { once: true });
 		try {
@@ -283,9 +284,13 @@ export class LISHServingHandlers {
 				return;
 			}
 			await client.sendSearchResult(data.searchID, matches);
+			sent = true;
 		} catch (err: any) {
 			trace(`[NET] sendSearchResult to ${fromPeerID.slice(0, 12)} failed: ${err?.message ?? err}`);
 		} finally {
+			// Stopped before the answer went out (pause/reset drain): this query was not answered
+			// either, so the same search arriving after resume must not be refused as a duplicate.
+			if (!sent && signal?.aborted && this.deps.seenSearchIDs.get(dedupKey) === entry) this.deps.seenSearchIDs.delete(dedupKey);
 			try {
 				// Keep the abort handler until graceful close has finished.
 				await client?.close().catch(() => {});
