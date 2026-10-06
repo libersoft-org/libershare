@@ -155,9 +155,8 @@ Síť, Wi-Fi, čas, hlasitost a otevírání souborů používají knihovny oper
 - `pkexec` s vlastním pomocníkem na Linuxu.
 - `osascript` s ověřovacím skriptem a vlastním pomocníkem na macOS. Skript používá `sh`, `mktemp`, `cp`, `codesign`, `shasum`, `awk`, `rm` a `rmdir` pro ověření a úklid privilegované kopie.
 - Vlastní program v režimu `--access-probe`, který na Linuxu ověřuje přístup účtu časové služby.
-- Vlastní program v režimu `--clock-probe`, pokud na macOS zděděné `TZ` ovlivňuje převod času v knihovně C. Tento krátký proces pouze počítá čas a má prostředí bez `TZ`; systémové hodiny nemění.
 
-Výchozí aplikaci při otevření souboru spouští operační systém. Pokud se výsledek změny sítě nebo času nedá potvrdit, další zápisy zůstanou zablokované i po restartu backendu. Čtení zůstává dostupné; nepotvrzený stav se označí v rozhraní.
+Převod času na macOS čte soubor časového pásma přímo, takže kvůli proměnné `TZ` žádný další proces nespouští. Na macOS se Wi-Fi obsluhuje v procesu desktopové aplikace, která má povolenou Polohu. Výchozí aplikaci při otevření souboru spouští operační systém. Pokud se výsledek změny sítě nebo času nedá potvrdit, další zápisy zůstanou zablokované i po restartu backendu. Čtení zůstává dostupné; nepotvrzený stav se označí v rozhraní.
 
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
 - **Debug mode:** Opens a built-in debug console window that shows backend log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.
