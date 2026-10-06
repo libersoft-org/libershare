@@ -548,6 +548,8 @@ export function toManifest(lish: import('@shared').IStoredLISH): import('@shared
 export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal): Promise<void> {
 	const servedLishIDs = new Set<string>();
 	const listPages = new LISHListPages();
+	// Keeps the files this stream reads open between its chunk requests; closed with the stream.
+	const reader = typeof dataServer.createChunkReader === 'function' ? dataServer.createChunkReader() : null;
 	const ioErrorCounts = new Map<string, number>(); // per-LISH consecutive I/O error counter
 	const remotePeer = remotePeerID?.slice(0, 12) ?? 'unknown';
 	const fullRemotePeer = remotePeerID ?? 'unknown';
@@ -693,7 +695,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					sendLengthPrefixed(stream, codecEncode(busyResponse));
 					continue;
 				}
-				const chunkResult = await dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID);
+				const chunkResult = await (reader ? reader.getChunk(chunkReq.lishID, chunkReq.chunkID) : dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID));
 				// A factory-reset barrier may have closed and aborted this stream while
 				// the filesystem read was pending. Nothing from the old runtime may be
 				// sent or registered after that boundary.
@@ -831,6 +833,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 		console.debug(`[PROTO] stream error from ${remotePeer} after ${requestCount} reqs: ${error.message?.slice(0, 120) ?? error}`);
 		stream.abort(error instanceof Error ? error : new Error(String(error)));
 	} finally {
+		await reader?.close().catch(() => {});
 		trace(`[PROTO] stream closed for ${remotePeer}, served ${requestCount} reqs, lishIDs: ${[...servedLishIDs].map(id => id.slice(0, 8)).join(',')}`);
 		// Unregister upload peer + decrement stream count per LISH
 		for (const lishID of servedLishIDs) {
