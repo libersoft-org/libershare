@@ -52,24 +52,23 @@ async function fixture() {
 	const [a, b] = manifests as [IStoredLISH, IStoredLISH];
 	const entered = deferred();
 	const release = deferred();
-	const originalFile = Bun.file.bind(Bun);
+	// Hold the first read of a.bin mid-verification, where the dataset opens that file.
+	const openDataset = data.openDataset.bind(data);
 	let first = true;
-	const files = spyOn(Bun, 'file').mockImplementation(((path: any, options?: any) => {
-		const file = originalFile(path, options);
-		if (String(path) !== join(directory, 'a.bin')) return file;
-		return {
-			size: file.size,
-			slice: file.slice.bind(file),
-			exists: async () => {
-				if (first) {
-					first = false;
-					entered.resolve();
-					await release.promise;
-				}
-				return file.exists();
-			},
-		} as typeof file;
-	}) as typeof Bun.file);
+	const files = spyOn(data, 'openDataset').mockImplementation(async lishID => {
+		const dataset = await openDataset(lishID);
+		if (lishID !== a.id) return dataset;
+		const openFile = dataset.openFile.bind(dataset);
+		dataset.openFile = (async (path, mode) => {
+			if (first && path === 'a.bin') {
+				first = false;
+				entered.resolve();
+				await release.promise;
+			}
+			return openFile(path, mode);
+		}) as typeof dataset.openFile;
+		return dataset;
+	});
 	return {
 		directory,
 		data,

@@ -1,10 +1,12 @@
 import * as fsPromises from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes } from '@shared';
+import { dirname } from 'node:path';
+import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from './data-server.ts';
+import { readDatasetRange } from './dataset-chunk-io.ts';
+import type { DatasetFileHandle } from './safe-dataset-types.ts';
 // Embed worker source as a file asset. Bun bundler copies the file into the
 // compiled binary's bunfs and returns the runtime path (works in dev too,
 // where it returns the absolute source path). Worker must be self-contained
@@ -455,7 +457,7 @@ export function validateImportedLISH(data: unknown): ILISH {
 	if (typeof obj['id'] !== 'string' || !obj['id']) throw new CodedError(ErrorCodes.LISH_MISSING_ID);
 	if (typeof obj['created'] !== 'string' || !obj['created']) throw new CodedError(ErrorCodes.LISH_MISSING_CREATED);
 	if (typeof obj['chunkSize'] !== 'number' || obj['chunkSize'] <= 0) throw new CodedError(ErrorCodes.LISH_INVALID_CHUNK_SIZE);
-	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, String(obj['checksumAlgo']));
+	if (typeof obj['checksumAlgo'] !== 'string' || !(SUPPORTED_ALGOS as readonly string[]).includes(obj['checksumAlgo'])) throw new CodedError(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM, formatUntrustedValue(obj['checksumAlgo']));
 	return data as ILISH;
 }
 
@@ -503,105 +505,84 @@ export function resetVerification(dataServer: DataServer, lishID: string): void 
 
 /**
  * Run verification of all chunks (call after resetVerification).
- * Fire & forget — errors are logged, not thrown.
+ * Unsafe paths abort verification; callers must preserve that error.
  * Pass an AbortSignal to allow cancellation.
  */
 export async function runVerification(dataServer: DataServer, lishID: string, onProgress: (progress: VerifyFileProgress) => void, signal?: AbortSignal): Promise<void> {
 	const meta = dataServer.get(lishID);
-	if (!meta || !meta.directory) {
-		console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: no meta or directory`);
-		return;
-	}
+	if (!meta?.directory || signal?.aborted) return;
 	const files = dataServer.getFilesForVerification(lishID);
-	if (!files) {
-		console.debug(`[Verify] SKIP ${lishID.slice(0, 8)}: getFilesForVerification returned null`);
+	if (!files) return;
+	let dataset;
+	try {
+		dataset = await dataServer.openDataset(lishID);
+	} catch (error: any) {
+		if (error.code !== 'ENOENT') throw error;
+		for (const fileEntry of files) {
+			if (signal?.aborted || !dataServer.get(lishID)) return;
+			dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
+			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
+		}
+		onProgress({ lishID, filePath: '', verifiedChunks: 0, done: true });
 		return;
 	}
-	const totalChunks = files.reduce((sum, f) => sum + f.checksums.length, 0);
-	console.log(`[Verify] START ${lishID.slice(0, 8)}: ${files.length} files, ${totalChunks} chunks, dir=${meta.directory}`);
-	const verifyStart = Date.now();
-	let totalVerified = 0;
-	let totalFailed = 0;
-	let totalMissing = 0;
-	let totalBytes = 0;
-	for (const fileEntry of files) {
-		if (signal?.aborted) {
-			console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
-			return;
+	let verified = 0;
+	let failed = 0;
+	const started = Date.now();
+	try {
+		try {
+			await dataset.prepare(meta, { writable: false, ...(signal ? { signal } : {}) });
+		} catch (error: any) {
+			if (error.code !== ErrorCodes.LISH_UNSAFE_PATH && signal?.aborted) return;
+			throw error;
 		}
-		if (!dataServer.get(lishID)) {
-			console.debug(`[Verify] LISH DELETED ${lishID.slice(0, 8)}`);
-			return;
-		}
-		const filePath = join(meta.directory, fileEntry.path);
-		let fileVerified = 0;
-		let fileFailed = 0;
-		const fileStart = Date.now();
-		const file = Bun.file(filePath);
-		const fileExists = await file.exists();
-		if (signal?.aborted) {
-			console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
-			return;
-		}
-		if (!fileExists) {
-			console.log(`[Verify] MISSING ${fileEntry.path} (${fileEntry.checksums.length} chunks) at ${filePath}`);
-			dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
-			totalMissing += fileEntry.checksums.length;
-			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
-			continue;
-		}
-		let fileShort = 0;
-		for (let chunkIndex = 0; chunkIndex < fileEntry.checksums.length; chunkIndex++) {
-			if (signal?.aborted) {
-				console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
-				return;
-			}
-			const expectedChecksum = fileEntry.checksums[chunkIndex]!;
-			const chunkRowID = fileEntry.chunkRowIDs[chunkIndex]!;
-			const offset = chunkIndex * meta.chunkSize;
-			if (offset >= file.size) {
-				dataServer.markChunkFailed(chunkRowID);
-				fileFailed++;
-				fileShort++;
-				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
+		for (const fileEntry of files) {
+			if (signal?.aborted || !dataServer.get(lishID)) return;
+			let file: DatasetFileHandle;
+			try {
+				file = await dataset.openFile(fileEntry.path, 'read');
+			} catch (error: any) {
+				if (error.code !== 'ENOENT') throw error;
+				if (signal?.aborted || !dataServer.get(lishID)) return;
+				dataServer.markAllFileChunksFailed(fileEntry.fileInternalID);
+				failed += fileEntry.checksums.length;
+				onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: 0 });
 				continue;
 			}
 			try {
-				const actualChecksum = await calculateChecksum(file, offset, meta.chunkSize, meta.checksumAlgo);
-				if (signal?.aborted) {
-					console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
-					return;
+				const size = (await file.stat()).size;
+				let fileVerified = 0;
+				for (let index = 0; index < fileEntry.checksums.length; index++) {
+					if (signal?.aborted) return;
+					const row = fileEntry.chunkRowIDs[index]!;
+					const offset = index * meta.chunkSize;
+					let matches = false;
+					if (offset < size) {
+						try {
+							const bytes = await readDatasetRange(file, offset, Math.min(meta.chunkSize, size - offset));
+							matches = new Bun.CryptoHasher(meta.checksumAlgo as any).update(bytes).digest('hex') === fileEntry.checksums[index];
+						} catch (error: any) {
+							if (error.code === ErrorCodes.LISH_UNSAFE_PATH) throw error;
+						}
+					}
+					if (signal?.aborted) return;
+					if (matches) {
+						dataServer.markChunkVerified(row);
+						fileVerified++;
+						verified++;
+					} else {
+						dataServer.markChunkFailed(row);
+						failed++;
+					}
+					onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 				}
-				if (actualChecksum === expectedChecksum) {
-					dataServer.markChunkVerified(chunkRowID);
-					fileVerified++;
-					totalBytes += Math.min(meta.chunkSize, file.size - offset);
-				} else {
-					dataServer.markChunkFailed(chunkRowID);
-					fileFailed++;
-				}
-			} catch (err: any) {
-				if (signal?.aborted) {
-					console.debug(`[Verify] ABORTED ${lishID.slice(0, 8)} after ${totalVerified + totalFailed}/${totalChunks} chunks`);
-					return;
-				}
-				dataServer.markChunkFailed(chunkRowID);
-				fileFailed++;
+			} finally {
+				await file.close();
 			}
-			onProgress({ lishID, filePath: fileEntry.path, verifiedChunks: fileVerified });
 		}
-		if (fileShort > 0) console.debug(`[Verify] SHORT ${fileEntry.path}: ${fileShort} chunks past EOF`);
-		totalVerified += fileVerified;
-		totalFailed += fileFailed;
-		const fileElapsed = Date.now() - fileStart;
-		const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
-		const fileMBs = fileElapsed > 0 ? (file.size / 1024 / 1024 / (fileElapsed / 1000)).toFixed(0) : '∞';
-		console.log(`[Verify] FILE ${fileEntry.path}: ${fileVerified}/${fileEntry.checksums.length} pass, ${fileFailed} fail (${fileSizeMB}MB in ${fileElapsed}ms, ${fileMBs}MB/s)`);
+	} finally {
+		await dataset.close();
 	}
-
-	const elapsed = Date.now() - verifyStart;
-	const totalMB = (totalBytes / 1024 / 1024).toFixed(1);
-	const throughput = elapsed > 0 ? (totalBytes / 1024 / 1024 / (elapsed / 1000)).toFixed(0) : '∞';
-	console.log(`[Verify] DONE ${lishID.slice(0, 8)}: ${totalVerified} pass, ${totalFailed} fail, ${totalMissing} missing (${totalMB}MB in ${(elapsed / 1000).toFixed(1)}s, ${throughput}MB/s)`);
+	console.log(`[Verify] DONE ${lishID.slice(0, 8)}: ${verified} pass, ${failed} fail (${Date.now() - started}ms)`);
 	onProgress({ lishID, filePath: '', verifiedChunks: 0, done: true });
 }

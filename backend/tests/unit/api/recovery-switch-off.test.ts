@@ -40,6 +40,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 		clearError: (): void => {},
 		setError: (): void => {},
 		resetVerification: (): void => {},
+		getDatasetRoot: (): null => null,
 	} as unknown as DataServer;
 	/** A LISH still missing its chunk: its download runs through a real downloader. */
 	const unfinishedServer = Object.assign(new MockDataServer(), {
@@ -49,6 +50,7 @@ describe('error recovery and a switch-off during the attempt', () => {
 		clearError: (): void => {},
 		setError: (): void => {},
 		resetVerification: (): void => {},
+		getDatasetRoot: (): null => null,
 	});
 	unfinishedServer.missingChunks = [makeMissingChunk('c0' as never)];
 	unfinishedServer.allChunkCount = 1;

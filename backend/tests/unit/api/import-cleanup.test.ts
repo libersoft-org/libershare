@@ -32,7 +32,7 @@ describe('failed import directories', () => {
 			await Settings.create(dataDir)
 		);
 		// The store refuses every write, so each import fails after preparing its directory.
-		dataServer.add = (): never => {
+		dataServer.addDataset = (): never => {
 			throw new Error('disk refused the write');
 		};
 	});
@@ -109,7 +109,7 @@ describe('failed overwrite import', () => {
 		const original = { id: 'kept-file-target', name: 'original', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }], directory: join(base, 'original') };
 		dataServer.add(original as never);
 		writeFileSync(join(base, 'file-target'), 'existing data');
-		await expect(handlers.importManifest({ ...original, name: 'file-target' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toMatchObject({ code: ErrorCodes.FS_NOT_DIRECTORY });
+		await expect(handlers.importManifest({ ...original, name: 'file-target' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
 		expect(dataServer.get('kept-file-target' as never)?.name).toBe('original');
 		expect(readFileSync(join(base, 'file-target'), 'utf8')).toBe('existing data');
 	});

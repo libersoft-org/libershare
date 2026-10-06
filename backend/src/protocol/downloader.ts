@@ -14,6 +14,8 @@ import { DataServer, type MissingChunk } from '../lish/data-server.ts';
 import { trace } from '../logger.ts';
 import { PeerManager } from './peer-manager.ts';
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
+import { conservativeDatasetRoot, datasetRootPath } from '../lish/dataset-root.ts';
+import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { PauseController } from './pause-controller.ts';
 import { ProgressReporter, type ProgressCallback } from './progress-reporter.ts';
 import { ChunkDownloader, type RetryInfo } from './chunk-downloader.ts';
@@ -58,6 +60,7 @@ export class Downloader {
 	private readonly dataServer: DataServer;
 	private network: Network;
 	private readonly downloadDir: string;
+	private readonly datasetRoot: DatasetRoot;
 	private networkIDs: string[];
 	// Immutable snapshot of the networks this download was created with. removeNetwork
 	// mutates networkIDs when a lishnet is left; addNetwork consults this to re-attach
@@ -225,6 +228,7 @@ export class Downloader {
 	}
 
 	private setError(code: string, detail?: string): void {
+		if (this.errorCode === ErrorCodes.LISH_UNSAFE_PATH) return;
 		this.transitionTo('error', `setError(${code})`, true);
 		this.disabled = true;
 		this.errorCode = code;
@@ -394,14 +398,15 @@ export class Downloader {
 		this.peerManager.remove(peerID, 'disconnect');
 	}
 
-	constructor(downloadDir: string, network: Network, dataServer: DataServer, networkIDs: string | string[], originalNetworkIDs?: string[]) {
-		this.downloadDir = downloadDir;
+	constructor(datasetRoot: DatasetRoot | string, network: Network, dataServer: DataServer, networkIDs: string | string[], originalNetworkIDs?: string[]) {
+		this.datasetRoot = typeof datasetRoot === 'string' ? conservativeDatasetRoot(datasetRoot) : datasetRoot;
+		this.downloadDir = datasetRootPath(this.datasetRoot);
 		this.network = network;
 		this.dataServer = dataServer;
 		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
 		this.networkIDs = ids;
 		this.originalNetworkIDs = originalNetworkIDs ? [...originalNetworkIDs] : [...ids];
-		this.fileAllocator = new FileAllocator(downloadDir);
+		this.fileAllocator = new FileAllocator(this.datasetRoot, () => this.dataServer.getDatasetLinkBindings(this.lishID));
 	}
 
 	async init(lishPath: string): Promise<void> {
@@ -442,6 +447,7 @@ export class Downloader {
 		return new ChunkDownloader({
 			lishID: this.lishID,
 			downloadDir: this.downloadDir,
+			datasetRoot: this.datasetRoot,
 			abortSignal: this.abortController.signal,
 			dataServer: this.dataServer,
 			peerManager: this.peerManager,
@@ -477,6 +483,10 @@ export class Downloader {
 			trace(`[DL] doWork returned, state=${this.state}, peers=${this.peerManager.size()}`);
 		}
 		if (this.destroyed) throw new CodedError(ErrorCodes.DOWNLOAD_CANCELLED);
+		// An error set before anyone waited has no one to reject: report it here, or the wait
+		// below would never end.
+		const early = this.getError();
+		if (early) throw new CodedError(early.code as any, early.detail);
 		// Wait until state reaches 'downloaded' — doWork may change state asynchronously
 		if ((this.state as State) !== 'downloaded') {
 			await new Promise<void>((resolve, reject) => {
@@ -491,7 +501,12 @@ export class Downloader {
 	}
 
 	async doWork(): Promise<void> {
-		return this.trackLifecycle(this.doWorkInternal());
+		return this.trackLifecycle(
+			this.doWorkInternal().catch(error => {
+				if (!(error instanceof CodedError && (error.code === ErrorCodes.DISK_FULL || error.code === ErrorCodes.DISK_SPACE_UNAVAILABLE || error.code === ErrorCodes.LISH_UNSAFE_PATH))) throw error;
+				if (!this.destroyed) this.setError(error.code, error.detail);
+			})
+		);
 	}
 
 	private trackLifecycle<T>(operation: Promise<T>): Promise<T> {

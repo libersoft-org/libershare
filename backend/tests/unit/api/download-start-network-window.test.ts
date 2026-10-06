@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'os';
 import { initTransferHandlers, initDownloadState, getDownloadEnabledLishs, removeDownloadState } from '../../../src/api/transfer.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
@@ -104,6 +104,7 @@ function makeDataServer(duringInit: () => void = () => {}, directory: string | n
 		// the pre-flight and `Downloader.enable()` do their access check, which is the await
 		// a switch-off has to be able to land inside.
 		get: (): any => ({ id: LISH_ID, name: 'x', directory, files: [] }),
+		getDatasetRoot: (): null => null,
 		getAllChunkCount: (): number => 4,
 		isCompleteLISH: (): boolean => false,
 		getMissingChunks: (): string[] => {
@@ -137,6 +138,7 @@ function makeCompleteDataServer(duringCheck: () => void): DataServer & { forget(
 		// An empty file list keeps the on-disk check trivially satisfied: the branch under
 		// test is the one that answers "complete", not the one that re-verifies bytes.
 		get: (): any => (present ? { id: LISH_ID, name: 'x', directory: tmpdir(), files: [] } : null),
+		getDatasetRoot: () => ({ kind: 'explicit', path: tmpdir() }),
 		getAllChunkCount: (): number => 4,
 		isCompleteLISH: (): boolean => true,
 		getMissingChunks: (): string[] => {
@@ -153,10 +155,24 @@ function makeCompleteDataServer(duringCheck: () => void): DataServer & { forget(
 describe('download start — the lishnet window', () => {
 	let persisted: Array<{ lishID: string; enabled: boolean }> = [];
 
+	// A download a test leaves running fails later in the background (its directory never
+	// exists) and clears the module-wide enabled flag the NEXT test reads. Cancel them all.
+	const started: Downloader[] = [];
+	const originalDownload = Downloader.prototype.download;
+
 	beforeEach(() => {
 		initUploadState(new Set(), () => {});
 		persisted = [];
 		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
+		Downloader.prototype.download = function (this: Downloader): Promise<void> {
+			started.push(this);
+			return originalDownload.call(this);
+		};
+	});
+
+	afterEach(async () => {
+		Downloader.prototype.download = originalDownload;
+		for (const downloader of started.splice(0)) await downloader.destroy();
 	});
 
 	it('does not resurrect a download the user turned off while its lishnet was left', async () => {

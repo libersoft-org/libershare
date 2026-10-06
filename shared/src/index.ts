@@ -1,6 +1,10 @@
 // Product info
 export { productName, productVersion, productIdentifier, productWebsite, productGithub, productNetworkList, productEnvPrefix, DEFAULT_API_PORT, DEFAULT_API_URL, MAX_API_MESSAGE_SIZE, MAX_UPLOAD_CHUNK_SIZE } from './product.ts';
 
+// Untrusted values in error details
+export { formatUntrustedValue, boundDetail, MAX_VALIDATION_DETAIL } from './untrusted-value.ts';
+export { MAX_MANIFEST_PATH_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, MAX_MANIFEST_DESCRIPTION_BYTES, MAX_CHECKSUM_LENGTH } from './manifest-limits.ts';
+
 // Network mutations
 export { type NetworkMutationOutcome, type LegacyNetworkMutation, type NetworkMutationResponse, combineNetworkMutations, toNetworkMutationResponse } from './network-mutation.ts';
 

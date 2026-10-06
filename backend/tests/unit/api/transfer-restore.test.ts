@@ -100,6 +100,7 @@ describe('restoreAll through the real transfer handlers', () => {
 			getAllChunkCount: () => 4,
 			isCompleteLISH: () => false,
 			getMissingChunks: () => ['chunk-0'],
+			getDatasetRoot: (): null => null,
 			resetVerification: () => {},
 		} as unknown as DataServer;
 		const events: string[] = [];

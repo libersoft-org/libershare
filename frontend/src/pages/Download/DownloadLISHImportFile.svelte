@@ -35,7 +35,7 @@
 </script>
 
 <ImportFileForm {areaID} {position} {onBack} defaultDirectory={$storageLISHPath} fileFilter={withCompressionExtensions(['*.lish', '*.lishs', '*.json'])} fileFilterName={'LISH ' + $t('common.extensions')} filePathLabel={$t('lish.import.filePath')} {parseFile} {parseUpload} bind:downloadPath downloadPathLabel={$t('lish.import.downloadPath')} onConfirmDone={handleConfirmDone}>
-	{#snippet confirm({ data, onDone })}
-		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} />
+	{#snippet confirm({ data, onDone, onError })}
+		<ImportOverwrite lishs={data as ILISH[]} {downloadPath} {position} enableSharing={$autoStartSharing} enableDownloading={$autoStartDownloading} {onDone} {onError} />
 	{/snippet}
 </ImportFileForm>

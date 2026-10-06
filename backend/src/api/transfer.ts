@@ -4,6 +4,8 @@ import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
+import { conservativeDatasetRoot } from '../lish/dataset-root.ts';
+import { storedDatasetFilesPresent } from '../lish/stored-dataset.ts';
 import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
@@ -607,7 +609,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			await access(hasChunks ? downloadDir : dirname(downloadDir), constants.R_OK | constants.W_OK);
 		}
 
-		const downloader = new Downloader(downloadDir, networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
+		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
 		const prepared = { downloader, requireEnabled, scheduledAt, destroy: () => downloader.destroy() };
 		const refusal = storedStartRefusal(lishID, prepared, disabled);
@@ -865,36 +867,28 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			persistDownloadEnabled?.(p.lishID, false);
 			return { success: false };
 		}
-		const missing = dataServer.getMissingChunks(p.lishID);
-		if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
-			// DB says complete — but verify files actually exist on disk
-			if (lish.files && lish.directory) {
-				let diskOk = true;
-				for (const file of lish.files) {
-					const filePath = join(lish.directory, file.path);
-					const f = Bun.file(filePath);
-					if (!(await f.exists()) || f.size !== file.size) {
-						diskOk = false;
-						break;
+		try {
+			const missing = dataServer.getMissingChunks(p.lishID);
+			if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
+				// DB says complete — but verify files actually exist on disk
+				if (lish.files && lish.directory) {
+					const diskOk = await storedDatasetFilesPresent(dataServer, lish);
+					if (!diskOk) {
+						// Files missing on disk — reset ALL chunks and start fresh download
+						console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
+						dataServer.resetVerification(p.lishID);
+						// Fall through to start download — verify in ENOENT recovery will set accurate per-file state
+					} else {
+						const send = broadcast ?? (() => {});
+						send('transfer.download:enabled', { lishID: p.lishID });
+						return { success: true };
 					}
-				}
-				if (!diskOk) {
-					// Files missing on disk — reset ALL chunks and start fresh download
-					console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
-					dataServer.resetVerification(p.lishID);
-					// Fall through to start download — verify in ENOENT recovery will set accurate per-file state
 				} else {
 					const send = broadcast ?? (() => {});
 					send('transfer.download:enabled', { lishID: p.lishID });
 					return { success: true };
 				}
-			} else {
-				const send = broadcast ?? (() => {});
-				send('transfer.download:enabled', { lishID: p.lishID });
-				return { success: true };
 			}
-		}
-		try {
 			let joinedNetworks = getJoinedEnabledNetworkIDs(networks);
 			let originalNetworkIDs = joinedNetworks;
 			const suspendedNetworkIDs = networkSuspended.get(p.lishID);
