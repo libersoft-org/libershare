@@ -350,7 +350,9 @@ export class LISHClient {
 	// an in-progress chunk read immediately instead of waiting for the stream
 	// read to complete or time out. Requires plumbing the downloader's
 	// abortController.signal down through ChunkDownloader → LISHClient.
-	async requestChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
+	// `maxChunkBytes` is the chunk size the caller expects; a reply longer than that chunk (plus
+	// message headroom) is refused from its length prefix instead of being buffered first.
+	async requestChunk(lishID: LISHid, chunkID: ChunkID, maxChunkBytes?: number): Promise<Uint8Array> {
 		// Bail early if stream is already closed/aborted — treat as transient (peer unreachable),
 		// not as a reason to permanently ban the peer.
 		if (this.stream.status !== 'open') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `${lishID}: stream ${this.stream.status}`);
@@ -361,7 +363,7 @@ export class LISHClient {
 		};
 		// Read the response (with timeout — prevents hanging on dead/aborted streams)
 		return this.exchange(codecEncode(request), `getChunk ${lishID}`, async () => {
-			const responseData = await this.readResponse(Math.min(getMaxMessageSize(), minMessageSizeFor(getMaxChunkSize())), 30000, `getChunk ${lishID}/${chunkID}`, lishID);
+			const responseData = await this.readResponse(Math.min(getMaxMessageSize(), minMessageSizeFor(maxChunkBytes ?? getMaxChunkSize())), 30000, `getChunk ${lishID}/${chunkID}`, lishID);
 			const response = this.parseResponse<LISHGetChunkResponse>(responseData, 'getChunk', `getChunk ${lishID}/${chunkID}`, `${lishID}/${chunkID}`);
 			if (!('data' in response) || !(response.data instanceof Uint8Array)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getChunk ${lishID}/${chunkID}: missing data`);
 			return response.data;

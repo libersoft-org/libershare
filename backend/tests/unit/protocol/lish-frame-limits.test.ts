@@ -68,6 +68,14 @@ describe('LISHClient reply limits', () => {
 		expect((await codedError(new LISHClient(search.stream).sendSearchResult('s', []))).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
 	});
 
+	it('refuses a chunk reply longer than the chunk the caller expects', async () => {
+		// Far under the global chunk limit, but three times the 1 MiB chunk that was asked for.
+		const peer = headerOnly(3 * 1024 * 1024);
+		const outcome = await Promise.race([codedError(new LISHClient(peer.stream).requestChunk('lish-a' as any, 'c1' as any, 1024 * 1024)), Bun.sleep(500).then(() => null)]);
+		expect(outcome?.code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+		expect(peer.aborted()).toBeDefined();
+	});
+
 	it('refuses a chunk reply past the chunk limit', async () => {
 		// Past the chunk limit (100 MiB + headroom) but under the 128 MiB message limit.
 		const peer = headerOnly(110 * 1024 * 1024);

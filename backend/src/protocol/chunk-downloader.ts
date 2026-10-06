@@ -752,7 +752,7 @@ export class ChunkDownloader {
 	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'> {
 		if (this.deps.isDisabled() || this.deps.isDestroyed()) return 'drop-peer';
 		try {
-			const data = await client.requestChunk(this.deps.lishID, chunkID);
+			const data = await client.requestChunk(this.deps.lishID, chunkID, this.deps.getLish().chunkSize);
 			return { data };
 		} catch (err) {
 			const code = (err as { code?: string }).code;
