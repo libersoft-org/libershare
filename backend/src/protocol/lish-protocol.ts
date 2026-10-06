@@ -563,6 +563,12 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 		// Handle multiple requests on the same stream. A stream abort does not guarantee that
 		// every source iterator wakes up, so the reset signal must also interrupt next().
 		while (!abortSignal?.aborted) {
+			// Take the next request only once the previous reply has left the write queue. A peer
+			// that pipelines requests — or never reads its replies — would otherwise have every
+			// requested chunk read from disk and held here in memory at once. Every request gets
+			// exactly one reply, so before the first one nothing of ours can be queued.
+			if (requestCount > 0) await waitForWriteBuffer(stream, abortSignal);
+			if (abortSignal?.aborted) break;
 			const next = await nextProtocolMessage(iterator, abortSignal);
 			if (next.done) break;
 			const msg = next.value;
@@ -869,6 +875,29 @@ function encodeNotification(request: LISHAnnounceHaveRequest | LISHSearchResultR
 	const data = codecEncode(request);
 	if (data.byteLength > MAX_INBOUND_MESSAGE_SIZE) throw new CodedError(ErrorCodes.MESSAGE_TOO_LARGE, `${label}: ${data.byteLength} bytes exceeds ${MAX_INBOUND_MESSAGE_SIZE}`);
 	return data;
+}
+
+/**
+ * Resolve once `stream` has handed every queued byte on to the muxer, or as soon as the stream
+ * closes or `signal` aborts — the caller checks which one it was. Waits on 'idle', not on
+ * `onDrain()`: in @libp2p/utils 7.4.1 the drain promise is created once and never reset, so after
+ * the first drain every later wait returns at once; and 'drain' only means some window opened.
+ */
+function waitForWriteBuffer(stream: Stream, signal?: AbortSignal): Promise<void> {
+	const queued = (): boolean => stream.writeBufferLength > 0 && stream.status === 'open' && !signal?.aborted;
+	if (!queued()) return Promise.resolve();
+	return new Promise<void>(resolve => {
+		const done = (): void => {
+			if (queued()) return;
+			stream.removeEventListener('idle', done);
+			stream.removeEventListener('close', done);
+			signal?.removeEventListener('abort', done);
+			resolve();
+		};
+		stream.addEventListener('idle', done);
+		stream.addEventListener('close', done);
+		signal?.addEventListener('abort', done);
+	});
 }
 
 // Send a length-prefixed message. Caller MUST check stream.status === 'open' first
