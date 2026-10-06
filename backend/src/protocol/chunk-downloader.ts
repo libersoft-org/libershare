@@ -186,8 +186,11 @@ export class ChunkDownloader {
 				if (retainedWriteBytes === 0) notifyRetainedWriteDrain();
 			};
 		};
-		// Track all peerLoop promises so we can await dynamically spawned ones
+		// Track all peerLoop promises so we can await dynamically spawned ones. Keyed per run, not
+		// per peer: a stopped peer can be added back while its old run is still winding down, and
+		// the new run must not overwrite — or be cleared together with — the old one.
 		const peerLoopPromises = new Map<string, Promise<void>>();
+		let peerLoopRuns = 0;
 
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		// Diagnostic only (skip trace log). The former `globalNotAvailable > queue.length`
@@ -361,11 +364,24 @@ export class ChunkDownloader {
 				console.error(`[DL] peerLoop CRASHED for ${peerID.slice(0, 12)}:`, err);
 				peerManager.remove(peerID, 'disconnect');
 			});
-			peerLoopPromises.set(peerID, p);
+			peerLoopPromises.set(`${peerID}#${++peerLoopRuns}`, p);
 		};
 
 		const peerLoop = async (peerID: string, client: LISHClient): Promise<void> => {
 			peerManager.markActive(peerID);
+			// Set once this run has taken the peer out of the PeerManager; see stopPeer.
+			let stopped = false;
+			/**
+			 * Take the peer out of this download, once. The stream is aborted rather than half-closed:
+			 * removeAwait only half-closes it and forgets the client, so replies still in flight would
+			 * keep arriving until their timeout, out of reach of any later teardown.
+			 */
+			const stopPeer = async (reason: 'drop' | 'ban'): Promise<void> => {
+				if (stopped) return;
+				stopped = true;
+				client.abort(new Error(`peer ${reason}`));
+				await peerManager.removeAwait(peerID, reason);
+			};
 			let skippedChunks = 0;
 			let consecutiveNotAvailable = 0;
 			// Chunks this peer answered PEER_CHUNK_NOT_FOUND for — never re-request them from
@@ -438,7 +454,7 @@ export class ChunkDownloader {
 						// Every remaining chunk is one this peer doesn't have — nothing useful.
 						// Same soft drop as before; peer can come back via HAVE broadcast or retry session.
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: has none of the remaining chunks (${notFound.size} not-found)`);
-						await peerManager.removeAwait(peerID, 'drop');
+						await stopPeer('drop');
 					}
 					break;
 				}
@@ -458,7 +474,7 @@ export class ChunkDownloader {
 						// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
 						// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.
 						console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped to droppedPeers`);
-						await peerManager.removeAwait(peerID, 'drop');
+						await stopPeer('drop');
 						await requeueChunk(chunk);
 						break;
 					}
@@ -487,7 +503,7 @@ export class ChunkDownloader {
 						// Per-peer: disconnect if peer keeps failing transiently (10 consecutive busy/IO skips)
 						if (consecutiveNotAvailable >= 10) {
 							console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped: ${consecutiveNotAvailable} consecutive skip-chunk`);
-							await peerManager.removeAwait(peerID, 'drop');
+							await stopPeer('drop');
 							break;
 						}
 						continue;
@@ -512,7 +528,7 @@ export class ChunkDownloader {
 						await requeueChunk(chunk);
 						if (count >= ChunkDownloader.MAX_CORRUPT_CHUNKS) {
 							console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} bad chunks`);
-							await peerManager.removeAwait(peerID, 'ban');
+							await stopPeer('ban');
 							break;
 						}
 						continue;
@@ -693,7 +709,9 @@ export class ChunkDownloader {
 					if (retainedWriteDrainPending) notifyRetainedWriteDrain();
 				}
 			}
-			peerManager.markInactive(peerID);
+			// A stopped run no longer owns the peer's entry: removeAwait already cleared it, and a
+			// new run of the same peer may have marked it active since.
+			if (!stopped) peerManager.markInactive(peerID);
 		};
 
 		// 1s periodic progress emitter \u2014 reporter owns the sliding window + emit; getSnapshot supplies

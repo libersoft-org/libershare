@@ -95,8 +95,17 @@ class ScriptedClient {
 		if (reply === 'busy') throw new CodedError(ErrorCodes.PEER_BUSY, 'busy');
 		return reply;
 	}
-	async close(): Promise<void> {}
-	abort(): void {}
+	abortCalls = 0;
+	/** Holds close() open until it settles; `onClose` runs when close() is entered. */
+	closeGate: Promise<void> | undefined;
+	onClose: (() => void) | undefined;
+	async close(): Promise<void> {
+		this.onClose?.();
+		await this.closeGate;
+	}
+	abort(): void {
+		this.abortCalls++;
+	}
 }
 
 function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller: AbortController; isDestroyed: () => boolean }): ChunkDownloader {
@@ -412,5 +421,55 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 		await running;
 
 		expect(ds.downloadedChunks.has(chunkID)).toBe(false);
+	}, 15000);
+});
+
+describe('ChunkDownloader peerLoop — stopping a peer', () => {
+	it('aborts the stream of a banned peer instead of only half-closing it', async () => {
+		const { missing, data } = makeChunks(4);
+		const replies = new Map<ChunkID, Reply>();
+		for (const c of missing) {
+			const corrupt = data.get(c.chunkID)!.slice();
+			corrupt[0]! ^= 0xff;
+			replies.set(c.chunkID, corrupt);
+		}
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const bad = new ScriptedClient(replies);
+		const cd = makeDownloader(ds, pm, 4);
+		pm.tryAdd('peer-banned-abort', bad as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(pm.isBanned('peer-banned-abort')).toBe(true);
+		expect(bad.abortCalls).toBe(1);
+	}, 15000);
+
+	it('leaves a new run of the same peer active when the stopped run winds down after it started', async () => {
+		const { missing, data } = makeChunks(3);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 3);
+		const peerID = 'peer-rejoined-000';
+		// The first connection has none of the chunks, so the run drops the peer — and stays inside
+		// removeAwait while its close is held open.
+		const first = new ScriptedClient(new Map());
+		let releaseClose!: () => void;
+		first.closeGate = new Promise(resolve => (releaseClose = resolve));
+		const closing = new Promise<void>(resolve => (first.onClose = resolve));
+		pm.tryAdd(peerID, first as never, 'DIRECT');
+		const run = cd.run();
+		await closing;
+
+		// The peer comes back (a fresh HAVE) before the old run finished; the new connection is slow.
+		const replies = new Map<ChunkID, Reply>(missing.map(c => [c.chunkID, data.get(c.chunkID)!]));
+		const second = new ScriptedClient(replies, 300);
+		expect(pm.tryAdd(peerID, second as never, 'DIRECT')).toBe(true);
+		releaseClose();
+		await Bun.sleep(50);
+
+		expect(pm.isActive(peerID)).toBe(true);
+		await run;
+		expect(ds.downloadedChunks.size).toBe(3);
 	}, 15000);
 });
