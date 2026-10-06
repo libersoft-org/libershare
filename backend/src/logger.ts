@@ -1,5 +1,5 @@
 import { createConsola, LogLevels, type ConsolaReporter, type LogObject } from 'consola';
-import { appendFileSync, mkdirSync, renameSync, statSync } from 'fs';
+import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from 'fs';
 import { dirname } from 'path';
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 const levelMap: Record<LogLevel, number> = {
@@ -92,6 +92,16 @@ function createFileReporter(filePath: string): ConsolaReporter {
 		mkdirSync(dirname(filePath), { recursive: true });
 	} catch {}
 	let writeCount = 0;
+	// One descriptor kept open: appendFileSync opened and closed the file for every line, which on
+	// Windows (with on-access scanning) cost milliseconds per line on the transfer hot path.
+	let fd: number | null = null;
+	const open = (): number | null => {
+		try {
+			return openSync(filePath, 'a');
+		} catch {
+			return null;
+		}
+	};
 	return {
 		log(logObj: LogObject): void {
 			const timestamp = formatTimestamp(logObj.date);
@@ -99,10 +109,24 @@ function createFileReporter(filePath: string): ConsolaReporter {
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
 			const args = logObj.args.map(serializeArg).join(' ');
 			const line = `${prefix}[${timestamp}] [${levelName}] ${args}\n`;
-			try {
-				appendFileSync(filePath, line);
-			} catch {}
-			if (++writeCount % 1000 === 0) rotateLogFile(filePath);
+			fd ??= open();
+			if (fd !== null) {
+				try {
+					writeSync(fd, line);
+				} catch {
+					// The file may have been removed or the volume detached: reopen on the next line.
+					try {
+						closeSync(fd);
+					} catch {}
+					fd = null;
+				}
+			}
+			if (++writeCount % 1000 === 0 && fd !== null) {
+				// Close before renaming: Windows refuses to rename a file that is still open.
+				closeSync(fd);
+				fd = null;
+				rotateLogFile(filePath);
+			}
 		},
 	};
 }
