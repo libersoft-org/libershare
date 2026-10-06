@@ -67,6 +67,14 @@ jobs:
         run: |
           bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke.exe"
           "$RUNNER_TEMP/dataset-native-smoke.exe"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Compile and run native file operations with the package builder's Bun
+        run: |
+          test "$(bun --version)" = 1.4.2
+          bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke-1.4.exe"
+          "$RUNNER_TEMP/dataset-native-smoke-1.4.exe"
 
   macos-native:
     runs-on: macos-15
@@ -87,6 +95,14 @@ jobs:
         run: |
           bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke"
           "$RUNNER_TEMP/dataset-native-smoke"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Compile and run native file operations with the package builder's Bun
+        run: |
+          test "$(bun --version)" = 1.4.2
+          bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke-1.4"
+          "$RUNNER_TEMP/dataset-native-smoke-1.4"
 
   docker:
     runs-on: ubuntu-24.04
