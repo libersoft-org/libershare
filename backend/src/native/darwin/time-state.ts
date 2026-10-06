@@ -89,7 +89,7 @@ export async function readDarwinTimeSnapshot(request: DarwinTimeSnapshotRequest 
 			bootId = getNativeBootId();
 		if (conversion && (conversion.reference.bootId !== bootId || readDarwinTimeZone()?.zone.fingerprint !== local?.zone.fingerprint)) throw new Error('The host timezone or boot changed during clock preparation');
 		const targetUtcMs = conversion?.targetUtcMs;
-		const targetNtpFingerprint = request.server === undefined ? undefined : darwinNtpFingerprint({ content: Buffer.from(`server ${request.server}\n`).toString('base64'), uid: file?.uid ?? 0, gid: file?.gid ?? 0, mode: file?.mode ?? 0o644, xattrs: file?.xattrs ?? {} })!;
+		const targetNtpFingerprint = request.server === undefined ? undefined : darwinNtpFingerprint({ content: Buffer.from(`server ${request.server}\n`).toString('base64'), uid: file?.uid ?? 0, gid: file?.gid ?? 0, mode: file?.mode ?? 0o644, xattrs: file?.xattrs ?? {}, acl: file?.acl ?? null })!;
 		return { utcMs, hostUptimeMs, bootId, zone: local?.zone ?? null, offsetMinutes: local ? tzifOffsetAt(parseTzif(local.bytes), Math.floor(utcMs / 1000)) / 60 : null, ntpEnabled: coreTime.symbols.TMIsAutomaticTimeEnabled(), ntpServer: file ? parseNtpConfServer(Buffer.from(file.content, 'base64').toString('utf8')) : null, ntpFingerprint: file?.fingerprint ?? null, ntpIdentity: file?.identity ?? null, ...(request.timezone ? { targetZone: prepareDarwinTimeZone(request.timezone, local?.zone ?? null) } : {}), ...(targetUtcMs === undefined ? {} : { targetClock: { targetUtcMs, hostUptimeMs, bootId } }), ...(targetNtpFingerprint ? { targetNtpFingerprint } : {}) };
 	} finally {
 		coreTime.close();

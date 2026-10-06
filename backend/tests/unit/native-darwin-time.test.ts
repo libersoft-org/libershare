@@ -144,6 +144,22 @@ describe.skipIf(process.platform !== 'darwin')('atomic macOS NTP files', () => {
 			rmSync(directory, { recursive: true, force: true });
 		}
 	});
+	test('preserves an access control entry through publication', () => {
+		const directory = mkdtempSync(join(tmpdir(), 'lish-ntp-acl-')),
+			path = join(directory, 'ntp.conf');
+		try {
+			writeFileSync(path, 'server old.example.org\n');
+			execFileSync('/bin/chmod', ['+a', 'everyone deny write', path]);
+			const original = readDarwinNtpFile(path)!;
+			expect(original.acl).toContain('deny');
+			writeDarwinNtpFile(Buffer.from('server new.example.org\n'), original, path);
+			expect(readDarwinNtpFile(path)!.acl).toBe(original.acl);
+			expect(execFileSync('/bin/ls', ['-le', path], { encoding: 'utf8' })).toContain('everyone deny write');
+		} finally {
+			execFileSync('/bin/chmod', ['-N', path]);
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
 	test('a concurrent edit is not overwritten and staging files are removed', () => {
 		const directory = mkdtempSync(join(tmpdir(), 'lish-ntp-race-')),
 			path = join(directory, 'ntp.conf');
