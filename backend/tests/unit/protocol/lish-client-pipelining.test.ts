@@ -74,13 +74,13 @@ describe('LISHClient pipelined requests', () => {
 		await Bun.sleep(0);
 		expect(readTimers()).toBe(1);
 		push(frame({ data: new Uint8Array(16).fill(1) }));
-		expect((await replies[0])[0]).toBe(1);
+		expect((await replies[0]!)[0]).toBe(1);
 		await Bun.sleep(0);
 		expect(readTimers()).toBe(2);
 		push(frame({ data: new Uint8Array(16).fill(2) }));
 		push(frame({ data: new Uint8Array(16).fill(3) }));
-		expect((await replies[1])[0]).toBe(2);
-		expect((await replies[2])[0]).toBe(3);
+		expect((await replies[1]!)[0]).toBe(2);
+		expect((await replies[2]!)[0]).toBe(3);
 	});
 
 	it('reports manifest progress only for the bytes of its own reply', async () => {
