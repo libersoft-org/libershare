@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { isIP } from 'node:net';
 import { Mutex } from 'async-mutex';
 import { CodedError, ErrorCodes, ipv4BaselineOf, isSelectableInterface, isValidSSID, isValidWifiKey, normalizeDnsServers, sameIPv4Baseline, validateIPv4Config, type NetAddress, type NetCapabilities, type NetInterfaceInfo, type NetIPv4Config, type NetWifiNetwork, type NetworkStateInfo } from '@shared';
 import { assertWindowsWifiMutationIdle, connectWindowsWifi, disconnectWindowsWifi, isWindowsInterfaceID, scanWindowsWifi } from './system-network-windows.ts';
@@ -311,13 +312,17 @@ export function assertAppliedIPv4State(state: NetworkStateInfo, interfaceID: str
 	// a change that was written exactly as asked, and fail it after the helper
 	// returned - nothing rolls it back, so the user would be told the opposite of
 	// what happened to their machine.
+	// Only the families the request names are compared. Windows writes each family
+	// on its own and keeps the one left out; Linux and macOS replace the whole list
+	// and check that themselves before the helper answers.
 	if (config.dns?.length && requireLease) {
+		const expectedDns = normalizeDnsServers(config.dns).map(value => value.toLowerCase());
+		const families = new Set(expectedDns.map(value => isIP(value)));
 		const actualDns = normalizeDnsServers(target.dns)
 			.map(value => value.toLowerCase())
+			.filter(value => families.has(isIP(value)))
 			.sort();
-		const expectedDns = normalizeDnsServers(config.dns)
-			.map(value => value.toLowerCase())
-			.sort();
+		expectedDns.sort();
 		if (actualDns.length !== expectedDns.length || actualDns.some((value, index) => value !== expectedDns[index])) throw new Error('network helper did not apply the requested DNS servers');
 	}
 }

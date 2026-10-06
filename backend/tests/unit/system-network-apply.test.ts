@@ -229,6 +229,14 @@ describe('assertAppliedIPv4State', () => {
 		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53', '2001:DB8::53'] })).not.toThrow();
 	});
 
+	it('compares only the DNS family the request names', () => {
+		// Windows writes each family on its own and keeps the IPv6 server the request
+		// left out; the helper answered success for exactly that result.
+		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] })).not.toThrow();
+		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] })).toThrow('DNS');
+		expect(() => assertAppliedIPv4State({ ...state, interfaces: [{ ...iface, dns: ['192.0.2.53', '198.51.100.53', '2001:db8::53'] }] }, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['192.0.2.53'] })).toThrow('DNS');
+	});
+
 	it('rejects a spoofed success whose fresh state does not match', () => {
 		expect(() => assertAppliedIPv4State(state, 'lan0', { mode: 'static', address: '192.0.2.11', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('address');
 		expect(() => assertAppliedIPv4State({ ...state, known: false }, 'lan0', { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1' })).toThrow('verified');
