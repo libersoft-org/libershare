@@ -28,7 +28,11 @@ class WindowedStream extends AbstractStream {
 	}
 	/** Deliver request frames as if they arrived from the peer. */
 	receive(...requests: unknown[]): void {
-		for (const request of requests) this.onData(lpEncode.single(codecEncode(request)).subarray());
+		for (const request of requests) this.receiveRaw(codecEncode(request));
+	}
+	/** Deliver a frame with any payload, readable as a request or not. */
+	receiveRaw(payload: Uint8Array): void {
+		this.onData(lpEncode.single(payload).subarray());
 	}
 	sendData(data: { byteLength: number }): SendResult {
 		const sentBytes = Math.min(this.window, data.byteLength);
@@ -45,13 +49,13 @@ class WindowedStream extends AbstractStream {
 const LISH = 'lish-backpressure';
 const CHUNK = new Uint8Array(256 * 1024).fill(9);
 
-function dataServer(): { server: DataServer; chunks: () => number; lists: () => number } {
+function dataServer(answer: () => Uint8Array | string = () => CHUNK): { server: DataServer; chunks: () => number; lists: () => number } {
 	let chunks = 0;
 	let lists = 0;
 	const server = {
 		getChunk: async () => {
 			chunks++;
-			return CHUNK;
+			return answer();
 		},
 		list: () => {
 			lists++;
@@ -92,9 +96,10 @@ describe('LISH responder backpressure', () => {
 		const { server, lists } = dataServer();
 		const handler = handleLISHProtocol(stream, server);
 		stream.receive(...[1, 2, 3].map(() => ({ type: 'getLishs' })));
-		await until(() => lists() > 0);
+		await until(() => lists() > 1);
 		await Bun.sleep(50);
-		expect(lists()).toBe(1);
+		// One listing waits in the shut window, the next one is prepared.
+		expect(lists()).toBe(2);
 		stream.open(1024 * 1024);
 		await until(() => lists() === 3);
 		expect(lists()).toBe(3);
@@ -113,4 +118,27 @@ describe('LISH responder backpressure', () => {
 		expect(finished).toBe(true);
 		expect(chunks()).toBeLessThanOrEqual(2);
 	});
+	// Error replies are small, but a peer that never reads could otherwise queue one per request.
+	const errorCases: Array<[string, (stream: WindowedStream) => void, () => Uint8Array | string]> = [
+		['a chunk the seeder does not have', stream => stream.receive(...Array.from({ length: 100 }, (_, i) => ({ type: 'getChunk', lishID: LISH, chunkID: `c${i}` }))), () => 'chunk_not_found'],
+		['a LISH that is not shared', stream => stream.receive(...Array.from({ length: 100 }, (_, i) => ({ type: 'getChunk', lishID: 'lish-not-shared', chunkID: `c${i}` }))), () => CHUNK],
+		['an unreadable request', stream => Array.from({ length: 100 }, () => stream.receiveRaw(new Uint8Array([0xc1]))), () => CHUNK],
+	];
+	for (const [name, send, answer] of errorCases) {
+		it(`holds back error replies for ${name}`, async () => {
+			const stream = new WindowedStream();
+			const { server } = dataServer(answer);
+			const handler = handleLISHProtocol(stream, server);
+			send(stream);
+			await until(() => stream.writeBufferLength > 0);
+			await Bun.sleep(50);
+			const queued = stream.writeBufferLength;
+			// Only the first reply is queued; with every reply queued this would be about 100 times as much.
+			await Bun.sleep(50);
+			expect(stream.writeBufferLength).toBe(queued);
+			expect(queued).toBeLessThan(100);
+			stream.abort(new Error('test done'));
+			await handler;
+		});
+	}
 });

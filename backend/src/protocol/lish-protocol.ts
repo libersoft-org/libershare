@@ -556,6 +556,15 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 	const connType: ConnectionType = connectionType ?? 'DIRECT';
 	trace(`[PROTO] stream open from ${remotePeer}, id=${stream.id}`);
 	let requestCount = 0;
+	// Backpressure: every reply — data, error or refusal — goes out only once the previous one has
+	// left the write queue, so a peer that pipelines requests, or never reads its replies, holds at
+	// most one queued reply and one prepared one here. A chunk is read from disk before this wait,
+	// so the disk read overlaps the previous chunk's transmission. False: the stream is gone.
+	const reply = async (data: Uint8Array): Promise<boolean> => {
+		await waitForWriteBuffer(stream, abortSignal);
+		if (abortSignal?.aborted) return false;
+		return sendLengthPrefixed(stream, data);
+	};
 	try {
 		if (abortSignal?.aborted) return;
 		// Wrap the stream with length-prefixed decoder for multiple messages
@@ -589,19 +598,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} catch (parseErr: any) {
 				// console.debug(`[PROTO] malformed request from ${remotePeer}: ${parseErr.message ?? parseErr}`);
 				const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_INVALID_REQUEST };
-				sendLengthPrefixed(stream, codecEncode(response));
+				await reply(codecEncode(response));
 				continue;
 			}
-			// Backpressure: a reply goes out only once the previous one has left the write queue, so a
-			// peer that pipelines requests — or never reads its replies — holds at most one queued
-			// reply and one prepared one here. A chunk is read from disk first and waits only before
-			// it is sent, so the disk read overlaps the previous chunk's transmission.
-			const isChunkRequest = request.type === 'getChunk' || request.type === undefined;
-			if (!isChunkRequest && requestCount > 1) {
-				await waitForWriteBuffer(stream, abortSignal);
-				if (abortSignal?.aborted) break;
-			}
-
 			if (request.type === 'getLishs') {
 				// Serve the shared-LISH LISTING under the softer list-gate (canListShares).
 				// Soft means it accepts wider EVIDENCE of lishnet membership than the strict
@@ -621,7 +620,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					// it just asked us and it knows whether it shares a lishnet with us.
 					listPages.clear();
 					const gated: LISHGetLishsResponse = { type: 'getLishs-result', error: ErrorCodes.PEER_LISTING_NOT_AUTHORIZED };
-					sendLengthPrefixed(stream, codecEncode(gated));
+					await reply(codecEncode(gated));
 					continue;
 				}
 				// Same bound as the pubsub search path: both lowercase the query and then
@@ -631,36 +630,33 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					trace(`[PROTO] getLishs from ${remotePeer} refused: query too long (${request.query.length})`);
 					listPages.clear();
 					const rejected: LISHGetLishsResponse = { type: 'getLishs-result', lishs: [] };
-					sendLengthPrefixed(stream, codecEncode(rejected));
+					await reply(codecEncode(rejected));
 					continue;
 				}
 				try {
-					sendLengthPrefixed(
-						stream,
-						listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize()))
-					);
+					await reply(listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
 				} catch (error) {
 					listPages.clear();
 					if (!(error instanceof CodedError)) throw error;
 					const response: LISHGetLishsResponse = { type: 'getLishs-result', error: error.code === ErrorCodes.PEER_LIST_TOO_LARGE ? error.code : ErrorCodes.PEER_INVALID_REQUEST };
-					sendLengthPrefixed(stream, codecEncode(response));
+					await reply(codecEncode(response));
 				}
 			} else if (request.type === 'getLish') {
 				// Only return manifest for LISHs with upload enabled — and only to
 				// peers we share a joined lishnet with (same gate as getLishs).
 				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !isUploadAdvertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
-					sendLengthPrefixed(stream, codecEncode(response));
+					await reply(codecEncode(response));
 				} else {
 					const lish = dataServer.get(request.lishID as LISHid);
 					if (!lish || !lish.directory) {
 						// We advertise it as shared (upload_enabled) but have no meta/directory — inconsistent local state.
 						// Return NOT_SHARED (same code as the deliberate-reject case) to avoid leaking whether we have the LISH.
 						const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
-						sendLengthPrefixed(stream, codecEncode(response));
+						await reply(codecEncode(response));
 					} else {
 						const response: LISHGetLishResponse = { manifest: toManifest(lish) };
-						sendLengthPrefixed(stream, codecEncode(response));
+						await reply(codecEncode(response));
 					}
 				}
 			} else if (request.type === 'getChunk' || request.type === undefined) {
@@ -673,18 +669,18 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				if (serveGateBlocks(sharesNetworkWith, remotePeerID)) {
 					trace(`[PROTO] getChunk from ${remotePeer} refused: no shared joined lishnet`);
 					const gatedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
-					sendLengthPrefixed(stream, codecEncode(gatedResponse));
+					await reply(codecEncode(gatedResponse));
 					continue;
 				}
 				if (!uploadEnabled.has(chunkReq.lishID)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
-					sendLengthPrefixed(stream, codecEncode(blockedResponse));
+					await reply(codecEncode(blockedResponse));
 					continue;
 				}
 				if (isBusy(chunkReq.lishID)) {
 					// Transient — client should retry later.
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_BUSY };
-					sendLengthPrefixed(stream, codecEncode(blockedResponse));
+					await reply(codecEncode(blockedResponse));
 					continue;
 				}
 				// Per-LISH upload peer cap — check BEFORE the disk read so a cap-reached stream
@@ -692,7 +688,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				const uploadPeerCap = maxUploadPeersPerLISH();
 				if (!servedLishIDs.has(chunkReq.lishID) && uploadPeerCap > 0 && (activeStreamCount.get(chunkReq.lishID) ?? 0) >= uploadPeerCap) {
 					const busyResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_BUSY };
-					sendLengthPrefixed(stream, codecEncode(busyResponse));
+					await reply(codecEncode(busyResponse));
 					continue;
 				}
 				const chunkResult = await (reader ? reader.getChunk(chunkReq.lishID, chunkReq.chunkID) : dataServer.getChunk(chunkReq.lishID, chunkReq.chunkID));
@@ -703,13 +699,13 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				if (chunkResult === 'lish_not_found') {
 					// Same privacy rationale as getLish: don't leak whether we have it.
 					const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
-					sendLengthPrefixed(stream, codecEncode(response));
+					await reply(codecEncode(response));
 					continue;
 				}
 				if (chunkResult === 'chunk_not_found') {
 					// Partial seeder — peer simply doesn't have this chunk. Client should go elsewhere.
 					const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_CHUNK_NOT_FOUND };
-					sendLengthPrefixed(stream, codecEncode(response));
+					await reply(codecEncode(response));
 					continue;
 				}
 				if (chunkResult === 'file_missing') {
@@ -718,7 +714,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					// subsequent requests return chunk_not_found, so the consecutive-io_error
 					// auto-disable path below would never reach its threshold for this case.
 					const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_CHUNK_NOT_FOUND };
-					sendLengthPrefixed(stream, codecEncode(response));
+					await reply(codecEncode(response));
 					const wasDownloadEnabled = isDownloadEnabled?.(chunkReq.lishID) ?? false;
 					if (wasDownloadEnabled && startRecoveryFn) startRecoveryFn(chunkReq.lishID, ErrorCodes.IO_NOT_FOUND, { downloadEnabled: true, uploadEnabled: uploadEnabled.has(chunkReq.lishID) });
 					if (triggerVerifyFn) triggerVerifyFn(chunkReq.lishID);
@@ -729,7 +725,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					const count = (ioErrorCounts.get(chunkReq.lishID) ?? 0) + 1;
 					ioErrorCounts.set(chunkReq.lishID, count);
 					const errResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_IO_ERROR };
-					sendLengthPrefixed(stream, codecEncode(errResponse));
+					await reply(codecEncode(errResponse));
 					if (count >= IO_ERROR_THRESHOLD && uploadEnabled.has(chunkReq.lishID)) {
 						console.error(`[Upload] ${chunkReq.lishID.slice(0, 8)}: ${count} consecutive I/O errors — auto-disabling upload`);
 						const wasDownloadEnabled = isDownloadEnabled?.(chunkReq.lishID) ?? false;
@@ -751,11 +747,9 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
 					if (remotePeerID) registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
 				}
-				await waitForWriteBuffer(stream, abortSignal);
-				if (abortSignal?.aborted || stream.status !== 'open') break;
 				// Send raw binary chunk — msgpack native bin type, no base64.
 				const response: LISHGetChunkResponse = { data: chunkData };
-				sendLengthPrefixed(stream, codecEncode(response));
+				if (!(await reply(codecEncode(response)))) break;
 				ioErrorCounts.delete(chunkReq.lishID); // reset on success
 				const chunkLoc = dataServer.findChunkFile(chunkReq.lishID as LISHid, chunkReq.chunkID as import('@shared').ChunkID);
 				if (remotePeerID) recordUploadBytes(chunkReq.lishID, fullRemotePeer, chunkData.length, chunkLoc);
@@ -803,7 +797,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					}
 				}
 				const response: LISHAnnounceHaveResponse = { ok: true };
-				sendLengthPrefixed(stream, codecEncode(response));
+				await reply(codecEncode(response));
 			} else if (request.type === 'searchResult') {
 				// Unicast search response from a peer in reply to our pubsub `searchLishs` query.
 				// peerID is the verified stream remote (anti-spoofing).
@@ -820,11 +814,11 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					}
 				}
 				const response: LISHSearchResultResponse = { ok: true };
-				sendLengthPrefixed(stream, codecEncode(response));
+				await reply(codecEncode(response));
 			} else {
 				// Unknown request type — reject with PEER_INVALID_REQUEST
 				const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_INVALID_REQUEST };
-				sendLengthPrefixed(stream, codecEncode(response));
+				await reply(codecEncode(response));
 			}
 		}
 		// Stream closed by remote, close our end
