@@ -3,6 +3,7 @@ import { openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-
 import { conservativeDatasetRoot } from './dataset-root.ts';
 import { DatasetWriteScope } from './dataset-write-scope.ts';
 import { readDatasetRange } from './dataset-chunk-io.ts';
+import type { DatasetFileHandle } from './safe-dataset-types.ts';
 import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot, addDataset as dbAddDataset, relocateDataset as dbRelocateDataset } from '../db/lishs-roots.ts';
 import { getDatasetLinkBindings as dbGetDatasetLinkBindings, type DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { clearLishData, clearLishnetData } from '../db/database.ts';
@@ -11,6 +12,22 @@ import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type
 import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, type ChunkSlot, type FileForVerification, type TransferStats, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, getAllChunkSlots as dbGetAllChunkSlots, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, markAllFileChunksFailed as dbMarkAllFileChunksFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, getTransferStats as dbGetTransferStats, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
 
 export type { MissingChunk };
+
+/** What reading one chunk can come back with. */
+export type ChunkReadResult = Uint8Array | 'lish_not_found' | 'chunk_not_found' | 'file_missing' | 'io_error';
+
+/** Reads chunks for one stream, keeping their files open between reads; see DataServer.createChunkReader. */
+export interface ChunkReader {
+	getChunk(lishID: LISHid, chunkID: ChunkID): Promise<ChunkReadResult>;
+	/** Close every file the reader still keeps open. */
+	close(): Promise<void>;
+}
+
+interface OpenChunkFile {
+	readonly file: DatasetFileHandle;
+	readonly size: number;
+	close(): Promise<void>;
+}
 
 export class DataServer {
 	private db: Database;
@@ -222,7 +239,94 @@ export class DataServer {
 
 	// Chunk I/O
 
-	public async getChunk(lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array | 'lish_not_found' | 'chunk_not_found' | 'file_missing' | 'io_error'> {
+	public getChunk(lishID: LISHid, chunkID: ChunkID): Promise<ChunkReadResult> {
+		return this.readChunk(lishID, chunkID, async (id, filePath) => {
+			const opened = await this.openChunkFile(id, filePath);
+			return { ...opened, done: () => opened.close() };
+		});
+	}
+
+	/**
+	 * A chunk reader for one stream of requests: it keeps each file it read open for the next
+	 * chunk, instead of opening the dataset and the file, reading their size and closing both for
+	 * every chunk (on Windows that is several round trips to the I/O worker). Files close after
+	 * `idleMs` without a read — so an idle stream does not keep them locked — and on `close()`.
+	 * The chunk's location is still looked up for every read, so a deleted LISH or reset chunk is
+	 * never served from a kept file; a moved dataset gets a new key and is opened afresh.
+	 */
+	createChunkReader(idleMs = 2000): ChunkReader {
+		const files = new Map<string, Promise<OpenChunkFile>>();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const drop = (key: string, entry: Promise<OpenChunkFile>): Promise<void> => {
+			if (files.get(key) === entry) files.delete(key);
+			return entry.then(
+				opened => opened.close(),
+				() => {}
+			);
+		};
+		const closeAll = async (): Promise<void> => {
+			const entries = [...files.entries()];
+			files.clear();
+			await Promise.all(entries.map(([key, entry]) => drop(key, entry)));
+		};
+		return {
+			getChunk: (lishID, chunkID) => {
+				clearTimeout(timer);
+				timer = setTimeout(() => void closeAll(), idleMs);
+				timer.unref?.();
+				return this.readChunk(lishID, chunkID, async (id, filePath) => {
+					const key = JSON.stringify([id, this.getDatasetRoot(id) ?? getLISHMeta(this.db, id)?.directory ?? null, filePath]);
+					let entry = files.get(key);
+					if (!entry) {
+						entry = this.openChunkFile(id, filePath);
+						files.set(key, entry);
+						const opening = entry;
+						opening.catch(() => {
+							if (files.get(key) === opening) files.delete(key);
+						});
+					}
+					const opened = await entry;
+					const kept = entry;
+					// A failed read may mean the kept file went bad: drop it so the next read reopens it.
+					return { file: opened.file, size: opened.size, done: failed => (failed ? drop(key, kept) : Promise.resolve()) };
+				});
+			},
+			close: async () => {
+				clearTimeout(timer);
+				await closeAll();
+			},
+		};
+	}
+
+	/** Open a chunk's file for reading, together with its dataset, and read the file's size. */
+	private async openChunkFile(lishID: LISHid, filePath: string): Promise<OpenChunkFile> {
+		const dataset = await this.openDataset(lishID);
+		try {
+			const file = await dataset.openFile(filePath, 'read');
+			try {
+				const info = await file.stat();
+				return {
+					file,
+					size: info.size,
+					close: async () => {
+						try {
+							await file.close();
+						} finally {
+							await dataset.close();
+						}
+					},
+				};
+			} catch (error) {
+				await file.close();
+				throw error;
+			}
+		} catch (error) {
+			await dataset.close();
+			throw error;
+		}
+	}
+
+	private async readChunk(lishID: LISHid, chunkID: ChunkID, open: (lishID: LISHid, filePath: string) => Promise<{ file: DatasetFileHandle; size: number; done(failed: boolean): Promise<void> }>): Promise<ChunkReadResult> {
 		const meta = getLISHMeta(this.db, lishID);
 		if (!meta) {
 			console.log(`LISH not found: ${lishID}`);
@@ -241,17 +345,14 @@ export class DataServer {
 
 		try {
 			const offset = location.chunkIndex * meta.chunkSize;
-			const dataset = await this.openDataset(lishID);
+			const opened = await open(lishID, location.filePath);
+			let failed = true;
 			try {
-				const file = await dataset.openFile(location.filePath, 'read');
-				try {
-					const info = await file.stat();
-					return await readDatasetRange(file, offset, Math.max(0, Math.min(meta.chunkSize, info.size - offset)));
-				} finally {
-					await file.close();
-				}
+				const data = await readDatasetRange(opened.file, offset, Math.max(0, Math.min(meta.chunkSize, opened.size - offset)));
+				failed = false;
+				return data;
 			} finally {
-				await dataset.close();
+				await opened.done(failed);
 			}
 		} catch (error: any) {
 			if (error.code === ErrorCodes.LISH_UNSAFE_PATH) throw error;
