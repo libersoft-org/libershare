@@ -129,6 +129,10 @@ export class ChunkDownloader {
 		// non-zero \u2014 an in-flight failure requeues the chunk, possibly one that
 		// only the scanning peer can serve.
 		let inFlight = 0;
+		// The chunks behind `inFlight`. A rebuilt or requeued queue can list a chunk that a peer is
+		// still fetching; it is skipped so it is not fetched twice. If that fetch fails, its peer
+		// requeues the chunk itself.
+		const inFlightChunks = new Set<ChunkID>();
 		// Changes only when an in-flight request puts potentially useful work back
 		// into the queue. Idle peers watch this instead of repeatedly rotating the
 		// same per-peer notFound entries while nothing has settled.
@@ -423,6 +427,7 @@ export class ChunkDownloader {
 						const candidate = queue[queueIdx++]!;
 						// Skip chunks already downloaded (dedup re-queued entries)
 						if (dataServer.isChunkDownloaded(lishID, candidate.chunkID)) continue;
+						if (inFlightChunks.has(candidate.chunkID)) continue;
 						if (notFound.has(candidate.chunkID)) {
 							unservable.push(candidate);
 							continue;
@@ -434,7 +439,10 @@ export class ChunkDownloader {
 					// Loop push — a spread would blow the argument limit on huge manifests.
 					for (const u of unservable) queue.push(u);
 					if (!chunk && unservable.length > 0) onlyNotFoundLeft = true;
-					if (chunk) inFlight++;
+					if (chunk) {
+						inFlight++;
+						inFlightChunks.add(chunk.chunkID);
+					}
 					observedRequeueVersion = requeueVersion;
 				});
 				if (!chunk) {
@@ -706,6 +714,7 @@ export class ChunkDownloader {
 					// The chunk's fate is settled (downloaded, requeued, or fatal) — release
 					// the in-flight claim so idle peers can make their exit/drop decision.
 					inFlight--;
+					inFlightChunks.delete(chunk.chunkID);
 					if (retainedWriteDrainPending) notifyRetainedWriteDrain();
 				}
 			}

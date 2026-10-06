@@ -108,13 +108,15 @@ class ScriptedClient {
 	}
 }
 
-function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller: AbortController; isDestroyed: () => boolean }): ChunkDownloader {
+function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller?: AbortController; isDestroyed?: () => boolean; pauseController?: PauseController }): ChunkDownloader {
 	const lish = { id: LISH_ID, name: 'test', chunkSize: CHUNK_SIZE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: chunkCount * CHUNK_SIZE, checksums: [] }] } as unknown as IStoredLISH;
 	const controller = lifecycle?.controller ?? new AbortController();
-	const pc = new PauseController(
-		() => false,
-		() => false
-	);
+	const pc =
+		lifecycle?.pauseController ??
+		new PauseController(
+			() => false,
+			() => false
+		);
 	const deps = {
 		lishID: LISH_ID,
 		downloadDir: '/tmp/peerloop-test',
@@ -471,5 +473,29 @@ describe('ChunkDownloader peerLoop — stopping a peer', () => {
 		expect(pm.isActive(peerID)).toBe(true);
 		await run;
 		expect(ds.downloadedChunks.size).toBe(3);
+	}, 15000);
+});
+
+describe('ChunkDownloader peerLoop — chunks in flight', () => {
+	it('does not fetch a chunk twice when the queue lists it again while it is in flight', async () => {
+		const { missing, data } = makeChunks(2);
+		const [x, y] = [missing[0]!, missing[1]!];
+		// The queue holds X twice, as after a requeue or a rebuilt queue.
+		const ds = new FakeDataServer([x, x, y]);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 2);
+		const replies = new Map<ChunkID, Reply>([
+			[x.chunkID, data.get(x.chunkID)!],
+			[y.chunkID, data.get(y.chunkID)!],
+		]);
+		const slow = new ScriptedClient(replies, 300);
+		const fast = new ScriptedClient(replies);
+		pm.tryAdd('peer-slow-0000000', slow as never, 'DIRECT');
+		pm.tryAdd('peer-fast-0000000', fast as never, 'DIRECT');
+
+		await cd.run();
+
+		expect([...slow.requests, ...fast.requests].filter(c => c === x.chunkID).length).toBe(1);
+		expect(ds.downloadedChunks.size).toBe(2);
 	}, 15000);
 });
