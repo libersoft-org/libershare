@@ -14,6 +14,7 @@ import { ProgressReporter, type FileProgressEntry } from './progress-reporter.ts
 import { FileAllocator, type AllocationProgress } from './file-allocator.ts';
 import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { DatasetWriteScope } from '../lish/dataset-write-scope.ts';
+import { checksumBytes } from '../lish/checksum.ts';
 /**
  * Chunk requests to pipeline to one peer: as many chunks as fit in `network.chunkWindowBytes`,
  * at least one and at most {@link CHUNK_WINDOW_MAX_REQUESTS}.
@@ -582,9 +583,7 @@ export class ChunkDownloader {
 						const expectedLen = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
 						let rejectReason: string | null = expectedLen >= 0 && data.length !== expectedLen ? `wrong length: expected ${expectedLen}B, got ${data.length}B` : null;
 						if (!rejectReason) {
-							const hasher = new Bun.CryptoHasher(lish.checksumAlgo as any);
-							hasher.update(data);
-							const actualHash = hasher.digest('hex');
+							const actualHash = await checksumBytes(data, lish.checksumAlgo);
 							if (actualHash !== chunk.chunkID) rejectReason = `bad hash: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)}`;
 						}
 						if (rejectReason) {
