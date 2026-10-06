@@ -24,21 +24,38 @@ try {
 		const write = (percent: number): Promise<MixerResult> => writer.call({ method: `${platform}.volume.write`, args: { percent, timeoutMs: 5000 } });
 		const before = await read();
 		if (before.kind !== 'ok' || before.volume === null) throw new Error('The test requires an available audio output');
+		const original = before.volume;
+		const target = original === 37 ? 38 : 37;
+		const failures: string[] = [];
+		// A mixer may round to its own step, so one percent either way still counts as reached.
+		const expect = (label: string, result: MixerResult, readback: MixerResult, wanted: number): void => {
+			if (result.kind !== 'ok') failures.push(`${label} returned ${result.kind}`);
+			if (readback.kind !== 'ok' || readback.volume === null || Math.abs(readback.volume - wanted) > 1) failures.push(`${label} read back ${readback.kind === 'ok' ? readback.volume : readback.kind}, wanted ${wanted}`);
+		};
 		if (process.argv[2] === 'monitor') await monitor.call({ method: 'linux.volume.monitor.start' });
-		let changed: MixerResult | undefined;
-		let restored: MixerResult;
 		try {
-			changed = await write(before.volume === 37 ? 38 : 37);
-			console.log(JSON.stringify({ before, changed, readback: await read() }));
+			const changed = await write(target);
+			const readback = await read();
+			console.log(JSON.stringify({ before, changed, readback }));
+			expect('change', changed, readback, target);
 		} finally {
-			restored = await write(before.volume);
-			console.log(JSON.stringify({ restored, readback: await read() }));
+			// Restored even when the change failed, and checked like the change itself.
+			const restored = await write(original);
+			const readback = await read();
+			console.log(JSON.stringify({ restored, readback }));
+			expect('restore', restored, readback, original);
 			if (process.argv[2] === 'monitor') {
 				await Bun.sleep(100);
 				await monitor.call({ method: 'linux.volume.monitor.stop' });
 				const stoppedEvents = events;
 				await Bun.sleep(30);
 				console.log(JSON.stringify({ events, noEventsAfterStop: events === stoppedEvents }));
+				if (stoppedEvents === 0) failures.push('the monitor reported no volume change');
+				if (events !== stoppedEvents) failures.push('the monitor kept reporting after it was stopped');
+			}
+			if (failures.length) {
+				console.error(failures.join('\n'));
+				process.exitCode = 1;
 			}
 		}
 	} else throw new Error('Expected open, audio, monitor, or corewlan');
