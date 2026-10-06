@@ -34,6 +34,7 @@ const NETWORK_POLL_EVERY_N_TICKS = 2;
  * is 32 octets, and a WPA passphrase is 63 characters or a 64-character hex key.
  */
 const MAX_INTERFACE_ID = 64;
+const MAX_OPERATION_ID = 64;
 
 /** Require a bounded string, naming the offending parameter when it is not one. */
 export function assertString(value: unknown, name: string, maxLength: number, minLength: number = 1): string {
@@ -62,8 +63,8 @@ interface SystemHandlers {
 	applyTimeSettings: (p: SystemTimeChanges) => Promise<SystemTimeResult>;
 	network: () => Promise<NetworkStateInfo>;
 	networkApply: (p: { interfaceID: string; config: NetIPv4Config; expected: NetIPv4Baseline }) => Promise<NetworkStateInfo>;
-	acknowledgeNetwork: () => Promise<NetworkStateInfo>;
-	acknowledgeTime: () => Promise<SystemTimeStatus>;
+	acknowledgeNetwork: (p: { operationId: string }) => Promise<NetworkStateInfo>;
+	acknowledgeTime: (p: { operationId: string }) => Promise<SystemTimeStatus>;
 	wifiDisconnect: (p: { interfaceID: string }) => Promise<NetworkStateInfo>;
 	wifiScan: (p: { interfaceID: string }) => Promise<NetWifiNetwork[]>;
 	wifiConnect: (p: { interfaceID: string; ssid: string; bssid?: string | null; password?: string; expectedSecurity?: string; expectedSsidHex?: string }) => Promise<NetworkStateInfo>;
@@ -518,11 +519,13 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 	}
 
 	/** Under the network lock like a change, so no new change starts before the answer is read back. */
-	async function acknowledgeNetwork(): Promise<NetworkStateInfo> {
+	async function acknowledgeNetwork(p: { operationId: string }): Promise<NetworkStateInfo> {
 		if (!nativeNetwork) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED);
+		assert(p, ['operationId']);
+		const operationId = assertString(p.operationId, 'operationId', MAX_OPERATION_ID);
 		return runAndPublishNetworkMutation(
 			async () => {
-				await nativeNetwork.acknowledge();
+				await nativeNetwork.acknowledge(operationId);
 				resetNetworkStateCache();
 				return getNetworkState();
 			},
@@ -531,9 +534,10 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		);
 	}
 
-	async function acknowledgeTime(): Promise<SystemTimeStatus> {
+	async function acknowledgeTime(p: { operationId: string }): Promise<SystemTimeStatus> {
 		if (!nativeTime) throw new CodedError(ErrorCodes.SYSTEM_TIME_BUSY);
-		await nativeTime.acknowledge();
+		assert(p, ['operationId']);
+		await nativeTime.acknowledge(assertString(p.operationId, 'operationId', MAX_OPERATION_ID));
 		const state = await getTime();
 		broadcast('system:timeChanged', state);
 		return state;

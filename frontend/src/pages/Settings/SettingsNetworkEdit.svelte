@@ -140,10 +140,11 @@
 	}
 
 	async function acknowledgeMutation(): Promise<void> {
-		if ($networkState.mutation?.state !== 'interrupted' || $networkState.stale || busy || acknowledging) return;
+		const operationId = $networkState.mutation?.operationId;
+		if ($networkState.mutation?.state !== 'interrupted' || !operationId || $networkState.stale || busy || acknowledging) return;
 		acknowledging = true;
 		try {
-			await acknowledgeNetworkMutation();
+			await acknowledgeNetworkMutation(operationId);
 			seedCurrentInterface();
 			clearMessage();
 		} catch (error) {

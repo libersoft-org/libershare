@@ -449,6 +449,8 @@ export interface SystemMutationState {
 	state: 'pending' | 'settling' | 'interrupted';
 	since: number;
 	operation: string;
+	/** The recorded operation; an acknowledgement names it so it can only clear the one the user saw. */
+	operationId?: string;
 }
 
 /** The host owns time configuration; stale marks a last-known snapshot. */

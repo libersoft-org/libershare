@@ -32,10 +32,10 @@ export function createTimeApiHandlers(system: TimeSystem, authenticated: boolean
 		'system.setNtpServer': protect(system.setNtpServer),
 		'system.setNtpEnabled': protect(system.setNtpEnabled),
 		'system.applyTimeSettings': protect(system.applyTimeSettings),
-		'system.time.acknowledgeInterrupted': async (_params, client) => {
+		'system.time.acknowledgeInterrupted': async (params, client) => {
 			if (!authenticated || !client.data.isLocalClient) throw new Error('Changing system time requires an authenticated client on this machine');
 			if (!system.acknowledgeTime) throw new CodedError(ErrorCodes.SYSTEM_TIME_BUSY);
-			return system.acknowledgeTime();
+			return system.acknowledgeTime(params);
 		},
 	};
 }

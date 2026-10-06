@@ -82,8 +82,9 @@ export async function refreshNetworkState(): Promise<NetworkStateInfo> {
 	return get(networkState);
 }
 
-export async function acknowledgeNetworkMutation(): Promise<void> {
-	storeSnapshot(await api.call<NetworkStateInfo>('system.network.acknowledgeInterrupted'));
+/** Acknowledge the interrupted change the user is looking at; a different one in its place is refused. */
+export async function acknowledgeNetworkMutation(operationId: string): Promise<void> {
+	storeSnapshot(await api.call<NetworkStateInfo>('system.network.acknowledgeInterrupted', { operationId }));
 }
 
 /**

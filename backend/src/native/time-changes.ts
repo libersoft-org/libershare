@@ -70,9 +70,9 @@ export class NativeTimeChanges {
 		return this.host.state('time');
 	}
 
-	async acknowledge(): Promise<SystemTimeStatus> {
+	async acknowledge(operationId: string): Promise<SystemTimeStatus> {
 		try {
-			await this.host.acknowledge('time');
+			await this.host.acknowledge('time', operationId);
 		} catch (error) {
 			this.rethrowBusy(error);
 			throw error;

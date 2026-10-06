@@ -210,11 +210,12 @@
 	}
 
 	async function acknowledgeMutation(): Promise<void> {
-		if (status?.mutation?.state !== 'interrupted' || status.stale || busy || loading || acknowledging) return;
+		const operationId = status?.mutation?.operationId;
+		if (status?.mutation?.state !== 'interrupted' || !operationId || status.stale || busy || loading || acknowledging) return;
 		acknowledging = true;
 		clearFeedback();
 		try {
-			applyStatus(await api.call<SystemTimeStatus>('system.time.acknowledgeInterrupted', {}, SYSTEM_TIME_READ_TIMEOUT_MS));
+			applyStatus(await api.call<SystemTimeStatus>('system.time.acknowledgeInterrupted', { operationId }, SYSTEM_TIME_READ_TIMEOUT_MS));
 		} catch (error) {
 			errorMessage = translateError(error);
 		} finally {

@@ -32,7 +32,7 @@
 			await new Promise(resolve => setTimeout(resolve, 0));
 			await tick();
 		};
-		const mutation = state => ({ state, since: Date.now(), operation: 'test-change' });
+		const mutation = state => ({ state, since: Date.now(), operation: 'test-change', operationId: '6f1c2d3e-4a5b-4c6d-8e7f-a0b1c2d3e4f5' });
 		const writes = () => calls.filter(method => ['system.networkApply', 'system.wifiConnect', 'system.wifiDisconnect', 'system.applyTimeSettings'].includes(method));
 
 		api.subscribe = async () => {};
@@ -41,7 +41,7 @@
 			if (event === 'system:timeChanged') changed = listener;
 			return () => {};
 		};
-		api.call = async method => {
+		api.call = async (method, params) => {
 			calls.push(method);
 			if (method === 'system.network' || method === 'system.getTime') return structuredClone(host);
 			if (method === 'system.listTimezones') return ['UTC'];
@@ -57,6 +57,7 @@
 			if (timeWrite && method === 'system.applyTimeSettings') return timeWrite;
 			if (method === `system.${domain}.acknowledgeInterrupted`) {
 				if (rejectAcknowledgement) throw Object.assign(new Error('Busy'), { code: domain === 'network' ? 'NETCONFIG_BUSY' : 'SYSTEM_TIME_BUSY' });
+				if (params?.operationId !== host.mutation?.operationId) throw new Error('Acknowledgement named a different operation');
 				delete host.mutation;
 				return structuredClone(host);
 			}

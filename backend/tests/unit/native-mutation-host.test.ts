@@ -151,7 +151,7 @@ test('a UI timeout leaves the native call alive and prevents another write or ac
 				),
 				'has not finished'
 			);
-			await expectWorkerRejection(host.acknowledge('network'), 'has not finished');
+			await expectWorkerRejection(host.acknowledge('network', (await host.state('network'))?.operationId ?? ''), 'has not finished');
 			expect(worker.close()).toBe(false);
 			const deadline = performance.now() + 3000;
 			while (await host.state('network')) {
@@ -205,7 +205,7 @@ test('a live unknown provider cannot be unlocked by repeated state reads or anot
 				),
 				'has not finished'
 			);
-			await expectWorkerRejection(reopened.acknowledge('network'), 'has not finished');
+			await expectWorkerRejection(reopened.acknowledge('network', (await reopened.state('network'))?.operationId ?? ''), 'has not finished');
 			await reopened.recover(
 				'network',
 				async record => observation(record, 'new-boot'),
@@ -237,7 +237,11 @@ test('an incomplete final state stays locked until explicitly acknowledged', asy
 			),
 			'has not finished'
 		);
-		await host.acknowledge('network');
+		const shown = await host.state('network');
+		// A late acknowledgement naming another operation leaves this one locked.
+		await expectWorkerRejection(host.acknowledge('network', '00000000-0000-4000-8000-000000000000'), 'has not finished');
+		expect(await host.state('network')).toMatchObject({ state: 'interrupted', operationId: shown?.operationId });
+		await host.acknowledge('network', shown!.operationId!);
 		expect(await host.state('network')).toBeUndefined();
 	});
 });

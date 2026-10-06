@@ -91,7 +91,7 @@ it('an acknowledgement still reading back holds off a new change and answers wit
 		const published=[];
 		const handlers=initSystemHandlers({get:()=>'',set:async()=>{}},(_event,value)=>published.push(value),()=>false,true,process.cwd());
 		try {
-			const ack=handlers.acknowledgeNetwork();
+			const ack=handlers.acknowledgeNetwork({operationId:'6f1c2d3e-4a5b-4c6d-8e7f-a0b1c2d3e4f5'});
 			while(!release) await Bun.sleep(1);
 			const apply=handlers.networkApply({interfaceID:'test0',config:{mode:'dhcp'},expected:{}}).then(()=>'applied',error=>error.code??error.message);
 			await Bun.sleep(20);

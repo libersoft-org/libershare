@@ -51,9 +51,9 @@ export class NativeNetworkChanges {
 		return this.host.state('network');
 	}
 
-	async acknowledge(): Promise<void> {
+	async acknowledge(operationId: string): Promise<void> {
 		try {
-			await this.host.acknowledge('network');
+			await this.host.acknowledge('network', operationId);
 		} catch (error) {
 			if (error instanceof NativeMutationBusy || (error instanceof Error && error.name === 'NativeMutationBusy')) throw new CodedError(ErrorCodes.NETCONFIG_BUSY);
 			throw error;

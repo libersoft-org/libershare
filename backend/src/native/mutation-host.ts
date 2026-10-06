@@ -8,6 +8,7 @@ export interface NativeMutationState {
 	readonly state: NativeMutationRecord['phase'];
 	readonly since: number;
 	readonly operation: string;
+	readonly operationId?: string;
 }
 
 interface JournalEntry {
@@ -70,7 +71,7 @@ export class NativeMutationHost {
 
 	async state(domain: NativeMutationDomain): Promise<NativeMutationState | undefined> {
 		const entry = await this.read(domain);
-		return entry ? { state: entry.record.phase, operation: entry.record.operation, since: entry.record.since } : this.active.get(domain);
+		return entry ? { state: entry.record.phase, operation: entry.record.operation, since: entry.record.since, operationId: entry.record.operationId } : this.active.get(domain);
 	}
 
 	async observe(record: NativeMutationRecord): Promise<NativeEndObservation> {
@@ -233,14 +234,15 @@ export class NativeMutationHost {
 		})();
 	}
 
-	async acknowledge(domain: NativeMutationDomain): Promise<void> {
+	/** Clear the interrupted operation `operationId`; a later operation in its place stays and refuses the request. */
+	async acknowledge(domain: NativeMutationDomain, operationId: string): Promise<void> {
 		if (this.active.has(domain)) throw new NativeMutationBusy(domain);
 		const entry = await this.read(domain);
 		if (!entry) {
 			this.endedOperations.delete(domain);
 			return;
 		}
-		if (entry.record.phase !== 'interrupted') throw new NativeMutationBusy(domain);
+		if (entry.record.phase !== 'interrupted' || entry.record.operationId !== operationId) throw new NativeMutationBusy(domain);
 		await this.finish(entry, true);
 		this.endedOperations.delete(domain);
 	}
