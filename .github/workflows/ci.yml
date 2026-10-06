@@ -32,6 +32,9 @@ jobs:
         run: ./test-be.sh
       - name: Frontend (svelte-check, unit)
         run: ./test-fe.sh
+      - name: Frontend browser fixtures (headless Chrome)
+        working-directory: frontend
+        run: bun run test:fixtures
       - name: Shared and CLI typecheck
         run: |
           ./test-shared.sh
