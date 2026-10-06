@@ -104,7 +104,21 @@ describe('native time operations', () => {
 			return reply;
 		});
 		expect((await f.run(f.api.clock({ hours: 12, minutes: 0, seconds: 0 }))).kind).toBe('ok');
-		expect(f.sent[0]?.args).toEqual([110000000n, false, false]);
+		expect(f.sent[0]?.args).toEqual([10000000n, true, false]);
+	});
+
+	test('a delay before dispatch still lands on the time the readback expects', async () => {
+		const f = fixture();
+		// The journal writes before SetTime reaches timedated take three seconds of host time.
+		const delay = 3000;
+		f.setInvoke(async () => {
+			const [value, relative] = f.sent[0]!.args as [bigint, boolean];
+			const atDispatch = snapshot.utcMs + delay;
+			const clock = relative ? atDispatch + Number(value / 1000n) : Number(value / 1000n);
+			f.setCurrent({ ...snapshot, utcMs: clock + 100, hostUptimeMs: snapshot.hostUptimeMs + delay + 100 });
+			return reply;
+		});
+		expect((await f.run(f.api.clock({ hours: 12, minutes: 0, seconds: 0 }))).kind).toBe('ok');
 	});
 
 	test('retries only the authenticated previous-request refusal for at most five seconds', async () => {

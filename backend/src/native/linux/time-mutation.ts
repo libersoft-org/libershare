@@ -77,7 +77,11 @@ export class LinuxTimeMutations {
 						return failure(error, false);
 					}
 					try {
-						await this.deps.synchronous.call(context, endpoint, 'timedated.SetTime', { path: '/org/freedesktop/timedate1', interface: TIMEDATED, member: 'SetTime', signature: 'xbb', args: [BigInt(before.targetUtcMs!) * 1000n, false, false] });
+						// A relative step keeps the snapshot as the time base however long the journal writes before
+						// dispatch take: the clock lands on the target projected to that moment, which is what the
+						// readback and the recovery record expect.
+						const stepUs = BigInt(Math.round(before.targetUtcMs! - before.utcMs)) * 1000n;
+						await this.deps.synchronous.call(context, endpoint, 'timedated.SetTime', { path: '/org/freedesktop/timedate1', interface: TIMEDATED, member: 'SetTime', signature: 'xbb', args: [stepUs, true, false] });
 					} catch (error) {
 						if (unknownWrite(error)) throw error;
 						const notStarted = error instanceof DBusError && error.reply.sender === endpoint.rule.destination && error.errorName === `${TIMEDATED}.AutomaticTimeSyncEnabled` && error.reply.errorMessage?.startsWith('Previous request is not finished');
