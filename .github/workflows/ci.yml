@@ -34,6 +34,15 @@ jobs:
         run: |
           ./test-shared.sh
           ./test-cli.sh
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Compile and run native file operations with the package builder's Bun
+        working-directory: backend
+        run: |
+          test "$(bun --version)" = 1.4.2
+          bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke-1.4"
+          "$RUNNER_TEMP/dataset-native-smoke-1.4"
 
   # One job per operating system: platform checks join these as steps, and a new
   # architecture is one more matrix entry rather than another job.
