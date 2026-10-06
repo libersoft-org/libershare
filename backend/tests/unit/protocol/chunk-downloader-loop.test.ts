@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { ChunkDownloader, type ChunkDownloaderDeps } from '../../../src/protocol/chunk-downloader.ts';
 import { PeerManager } from '../../../src/protocol/peer-manager.ts';
 import { PauseController } from '../../../src/protocol/pause-controller.ts';
+import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import { ProgressReporter } from '../../../src/protocol/progress-reporter.ts';
 import { CodedError, ErrorCodes, type ChunkID, type LISHid, type IStoredLISH } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
@@ -71,8 +72,8 @@ class FakeDataServer {
 	}
 }
 
-/** Scripted responses: payload → success, 'nf' → PEER_CHUNK_NOT_FOUND, 'busy' → PEER_BUSY. */
-type Reply = Uint8Array | 'nf' | 'busy';
+/** Scripted responses: payload → success, 'nf' → PEER_CHUNK_NOT_FOUND, 'busy' → PEER_BUSY, 'gone' → PEER_UNREACHABLE. */
+type Reply = Uint8Array | 'nf' | 'busy' | 'gone';
 
 class ScriptedClient {
 	requests: ChunkID[] = [];
@@ -87,12 +88,31 @@ class ScriptedClient {
 	setReply(chunkID: ChunkID, reply: Reply): void {
 		this.replies.set(chunkID, reply);
 	}
+	/** Requests on the wire right now, and the most there ever were at once. */
+	active = 0;
+	maxActive = 0;
+	/** Shared with other clients to count requests in flight across peers and downloads. */
+	sharedActive: { now: number; max: number } | undefined;
 	async requestChunk(_l: LISHid, c: ChunkID): Promise<Uint8Array> {
 		this.requests.push(c);
+		this.maxActive = Math.max(this.maxActive, ++this.active);
+		if (this.sharedActive) this.sharedActive.max = Math.max(this.sharedActive.max, ++this.sharedActive.now);
+		try {
+			return await this.reply(c);
+		} finally {
+			this.active--;
+			if (this.sharedActive) this.sharedActive.now--;
+		}
+	}
+	/** Per-chunk delay that overrides `delayMs`. */
+	delayByChunk = new Map<ChunkID, number>();
+	private async reply(c: ChunkID): Promise<Uint8Array> {
 		const reply = this.replies.get(c) ?? 'nf';
-		if (this.delayMs > 0 && (!this.delaySuccessOnly || reply instanceof Uint8Array)) await new Promise(r => setTimeout(r, this.delayMs));
+		const delay = this.delayByChunk.get(c) ?? (!this.delaySuccessOnly || reply instanceof Uint8Array ? this.delayMs : 0);
+		if (delay > 0) await new Promise(r => setTimeout(r, delay));
 		if (reply === 'nf') throw new CodedError(ErrorCodes.PEER_CHUNK_NOT_FOUND, 'not found');
 		if (reply === 'busy') throw new CodedError(ErrorCodes.PEER_BUSY, 'busy');
+		if (reply === 'gone') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, 'gone');
 		return reply;
 	}
 	abortCalls = 0;
@@ -108,7 +128,7 @@ class ScriptedClient {
 	}
 }
 
-function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller?: AbortController; isDestroyed?: () => boolean; pauseController?: PauseController }): ChunkDownloader {
+function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller?: AbortController; isDestroyed?: () => boolean; isDisabled?: () => boolean; pauseController?: PauseController; inflightBudget?: ByteBudget }): ChunkDownloader {
 	const lish = { id: LISH_ID, name: 'test', chunkSize: CHUNK_SIZE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: chunkCount * CHUNK_SIZE, checksums: [] }] } as unknown as IStoredLISH;
 	const controller = lifecycle?.controller ?? new AbortController();
 	const pc =
@@ -128,7 +148,8 @@ function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number,
 		fileAllocator: {} as never,
 		getLish: () => lish,
 		isDestroyed: lifecycle?.isDestroyed ?? (() => false),
-		isDisabled: () => false,
+		isDisabled: lifecycle?.isDisabled ?? (() => false),
+		inflightBudget: lifecycle?.inflightBudget ?? new ByteBudget(() => 64 * 1024 * 1024),
 		onSetError: () => {},
 		emitAllocProgress: () => {},
 	} as unknown as ChunkDownloaderDeps;
@@ -327,7 +348,8 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 		expect(ds.downloadedChunks.size).toBe(0);
 		expect(ds.written.length).toBe(0);
 		expect(logs.some(l => l.includes('banned') && l.includes('bad chunks'))).toBe(true);
-		expect(bad.requests.length).toBe(3);
+		// Pipelined requests can all be on the wire before the third bad reply arrives; none is repeated.
+		expect(new Set(bad.requests).size).toBe(bad.requests.length);
 	}, 15000);
 
 	it('bans a peer that keeps serving wrong-length chunks', async () => {
@@ -357,8 +379,8 @@ describe('ChunkDownloader peerLoop — partial seeder behavior', () => {
 
 		expect(ds.downloadedChunks.size).toBe(0);
 		expect(logs.some(l => l.includes('banned') && l.includes('bad chunks'))).toBe(true);
-		// Banned after 3 rejected chunks — never probed the 4th.
-		expect(bad.requests.length).toBe(3);
+		// Banned after 3 rejected chunks; pipelined requests already on the wire are not repeated.
+		expect(new Set(bad.requests).size).toBe(bad.requests.length);
 	}, 15000);
 
 	it('retries a cached miss when a connected peer announces the chunk in a new HAVE', async () => {
@@ -543,5 +565,130 @@ describe('ChunkDownloader peerLoop — chunks in flight', () => {
 
 		expect([...slow.requests, ...fast.requests].filter(c => c === x.chunkID).length).toBe(1);
 		expect(ds.downloadedChunks.size).toBe(2);
+	}, 15000);
+});
+
+describe('ChunkDownloader peerLoop — pipelining', () => {
+	it('keeps several requests to one peer on the wire at once', async () => {
+		const { missing, data } = makeChunks(40);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 40);
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 50);
+		pm.tryAdd('peer-pipelined-00', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(ds.downloadedChunks.size).toBe(40);
+		// 1 KiB chunks against the 16 MiB default window: the per-peer cap of 32 requests applies.
+		expect(client.maxActive).toBe(32);
+		expect(new Set(client.requests).size).toBe(40);
+	}, 15000);
+
+	it('never has more chunk bytes in flight than the shared budget across downloads', async () => {
+		const budget = new ByteBudget(() => 2 * CHUNK_SIZE);
+		const shared = { now: 0, max: 0 };
+		const runs: Promise<void>[] = [];
+		const stores: FakeDataServer[] = [];
+		for (const name of ['a', 'b']) {
+			const { missing, data } = makeChunks(6);
+			const ds = new FakeDataServer(missing);
+			stores.push(ds);
+			const pm = new PeerManager();
+			const cd = makeDownloader(ds, pm, 6, { inflightBudget: budget });
+			const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 30);
+			client.sharedActive = shared;
+			pm.tryAdd(`peer-budget-${name}-000`, client as never, 'DIRECT');
+			runs.push(cd.run());
+		}
+
+		await Promise.all(runs);
+
+		expect(stores.map(ds => ds.downloadedChunks.size)).toEqual([6, 6]);
+		expect(shared.max).toBe(2);
+		expect(budget.reservedBytes).toBe(0);
+	}, 15000);
+
+	it('ends a disabled download even while another download holds the whole budget', async () => {
+		const budget = new ByteBudget(() => CHUNK_SIZE);
+		// Download B takes the only slot and keeps it: its peer answers after 10 s.
+		const slow = makeChunks(1);
+		const holder = new AbortController();
+		const dsB = new FakeDataServer(slow.missing);
+		const pmB = new PeerManager();
+		const cdB = makeDownloader(dsB, pmB, 1, { inflightBudget: budget, controller: holder });
+		pmB.tryAdd('peer-holds-budget', new ScriptedClient(new Map([[slow.missing[0]!.chunkID, slow.data.get(slow.missing[0]!.chunkID)! as Reply]]), 10_000) as never, 'DIRECT');
+		const runB = cdB.run();
+		await Bun.sleep(20);
+		expect(budget.reservedBytes).toBe(CHUNK_SIZE);
+
+		// Download A waits for budget, then gets disabled.
+		let disabled = false;
+		const pcA = new PauseController(
+			() => disabled,
+			() => false
+		);
+		const fast = makeChunks(2);
+		const dsA = new FakeDataServer(fast.missing);
+		const pmA = new PeerManager();
+		const cdA = makeDownloader(dsA, pmA, 2, { inflightBudget: budget, pauseController: pcA, isDisabled: () => disabled });
+		pmA.tryAdd('peer-waits-budget', new ScriptedClient(new Map(fast.missing.map(c => [c.chunkID, fast.data.get(c.chunkID)! as Reply]))) as never, 'DIRECT');
+		const runA = cdA.run();
+		await Bun.sleep(20);
+		disabled = true;
+		pcA.notifyStateChange();
+		const ended = await Promise.race([runA.then(() => true), Bun.sleep(1000).then(() => false)]);
+		expect(ended).toBe(true);
+
+		holder.abort();
+		await pmB.closeAllAwait('test done', true);
+		await Promise.race([runB, Bun.sleep(1000)]);
+	}, 15000);
+
+	it('refills the pipeline when work comes back after its workers went idle', async () => {
+		const { missing, data } = makeChunks(40);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 40);
+		// The first peer takes most chunks and loses its connection on every one of them after 200 ms.
+		const flaky = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'gone' as Reply])), 200);
+		const steady = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 50);
+		pm.tryAdd('peer-flaky-fails0', flaky as never, 'DIRECT');
+		pm.tryAdd('peer-steady-00000', steady as never, 'DIRECT');
+		const run = cd.run();
+		// By now the steady peer finished what it got and its workers went idle.
+		await Bun.sleep(150);
+		steady.maxActive = steady.active;
+
+		await run;
+
+		expect(ds.downloadedChunks.size).toBe(40);
+		expect(steady.maxActive).toBeGreaterThan(1);
+	}, 15000);
+
+	it('drops valid replies that arrive after a sibling banned the peer', async () => {
+		const { missing, data } = makeChunks(6);
+		const replies = new Map<ChunkID, Reply>();
+		const bad = new ScriptedClient(replies);
+		missing.forEach((c, i) => {
+			if (i < 3) {
+				const corrupt = data.get(c.chunkID)!.slice();
+				corrupt[0]! ^= 0xff;
+				replies.set(c.chunkID, corrupt);
+				return;
+			}
+			// Intact data, but on the wire until well after the third corrupt reply banned the peer.
+			replies.set(c.chunkID, data.get(c.chunkID)!);
+			bad.delayByChunk.set(c.chunkID, 200);
+		});
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 6);
+		pm.tryAdd('peer-banned-late0', bad as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(pm.isBanned('peer-banned-late0')).toBe(true);
+		expect(ds.written.length).toBe(0);
 	}, 15000);
 });
