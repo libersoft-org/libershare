@@ -7,7 +7,7 @@ import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, type NetworkHel
 import { HelperResultStore, createHelperCancellation, helperResultCanExpire, helperRequestHash, helperResultsDirectory, trustedUnixHelperResult, validateHelperResult, type HelperResultRecord, type HelperResultSecurity } from '../../src/native/helper-results-store.ts';
 import { observeHelperOperation, readTrustedHelperResult, type HelperOperationRule, type HelperObservationDeps } from '../../src/native/helper-results.ts';
 import { executeRecordedHelper, type HelperExecutorDeps } from '../../src/native/helper-results-executor.ts';
-import { requireNativeMutationContext } from '../../src/native/mutation-context.ts';
+import { requireNativeMutationContext, withDispatchDeadline } from '../../src/native/mutation-context.ts';
 import { trustedHelperAcl } from '../../src/native/helper-results-windows.ts';
 import { NativeWorkerFailure } from '../../src/native/worker-host.ts';
 
@@ -276,6 +276,33 @@ describe('helper handoff and recovery', () => {
 		);
 		expect(writes).toBe(1);
 		expect((await f.store.read(f.input.operationId))?.result?.outcome).toBe('known');
+	});
+	test('refuses a write once the request deadline passed, before or while the journal was written', async () => {
+		// The helper's own budget is still open; the save's shorter deadline is what ran out.
+		for (const expiredAfter of [0, 1]) {
+			const f = await fixture();
+			let checks = 0,
+				writes = 0;
+			await executeRecordedHelper(
+				f.input,
+				helperRequestHash(f.input),
+				async () => {
+					await withDispatchDeadline(
+						() => checks++ >= expiredAfter,
+						() =>
+							requireNativeMutationContext().call({ kind: 'executor' }, async () => {
+								writes++;
+								return { known: true, value: null };
+							})
+					).catch(() => {});
+					return { ok: true };
+				},
+				10000,
+				f.deps
+			);
+			expect(writes).toBe(0);
+			expect((await f.store.read(f.input.operationId))?.result?.outcome).toBe('known');
+		}
 	});
 	test('started wins the race and retains ownership while a native call is blocked', async () => {
 		const f = await fixture();

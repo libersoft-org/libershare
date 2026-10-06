@@ -9,7 +9,7 @@ import { withWindowsHelperLock } from './helper-results-windows.ts';
 import { HelperResultStore, helperCancellationExists, type HelperResultRecord } from './helper-results-store.ts';
 import { helperRecordHasEnded, nativeHelperObservationDeps, type HelperObservationDeps } from './helper-results.ts';
 import { currentNativeProcessIdentity, getNativeBootId } from './process-identity.ts';
-import { withNativeMutationContext } from './mutation-context.ts';
+import { dispatchDeadlinePassed, withNativeMutationContext } from './mutation-context.ts';
 import { NativeMutationStopped, NativeMutationUnknown, type NativeMutationContext } from './mutation-host.ts';
 import type { NativeEndRule, NativeProcessIdentity } from './mutation-proof.ts';
 
@@ -134,11 +134,12 @@ export async function executeRecordedHelper(request: NetworkHelperRequest, reque
 					assertRule(rule);
 					if (inCall || unknown) throw new NativeMutationUnknown();
 					tracked = true;
-					if (clock() >= deadline) throw new NativeMutationStopped();
+					// The caller's own deadline counts too: a request that ran out while preparing starts no write.
+					if (clock() >= deadline || dispatchDeadlinePassed()) throw new NativeMutationStopped();
 					inCall = true;
 					try {
 						await persist({ endRule: rule, executorReturned: false });
-						if (clock() >= deadline) throw new NativeMutationStopped();
+						if (clock() >= deadline || dispatchDeadlinePassed()) throw new NativeMutationStopped();
 						const answer = await invoke();
 						inCall = false;
 						unknown = !answer.known;
