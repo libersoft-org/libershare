@@ -130,6 +130,30 @@ describe('findChunkLocation', () => {
 		expect(loc?.filePath).toBe('data/archive.bin');
 		expect(loc?.chunkIndex).toBe(0);
 	});
+
+	it('finds a chunk with a fixed number of queries however many files and chunks the LISH has', () => {
+		const files = Array.from({ length: 50 }, (_, f) => ({ path: `dir/f${f}.bin`, size: 4 * 1024, checksums: Array.from({ length: 4 }, (_, c) => `sha256:f${f}c${c}`) }));
+		addLISH(db, createTestLISH({ id: TEST_LISH_ID, chunkSize: 1024, files } as never));
+		const target = 'sha256:f49c2' as never;
+		markChunkDownloaded(db, TEST_LISH_ID, target);
+		let queries = 0;
+		const counting = new Proxy(db, {
+			get(target, prop, receiver) {
+				const value = Reflect.get(target, prop, receiver);
+				if (prop === 'query' || prop === 'prepare') {
+					return (...args: unknown[]) => {
+						queries++;
+						return (value as (...a: unknown[]) => unknown).apply(target, args);
+					};
+				}
+				return typeof value === 'function' ? value.bind(target) : value;
+			},
+		});
+		const loc = findChunkLocation(counting, TEST_LISH_ID, target);
+		expect(loc?.filePath).toBe('dir/f49.bin');
+		expect(loc?.chunkIndex).toBe(2);
+		expect(queries).toBeLessThanOrEqual(3);
+	});
 });
 
 // ---------------------------------------------------------------------------

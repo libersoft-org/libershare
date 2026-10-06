@@ -139,12 +139,18 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 	const internalID = getInternalID(db, lishID);
 	if (internalID === null) return null;
 
-	const files = db.query<{ id: number; path: string }, [number]>('SELECT id, path FROM lishs_files WHERE id_lishs = ? ORDER BY id').all(internalID);
-
-	for (const file of files) {
-		const chunks = db.query<{ checksum: string; have: number }, [number]>('SELECT checksum, have FROM lishs_chunks WHERE id_lishs_files = ? ORDER BY id').all(file.id);
-		const chunkIndex = chunks.findIndex(c => c.checksum === chunkID);
-		if (chunkIndex !== -1 && chunks[chunkIndex]!.have) return { filePath: file.path, chunkIndex, fileInternalID: file.id };
-	}
-	return null;
+	// Indexed lookups only: the seeder runs this for every chunk it serves, and reading every chunk
+	// row of the LISH made each lookup — and so each served chunk — cost O(chunks in the LISH).
+	// A chunk's index is its position among its file's rows in insertion (id) order.
+	const row = db
+		.query<{ path: string; fileID: number; chunkRowID: number }, [number, string]>(
+			`SELECT f.path AS path, f.id AS fileID, c.id AS chunkRowID FROM lishs_chunks c
+			 JOIN lishs_files f ON f.id = c.id_lishs_files
+			 WHERE f.id_lishs = ? AND c.checksum = ? AND c.have
+			 ORDER BY f.id, c.id LIMIT 1`
+		)
+		.get(internalID, chunkID);
+	if (!row) return null;
+	const before = db.query<{ n: number }, [number, number]>('SELECT COUNT(*) AS n FROM lishs_chunks WHERE id_lishs_files = ? AND id < ?').get(row.fileID, row.chunkRowID);
+	return { filePath: row.path, chunkIndex: before?.n ?? 0, fileInternalID: row.fileID };
 }
