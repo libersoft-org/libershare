@@ -23,4 +23,17 @@ describe('checksumBytes', () => {
 		await checksumBytes(data, 'sha3-256');
 		expect(digest).toHaveBeenCalledTimes(2);
 	});
+
+	it('keeps the main thread free while hashing algorithms WebCrypto lacks', async () => {
+		const big = new Uint8Array(32 * 1024 * 1024).fill(3);
+		for (const algo of ['sha3-256', 'blake2b512'] as const) {
+			const expected = new Bun.CryptoHasher(algo).update(big).digest('hex');
+			let timerRan = false;
+			setTimeout(() => (timerRan = true), 0);
+			const result = await checksumBytes(big, algo);
+			expect(result).toBe(expected);
+			// Hashed on the main thread, the result would be ready before the event loop ran any timer.
+			expect(timerRan).toBe(true);
+		}
+	});
 });
