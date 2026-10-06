@@ -517,11 +517,18 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 		return restrictNetworkCapabilities(mutation ? { ...state, mutation } : state, networkAdminEnabled);
 	}
 
+	/** Under the network lock like a change, so no new change starts before the answer is read back. */
 	async function acknowledgeNetwork(): Promise<NetworkStateInfo> {
 		if (!nativeNetwork) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED);
-		const state = await nativeNetwork.acknowledge();
-		broadcast('system:network', state);
-		return state;
+		return runAndPublishNetworkMutation(
+			async () => {
+				await nativeNetwork.acknowledge();
+				resetNetworkStateCache();
+				return getNetworkState();
+			},
+			() => getNetworkState(),
+			state => broadcast('system:network', state)
+		);
 	}
 
 	async function acknowledgeTime(): Promise<SystemTimeStatus> {

@@ -70,6 +70,45 @@ it('publishes the interrupted operation after a failed Wi-Fi change', async () =
 	expect(JSON.parse(out)).toEqual(['interrupted', 'interrupted']);
 });
 
+it('an acknowledgement still reading back holds off a new change and answers with the full state', async () => {
+	const script = `
+		import { mock } from 'bun:test';
+		const volume=await import('./src/system-volume.ts'), network=await import('./src/system-network.ts'), helper=await import('./src/network-helper-client.ts');
+		const state={known:true,detail:'full',stale:false,interfaces:[],capabilities:{ipv4:true,wifi:true,ipv4Elevation:true}};
+		let hostState={state:'interrupted',since:1,operation:'applyIPv4'}, release, gated=false, finish;
+		// The first read after the record is cleared waits, the window another client can use.
+		const read=async()=>{if(!gated&&hostState===undefined){gated=true;await new Promise(resolve=>(release=resolve));}return state;};
+		mock.module('./src/system-volume.ts',()=>({...volume,getSystemVolumeStatus:async()=>null}));
+		mock.module('./src/system-network.ts',()=>({...network,readNetworkState:read,readNetworkStateUnlocked:read}));
+		mock.module('./src/network-helper-client.ts',()=>({...helper,warmElevationTrust:()=>{}}));
+		const {NativeMutationHost}=await import('./src/native/mutation-host.ts');
+		const {NativeNetworkChanges}=await import('./src/native/network-changes.ts');
+		NativeMutationHost.prototype.state=async()=>hostState;
+		NativeMutationHost.prototype.acknowledge=async()=>{hostState=undefined;};
+		NativeMutationHost.prototype.recover=async()=>{};
+		NativeNetworkChanges.prototype.applyIPv4=async()=>{hostState={state:'running',since:2,operation:'applyIPv4'};await new Promise(resolve=>(finish=resolve));hostState=undefined;return state;};
+		const {initSystemHandlers}=await import('./src/api/system.ts');
+		const published=[];
+		const handlers=initSystemHandlers({get:()=>'',set:async()=>{}},(_event,value)=>published.push(value),()=>false,true,process.cwd());
+		try {
+			const ack=handlers.acknowledgeNetwork();
+			while(!release) await Bun.sleep(1);
+			const apply=handlers.networkApply({interfaceID:'test0',config:{mode:'dhcp'},expected:{}}).then(()=>'applied',error=>error.code??error.message);
+			await Bun.sleep(20);
+			const runningDuringAck=hostState?.state??null;
+			release();
+			const answer=await ack;
+			finish?.();
+			console.log(JSON.stringify({apply:await apply,runningDuringAck,answered:answer.mutation?.state??null,published:published.map(value=>value.mutation?.state??null)}));
+		} finally {await handlers.close();}
+	`;
+	const child = Bun.spawn([process.execPath, '--eval', script], { cwd: resolve(import.meta.dir, '../../..'), stdout: 'pipe', stderr: 'pipe' });
+	const [code, out, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+	if (code) throw new Error(error);
+	const result = JSON.parse(out.trim().split('\n').pop()!);
+	expect(result).toEqual({ apply: 'NETCONFIG_BUSY', runningDuringAck: null, answered: null, published: [null] });
+});
+
 function state(): NetworkStateInfo {
 	return {
 		known: true,
