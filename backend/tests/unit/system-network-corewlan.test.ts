@@ -103,6 +103,13 @@ describe('CoreWLAN native state', () => {
 		expect(workerResult('coreWlanNamesVisible', [{ ...snapshot, powerOn: false }, [{ ssidHex: 'ff' }]])).toBe(false);
 	});
 
+	it('keeps proven name access through a read that shows no network, never through hidden names', () => {
+		const idle = { ...snapshot, ssidHex: null };
+		expect(workerResult('coreWlanNamesVisible', [idle, [], true])).toBe(true);
+		expect(workerResult('coreWlanNamesVisible', [idle, [{ ssidHex: null }], true])).toBe(false);
+		expect(workerResult('coreWlanNamesVisible', [{ ...idle, powerOn: false }, [], true])).toBe(false);
+	});
+
 	it('shows native names after a grant and clears them on revocation', () => {
 		expect(workerResult('coreWlanInterfaceState', [snapshot, true])).toEqual({ device: 'en0', configurable: true, wifi: { ssid: 'Office', signal: 70, radio: 'on' } });
 		expect(workerResult('coreWlanInterfaceState', [snapshot, false])).toEqual({ device: 'en0', configurable: false, wifi: { ssid: null, signal: 70, radio: 'on' } });

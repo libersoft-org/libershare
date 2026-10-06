@@ -21,9 +21,16 @@ export function selectCoreWlanTarget(networks, ssidHex, securityType, bssid = nu
 	return targets.reduce((best, item) => (item.signal > best.signal ? item : best)).network;
 }
 
-/** CoreWLAN's returned bytes prove access in this bundle; helper CoreLocation status can describe a different identity. */
-export function coreWlanNamesVisible(current, networks = []) {
-	return current.powerOn && (!!current.ssidHex || networks.some(network => !!network.ssidHex));
+/**
+ * CoreWLAN's returned bytes prove access in this bundle; helper CoreLocation status can describe a different identity.
+ *
+ * A read that shows no network at all proves nothing either way: macOS refuses or empties a scan while it is
+ * joining or auto-joining, so the interface keeps the `previous` proven answer instead of turning unconfigurable.
+ */
+export function coreWlanNamesVisible(current, networks = [], previous = false) {
+	if (!current.powerOn) return false;
+	if (current.ssidHex || networks.some(network => !!network.ssidHex)) return true;
+	return networks.length ? false : previous;
 }
 
 /** Mixed scan modes permit either secured constituent, never a downgrade to open. */

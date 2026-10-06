@@ -5,6 +5,9 @@ import { coreWlanAssociationMatches, coreWlanDisconnected, coreWlanInterfaceStat
 
 export { coreWlanAssociationMatches, coreWlanDisconnected, coreWlanInterfaceState, coreWlanNamesVisible, coreWlanScanRows, coreWlanSecurityType, selectCoreWlanTarget };
 
+/** Last proven name access per interface; the pooled reader keeps it between reads. */
+const namesVisible = new Map();
+
 /** Shared phase: preparing 0 -> mutating 1 competes atomically with parent cancellation 2. */
 export function beginCoreWlanMutation(phase) {
 	if (Atomics.compareExchange(phase, 0, 0, 1) !== 0) throw new Error('macOS Wi-Fi operation was cancelled before the network change');
@@ -97,7 +100,10 @@ function run(request) {
 						// A refused scan leaves name access unknown; the radio state is still valid.
 					}
 				}
-				if (current.device) result.push(coreWlanInterfaceState(current, coreWlanNamesVisible(current, networks)));
+				if (!current.device) continue;
+				const visible = coreWlanNamesVisible(current, networks, namesVisible.get(current.device));
+				namesVisible.set(current.device, visible);
+				result.push(coreWlanInterfaceState(current, visible));
 			}
 			return result;
 		}
