@@ -15,6 +15,17 @@ describe('checksumBytes', () => {
 		}
 	});
 
+	it('hashes only the bytes of a Buffer view and leaves its shared backing store usable', async () => {
+		const backing = new Uint8Array(64).map((_, i) => i);
+		const view = Buffer.from(backing.buffer, 8, 16);
+		for (const algo of SUPPORTED_ALGOS) {
+			const expected = new Bun.CryptoHasher(algo as any).update(view).digest('hex');
+			expect(await checksumBytes(view, algo)).toBe(expected);
+			expect(backing[63]).toBe(63);
+			expect(view[0]).toBe(8);
+		}
+	});
+
 	it('hashes SHA-2 through WebCrypto, which runs off the main thread, and nothing else', async () => {
 		digest = spyOn(crypto.subtle, 'digest');
 		await checksumBytes(data, 'sha256');

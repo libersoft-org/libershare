@@ -37,8 +37,12 @@ class BytesChecksumPool {
 		if (!workers) return checksumOnMainThread(data, algo);
 		const worker = workers[this.next++ % workers.length]!;
 		const index = this.nextID++;
-		// A private copy the worker can own: `data` may be a view into a larger buffer still in use.
-		const bytes = data.slice().buffer;
+		// A private copy of exactly these bytes for the worker to own. `data.slice()` would not do:
+		// on a Buffer it is a view, and transferring its `.buffer` would hash and detach the whole
+		// backing store, which may be shared with other buffers.
+		const copy = new Uint8Array(data.byteLength);
+		copy.set(data);
+		const bytes = copy.buffer;
 		return new Promise((resolve, reject) => {
 			this.pending.set(index, { resolve, reject });
 			for (const w of workers) w.ref();
