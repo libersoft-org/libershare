@@ -25,12 +25,20 @@ const WEB_DIGEST: Partial<Record<HashAlgorithm, string>> = { sha256: 'SHA-256', 
  * workers, so no supported algorithm runs on the main thread. Workers start on first use and
  * are unreferenced while idle; if one dies, hashing falls back to the main thread.
  */
-class BytesChecksumPool {
+export class BytesChecksumPool {
 	private workers: Worker[] | undefined;
 	private failed = false;
 	private next = 0;
 	private nextID = 1;
 	private readonly pending = new Map<number, { resolve(checksum: string): void; reject(error: Error): void }>();
+
+	private readonly workerPath: string;
+	private readonly size: number;
+
+	constructor(workerPath: string = checksumWorkerPath, size: number = Math.max(1, Math.min(4, (navigator.hardwareConcurrency ?? 2) - 1))) {
+		this.workerPath = workerPath;
+		this.size = size;
+	}
 
 	async checksum(data: Uint8Array, algo: HashAlgorithm): Promise<string> {
 		const workers = this.failed ? undefined : (this.workers ??= this.start());
@@ -51,9 +59,8 @@ class BytesChecksumPool {
 	}
 
 	private start(): Worker[] {
-		const count = Math.max(1, Math.min(4, (navigator.hardwareConcurrency ?? 2) - 1));
-		return Array.from({ length: count }, () => {
-			const worker = new Worker(checksumWorkerPath);
+		return Array.from({ length: this.size }, () => {
+			const worker = new Worker(this.workerPath);
 			worker.unref();
 			worker.onmessage = (event: MessageEvent<{ index: number; checksum?: string; error?: string }>) => {
 				const job = this.pending.get(event.data.index);
@@ -66,6 +73,10 @@ class BytesChecksumPool {
 			worker.onerror = event => {
 				event.preventDefault();
 				this.failed = true;
+				// The siblings were referenced for the jobs being cancelled here; left running they would
+				// keep the process alive, and their late replies find no job to unreference them.
+				for (const w of this.workers ?? []) w.terminate();
+				this.workers = undefined;
 				const jobs = [...this.pending.values()];
 				this.pending.clear();
 				for (const job of jobs) job.reject(new Error('checksum worker stopped'));

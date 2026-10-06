@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { SUPPORTED_ALGOS } from '@shared';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
+import { tmpdir } from 'os';
 import { checksumBytes } from '../../../src/lish/checksum.ts';
 
 describe('checksumBytes', () => {
@@ -47,4 +50,25 @@ describe('checksumBytes', () => {
 			expect(timerRan).toBe(true);
 		}
 	});
+
+	it('lets the process exit after one worker of the pool dies while its siblings still work', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'lish-checksum-pool-'));
+		// Job 1 kills its worker; the other jobs are answered late, after the failure cancelled them.
+		writeFileSync(join(dir, 'worker.js'), `self.onmessage = e => { if (e.data.index === 1) throw new Error('worker died'); setTimeout(() => self.postMessage({ index: e.data.index, checksum: 'late' }), 300); };`);
+		const slashes = (path: string): string => path.replaceAll('\\', '/');
+		const module = slashes(resolve(import.meta.dir, '../../../src/lish/checksum.ts'));
+		const workerPath = slashes(join(dir, 'worker.js'));
+		writeFileSync(
+			join(dir, 'main.ts'),
+			`import { BytesChecksumPool } from '${module}';
+const pool = new BytesChecksumPool('${workerPath}', 3);
+const jobs = [1, 2, 3].map(() => pool.checksum(new Uint8Array(4), 'sha3-256').catch(() => 'cancelled'));
+console.log((await Promise.all(jobs)).join(','));`
+		);
+		const child = Bun.spawn([process.execPath, 'run', join(dir, 'main.ts')], { stdout: 'pipe', stderr: 'pipe' });
+		const exited = await Promise.race([child.exited.then(() => true), Bun.sleep(5000).then(() => false)]);
+		if (!exited) child.kill();
+		expect(exited).toBe(true);
+		expect(await new Response(child.stdout).text()).toContain('cancelled');
+	}, 10000);
 });
