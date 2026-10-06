@@ -120,6 +120,8 @@ Periodic peer-discovery broadcast. Contains the sender's own directly dialable m
 
 Request / response messages over a libp2p stream. Every message is a MessagePack-encoded object framed with an unsigned-varint length prefix. A single stream can carry any number of requests; the responder answers each request with exactly one response, in order. Binary chunk data uses the MessagePack native binary type — no base64 overhead.
 
+A requester may pipeline: it can send further requests before the earlier replies arrive and pairs each reply with its request by order alone (replies carry no request ID). The responder reads the next request only after its previous reply has left its write queue, so a requester that pipelines — or never reads — cannot make it buffer more than one reply beyond what the stream's flow control lets through.
+
 Frame size is checked on the length prefix, before the body is read, and depends on the direction:
 
 - Everything a peer sends unasked — requests and the unicast `announceHave` / `searchResult` notifications — shares one inbound cap of 32 MiB (never more than the configured maximum message size). The kind of a message is known only after it is decoded, so the cap is common. A sender whose notification would exceed it gets a local `MESSAGE_TOO_LARGE` error and sends nothing; a larger frame makes the receiver drop the stream
@@ -296,7 +298,7 @@ A requester accepts an error reply only as a plain object whose own `error` is o
 2. **Want** — broadcast `want` with the LISH ID; while seeders are missing, the `want` may be re-broadcast periodically (receivers rate-limit their responses, see above)
 3. **Have** — seeders reply with unicast `announceHave` (chunk availability + dial addresses)
 4. **Manifest** — the downloader dials a seeder and fetches the manifest via `getLish` (skipped when it already has the structure, e.g. from an imported `.lish` file)
-5. **Chunks** — the downloader requests chunks from multiple seeders in parallel via `getChunk`, verifying every chunk against its manifest checksum
+5. **Chunks** — the downloader requests chunks from multiple seeders in parallel via `getChunk`, pipelining several requests on each seeder's stream (up to `network.chunkWindowBytes` per seeder and `network.chunkInflightBudgetBytes` across all downloads), and verifies every chunk against its manifest checksum
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
 
