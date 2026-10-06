@@ -8,6 +8,10 @@ export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 // Default upper bound for a single P2P message on the wire (configurable via settings).
 // Must be >= maxChunkSize because a chunk is delivered as a single msgpack message.
 export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
+// Default bytes of chunk requests kept in flight to one peer (settings: network.chunkWindowBytes).
+export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
+// Default bytes of chunk requests in flight across every download (network.chunkInflightBudgetBytes).
+export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 64 * 1024 * 1024;
 
 export interface SettingsData {
 	language: string;
@@ -38,6 +42,16 @@ export interface SettingsData {
 		maxUploadSpeed: number;
 		maxChunkSize: number;
 		maxMessageSize: number;
+		/**
+		 * Bytes of chunk requests kept in flight to one peer: the download pipelines
+		 * `floor(chunkWindowBytes / chunkSize)` requests (at least 1). Not exposed in the UI.
+		 */
+		chunkWindowBytes: number;
+		/**
+		 * Bytes of chunk requests in flight across every download in the process, including
+		 * verified chunks waiting for a write retry. Not exposed in the UI.
+		 */
+		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;
 		/** How many other peers may reserve a relay slot ON US (we are the relay server). 0 = unlimited. */
 		maxRelayReservations: number;
@@ -187,6 +201,8 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxUploadSpeed: 0,
 		maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
+		chunkWindowBytes: DEFAULT_CHUNK_WINDOW_BYTES,
+		chunkInflightBudgetBytes: DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES,
 		allowRelay: false,
 		maxRelayReservations: DEFAULT_MAX_RELAY_RESERVATIONS,
 		useRelayClients: true,
