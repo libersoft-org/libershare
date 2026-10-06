@@ -164,7 +164,7 @@ describe('CoreWLAN final association verification', () => {
 		[4, 4, true],
 		[11, 11, true],
 		[4, 0, false],
-		[4, 11, false],
+		[4, 11, true],
 		[11, 4, false],
 		[3, 2, true],
 		[3, 4, true],
@@ -173,13 +173,15 @@ describe('CoreWLAN final association verification', () => {
 		[13, 11, true],
 		[13, 0, false],
 		[13, 2, false],
+		[0, 4, false],
+		[4, -1, false],
 	])('verifies advertised %i against negotiated %i', (expected, negotiated, matches) => {
 		expect(workerResult('coreWlanAssociationMatches', [{ ...actual, securityType: negotiated }, actual.ssidHex, actual.bssid, expected])).toBe(matches);
 	});
 
-	it('requires the selected raw SSID and access point as well as authentication', () => {
+	it('requires the selected raw SSID but accepts another access point of that network', () => {
 		expect(workerResult('coreWlanAssociationMatches', [actual, 'fe', actual.bssid, 4])).toBe(false);
-		expect(workerResult('coreWlanAssociationMatches', [actual, 'ff', '02:00:00:00:00:02', 4])).toBe(false);
+		expect(workerResult('coreWlanAssociationMatches', [actual, 'ff', '02:00:00:00:00:02', 4])).toBe(true);
 	});
 });
 

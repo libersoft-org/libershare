@@ -33,10 +33,23 @@ export function coreWlanNamesVisible(current, networks = [], previous = false) {
 	return networks.length ? false : previous;
 }
 
-/** Mixed scan modes permit either secured constituent, never a downgrade to open. */
-export function coreWlanAssociationMatches(actual, ssidHex, bssid, securityType) {
-	const allowed = securityType === 3 ? [2, 3, 4] : securityType === 13 ? [4, 11, 13] : [securityType];
-	return actual.ssidHex === ssidHex && (bssid === null || actual.bssid === bssid) && allowed.includes(actual.securityType);
+/** Strength of each personal CWSecurity mode; the open network is 0, anything else is unranked. */
+const SECURITY_RANK = { 0: 0, 2: 1, 3: 1, 4: 2, 13: 2, 11: 3 };
+/** The weakest mode a scan entry accepts: a mixed mode accepts its weaker constituent. */
+const SECURITY_FLOOR = { 0: 0, 2: 1, 3: 1, 4: 2, 13: 2, 11: 3 };
+
+/**
+ * The join reached the requested network with at least the requested protection.
+ *
+ * macOS moves to a stronger access point of the same network within seconds of joining, so neither
+ * the access point nor the exact mode has to match: the raw SSID does, and the negotiated mode may
+ * only be as strong or stronger - never weaker, never open in place of a secured network.
+ */
+export function coreWlanAssociationMatches(actual, ssidHex, _bssid, securityType) {
+	const floor = SECURITY_FLOOR[securityType];
+	const rank = SECURITY_RANK[actual.securityType];
+	if (actual.ssidHex !== ssidHex || floor === undefined || rank === undefined) return false;
+	return floor === 0 ? rank === 0 : rank >= floor;
 }
 
 const SECURITY_LABELS = { 0: '', 2: 'WPA Personal', 3: 'WPA/WPA2 Personal', 4: 'WPA2 Personal', 11: 'WPA3 Personal', 13: 'WPA2/WPA3 Personal' };
