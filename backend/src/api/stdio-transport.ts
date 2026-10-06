@@ -22,6 +22,11 @@ interface Callbacks {
 }
 
 /** RPC over the parent's private pipes. Session IDs must increase within one child process. */
+/** A host request refused before it reached the app: the app never started it. */
+function unsent(message: string): Error {
+	return Object.assign(new Error(message), { mayHaveRun: false });
+}
+
 export class StdioTransport {
 	private readonly decoder = new IpcFrameDecoder();
 	private readonly sessions = new Map<number, Session>();
@@ -66,14 +71,14 @@ export class StdioTransport {
 	 * whenever the app finishes, so a caller that stops waiting still learns when it ended.
 	 */
 	hostCall(request: string): Promise<string> {
-		if (this.ended || this.inputEnded || !this.readySent) return Promise.reject(new Error('The desktop app is not connected'));
-		if (this.hostCalls.size >= MAX_HOST_REQUESTS) return Promise.reject(new Error('Too many desktop app requests'));
+		if (this.ended || this.inputEnded || !this.readySent) return Promise.reject(unsent('The desktop app is not connected'));
+		if (this.hostCalls.size >= MAX_HOST_REQUESTS) return Promise.reject(unsent('Too many desktop app requests'));
 		const id = (this.lastHostRequest = (this.lastHostRequest % 0xffffffff) + 1);
 		return new Promise((resolve, reject) => {
 			this.hostCalls.set(id, { resolve, reject });
 			if (!this.enqueue(IPC_KIND.HostRequest, id, Buffer.from(request))) {
 				this.hostCalls.delete(id);
-				reject(new Error('The desktop app request could not be queued'));
+				reject(unsent('The desktop app request could not be queued'));
 			}
 		});
 	}

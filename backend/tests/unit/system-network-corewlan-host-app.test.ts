@@ -65,3 +65,33 @@ test('a lost app leaves no request waiting', async () => {
 	await expect(readCoreWlanWifi()).rejects.toThrow('disconnected');
 	expect(() => assertMacWifiMutationIdle()).not.toThrow();
 });
+
+test('a change the app never received releases the slot', async () => {
+	setHostApp(() => Promise.reject(Object.assign(new Error('The desktop app is not connected'), { mayHaveRun: false })));
+	await expect(associateMacWifi('en0', 'Example', 'secret-password', 'WPA2 Personal')).rejects.toThrow('not connected');
+	expect(() => assertMacWifiMutationIdle()).not.toThrow();
+});
+
+test('a join or disconnect whose answer was lost with the app keeps blocking further changes', async () => {
+	// In a separate process each: the block lasts for the life of the module, as it does in the backend.
+	const lost = async (operation: string): Promise<unknown> => {
+		const script = `
+			const { setHostApp } = await import('./src/native/host-app.ts');
+			const wifi = await import('./src/system-network-corewlan.ts');
+			let lose;
+			setHostApp(() => new Promise((_, reject) => (lose = reject)));
+			const change = '${operation}' === 'associate' ? wifi.associateMacWifi('en0', 'Example', 'secret-password', 'WPA2 Personal') : wifi.disconnectCoreWlanWifi('en0');
+			lose(new Error('The desktop app disconnected'));
+			const error = await change.catch(error => error.message);
+			let blocked = false;
+			try { wifi.assertMacWifiMutationIdle(); } catch { blocked = true; }
+			console.log(JSON.stringify({ error, blocked }));
+		`;
+		const child = Bun.spawn([process.execPath, '--eval', script], { cwd: `${import.meta.dir}/../..`, stdout: 'pipe', stderr: 'pipe' });
+		const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+		if (code !== 0) throw new Error(err);
+		return JSON.parse(out.trim().split('\n').pop()!);
+	};
+	expect(await lost('associate')).toEqual({ error: 'The desktop app disconnected', blocked: true });
+	expect(await lost('disconnect')).toEqual({ error: 'The desktop app disconnected', blocked: true });
+});

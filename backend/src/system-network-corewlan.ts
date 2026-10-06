@@ -235,7 +235,9 @@ function shapeHostAppResult(request: CoreWlanRequest, result: unknown): unknown 
  *
  * The app cannot be interrupted mid-call, so the slot stays taken until it answers: a request that
  * outlives its deadline is reported as failed, and a change that did is reported as unsettled and
- * keeps blocking further network changes until the app's late answer arrives.
+ * keeps blocking further network changes until the app's late answer arrives. A change whose
+ * answer was lost with the connection keeps blocking for good: the app runs it on its own thread,
+ * so the lost channel does not prove it stopped, and the backend shuts down when the app goes.
  */
 function runInHostApp(host: HostAppCall, request: CoreWlanRequest): Promise<unknown> {
 	const mutation = request.operation === 'associate' || request.operation === 'disconnect';
@@ -243,9 +245,19 @@ function runInHostApp(host: HostAppCall, request: CoreWlanRequest): Promise<unkn
 	// The app starts the change as soon as it reads the request.
 	if (mutation) Atomics.store(current.phase, 0, 1);
 	pending = current;
-	const answer = host(JSON.stringify(request)).finally(() => {
+	const release = (): void => {
 		if (pending === current) pending = null;
-	});
+	};
+	const answer = host(JSON.stringify(request)).then(
+		text => {
+			release();
+			return text;
+		},
+		(error: unknown) => {
+			if (!mutation || (error as { mayHaveRun?: boolean } | null)?.mayHaveRun === false) release();
+			throw error;
+		}
+	);
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(
 			() => {
@@ -268,7 +280,7 @@ function runInHostApp(host: HostAppCall, request: CoreWlanRequest): Promise<unkn
 			error => {
 				clearTimeout(timer);
 				// A lost app after the change was sent leaves its outcome unknown.
-				current.mutationUnsettled = mutation;
+				current.mutationUnsettled = mutation && (error as { mayHaveRun?: boolean } | null)?.mayHaveRun !== false;
 				reject(error instanceof Error ? error : new Error('The desktop app did not answer'));
 			}
 		);

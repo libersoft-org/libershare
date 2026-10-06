@@ -38,7 +38,10 @@ describe('desktop IPC sessions', () => {
 		await Bun.sleep(0);
 		expect(h.disconnected).toEqual([true]);
 		await expect(call).rejects.toThrow('disconnected');
+		// A request already handed to the app may have started; one refused here never did.
+		expect(await call.catch(error => error.mayHaveRun)).toBeUndefined();
 		await expect(h.transport.hostCall('{}')).rejects.toThrow('not connected');
+		expect(await h.transport.hostCall('{}').catch(error => error.mayHaveRun)).toBe(false);
 	});
 
 	it('keeps session ownership and writes accepted replies after orderly EOF', async () => {
