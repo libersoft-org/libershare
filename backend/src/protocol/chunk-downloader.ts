@@ -391,6 +391,9 @@ export class ChunkDownloader {
 			peerManager.markActive(peerID);
 			// Set once this run has taken the peer out of the PeerManager; see stopPeer.
 			let stopped = false;
+			// Why the peer was stopped: after a drop, data already received is still verified and kept;
+			// after a ban nothing more from this peer is used.
+			let stopReason: 'drop' | 'ban' | undefined;
 			const peerAbort = new AbortController();
 			/**
 			 * Take the peer out of this download, once. The stream is aborted rather than half-closed:
@@ -400,6 +403,7 @@ export class ChunkDownloader {
 			const stopPeer = async (reason: 'drop' | 'ban'): Promise<void> => {
 				if (stopped) return;
 				stopped = true;
+				stopReason = reason;
 				peerAbort.abort(new Error(`peer ${reason}`));
 				client.abort(new Error(`peer ${reason}`));
 				await peerManager.removeAwait(peerID, reason);
@@ -526,9 +530,10 @@ export class ChunkDownloader {
 						}
 						const result = await this.downloadChunk(client, chunk.chunkID, peerID);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
-						// A sibling stopped the peer while this request was in flight: whatever came back is
-						// dropped and the chunk goes to another peer.
-						if (stopped) {
+						// A sibling stopped the peer while this request was in flight: a non-data answer, or
+						// anything from a banned peer, is discarded and the chunk goes to another peer. Data
+						// from a dropped peer is still verified below and kept — it is already here.
+						if (stopped && (typeof result === 'string' || stopReason === 'ban')) {
 							if (typeof result === 'string') downloadLimiter.refund(limiterReservation);
 							await requeueChunk(chunk);
 							break;
@@ -609,7 +614,7 @@ export class ChunkDownloader {
 						// re-allocating and verifying the files, so nothing may be written until it is done.
 						await pauseController.waitIfWritePaused();
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
-						if (stopped) {
+						if (stopReason === 'ban') {
 							await requeueChunk(chunk);
 							break;
 						}

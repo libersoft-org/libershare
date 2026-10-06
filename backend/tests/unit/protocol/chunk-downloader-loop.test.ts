@@ -691,4 +691,22 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(pm.isBanned('peer-banned-late0')).toBe(true);
 		expect(ds.written.length).toBe(0);
 	}, 15000);
+
+	it('keeps verified data that arrives after the peer was dropped for transient failures', async () => {
+		const { missing, data } = makeChunks(11);
+		const replies = new Map<ChunkID, Reply>(missing.slice(0, 10).map(c => [c.chunkID, 'busy' as Reply]));
+		const late = missing[10]!;
+		replies.set(late.chunkID, data.get(late.chunkID)!);
+		const client = new ScriptedClient(replies);
+		// Ten busy answers drop the peer while the one chunk it does serve is still on the wire.
+		client.delayByChunk.set(late.chunkID, 150);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 11);
+		pm.tryAdd('peer-dropped-late', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(ds.downloadedChunks.has(late.chunkID)).toBe(true);
+	}, 15000);
 });
