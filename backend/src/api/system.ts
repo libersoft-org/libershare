@@ -89,8 +89,14 @@ interface SystemHandlers {
  * this one's write and its read-back — so both clients are told the host looks like
  * whatever the LAST write left, and the earlier request claims an end state it did not
  * produce.
+ *
+ * `journal` wraps the write in its operation record. It runs inside the lock so the
+ * announcement follows the record's close: announced from inside it, every other window
+ * would see the save as still in flight and keep its form locked until the next poll. With
+ * a journal the state is announced after every outcome, a thrown one included, because the
+ * record itself changed.
  */
-export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn, now: () => number = elapsedClock): Promise<SystemTimeResult> {
+export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus: () => Promise<SystemTimeStatus>, broadcast: BroadcastFn, now: () => number = elapsedClock, journal?: (write: () => Promise<SystemTimeResult>) => Promise<SystemTimeResult>): Promise<SystemTimeResult> {
 	// The budget opens HERE, before the lock, so the time spent waiting for another save
 	// counts against it. Opened after the lock - which is where the writers open theirs - the
 	// queue was free: each save measured only its own commands, while the screen measures from
@@ -106,21 +112,30 @@ export function runTimeWrite(write: () => Promise<SystemTimeResult>, readStatus:
 				// would change the host after its own screen reported an interrupted wait.
 				const waited = remainingSaveBudget();
 				if (waited !== null && waited <= 0) return { success: false, outcome: 'error', message: `this request waited longer than the ${Math.round(SAVE_BUDGET_MS / 1000)} s one save is allowed, so it was not started` };
-				const res = await write();
+				const announce = async (): Promise<void> => {
+					try {
+						// Under its own allowance, not the save's. Telling every open window what the host
+						// looks like now is not the work the budget bounds - and with child limits held
+						// to the remainder, a save that spent all of it would have its own report refused
+						// and leave the screen showing a state the host no longer has.
+						broadcast('system:timeChanged', await withFollowUpBudget(readStatus));
+					} catch (err) {
+						console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
+					}
+				};
+				let res: SystemTimeResult;
+				try {
+					res = await (journal ? journal(write) : write());
+				} catch (error) {
+					if (journal) await announce();
+					throw error;
+				}
 				// A failure is not "nothing happened". A sequence that stopped part-way left the
 				// steps before it applied — the service already stopped, the start mode already
 				// changed — so the clients are told what the host looks like NOW. Skipping that
 				// leaves every open window showing a state the host no longer has.
-				if (!res.success && !res.stateMayHaveChanged) return res;
-				try {
-					// Under its own allowance, not the save's. Telling every open window what the host
-					// looks like now is not the work the budget bounds - and with child limits held
-					// to the remainder, a save that spent all of it would have its own report refused
-					// and leave the screen showing a state the host no longer has.
-					broadcast('system:timeChanged', await withFollowUpBudget(readStatus));
-				} catch (err) {
-					console.warn('[system-time] Applied, but could not announce the new time status:', (err as Error).message);
-				}
+				if (!journal && !res.success && !res.stateMayHaveChanged) return res;
+				await announce();
 				return res;
 			}),
 		now
@@ -274,8 +289,7 @@ export function initSystemHandlers(settings: Settings, broadcast: BroadcastFn, h
 
 	/** Run a system-time write and tell every client what the host looks like afterwards. */
 	function applyTimeWrite(changes: SystemTimeChanges): Promise<SystemTimeResult> {
-		const write = () => runTimeWrite(() => applySystemTimeSettingsWithElevation(changes), getTime, broadcast);
-		return nativeTime ? nativeTime.apply(changes, write) : write();
+		return runTimeWrite(() => applySystemTimeSettingsWithElevation(changes), getTime, broadcast, elapsedClock, nativeTime ? write => nativeTime.apply(changes, write) : undefined);
 	}
 
 	/**
