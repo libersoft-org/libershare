@@ -435,12 +435,19 @@ export async function applyNativeLinuxIPv4(context: NativeMutationContext, devic
 		if (checkpointMayExist) {
 			if (!checkpoint || available() < options.rollbackTimeoutMs + options.checkpointSafetyMs) return await context.pending(endpoint!.rule);
 			const rollbackDeadline = deps.now() + options.rollbackTimeoutMs;
+			let answered = false;
 			try {
 				const reply = await write(request(NM_PATH, NM, 'CheckpointRollback', 'o', [checkpoint]), options.rollbackTimeoutMs, false);
+				// An answered rollback consumes the checkpoint, so its timer can no longer revert anything.
+				answered = true;
+				checkpointMayExist = false;
 				const result = record(reply.values[0]);
 				if (reply.signature !== 'a{su}' || result[checkpointDevice!] !== 0 || Object.values(result).some(code => code !== 0)) throw new Error('NetworkManager failed to roll back the checkpoint');
 			} catch (rollbackError) {
 				if (unknown) throw rollbackError;
+				// A refused or unsent rollback leaves the checkpoint in place: NetworkManager may still revert the
+				// change when it expires, whatever the profile looks like now.
+				if (!answered) return await context.pending(endpoint!.rule);
 				throw new AggregateError([error, rollbackError], 'Network mutation failed and rollback also failed');
 			}
 			let settled = false;

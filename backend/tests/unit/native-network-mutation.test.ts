@@ -19,7 +19,7 @@ function settings(): NativeNetworkSettings {
 function fixture() {
 	const endpoint: BoundDBusEndpoint = { connectionId: 'connection-1', rule: { kind: 'dbus-process', busId: 'a'.repeat(32), destination: ':1.42', process: { pid: 42, started: '1234' } } };
 	const original = settings();
-	const state = { saved: structuredClone(original), applied: structuredClone(original), remaining: 255000, clock: 0, pending: false, closed: false, duplicate: false, unknown: '', failure: '', activationState: 2, expireAfterUpdate: false, wrongDns: false, rollbackWrongDevice: false, rollbackBusyReads: 0, rollbackBusy: 0 };
+	const state = { saved: structuredClone(original), applied: structuredClone(original), remaining: 255000, clock: 0, pending: false, closed: false, duplicate: false, unknown: '', failure: '', activationState: 2, expireAfterUpdate: false, wrongDns: false, rollbackWrongDevice: false, rollbackBusyReads: 0, rollbackBusy: 0, rollbackRefused: false, remainingAtFailure: 0 };
 	const writes: Parameters<NativeNetworkMutationDeps['mutate']>[2][] = [];
 	const reads: Parameters<NativeNetworkMutationDeps['read']>[1][] = [];
 	const recovery: unknown[] = [];
@@ -80,7 +80,11 @@ function fixture() {
 				state.pending = true;
 				throw new NativeMutationUnknown();
 			}
-			if (request.member === state.failure) throw rejected();
+			if (request.member === state.failure) {
+				if (state.remainingAtFailure) state.remaining = state.remainingAtFailure;
+				throw rejected();
+			}
+			if (request.member === 'CheckpointRollback' && state.rollbackRefused) throw rejected();
 			if (request.member === 'CheckpointCreate') return reply('o', CHECKPOINT);
 			if (request.member === 'Update2') {
 				if (state.expireAfterUpdate) state.remaining = 0;
@@ -198,6 +202,14 @@ describe('journaled NetworkManager IPv4 transaction', () => {
 		await expect(applyNativeLinuxIPv4(stuck.context, 'eth0', { mode: 'dhcp', dns: [] }, options, stuck.deps)).rejects.toBeInstanceOf(NativeMutationUnknown);
 		expect(stuck.state.pending).toBe(true);
 		expect(stuck.writes[stuck.writes.length - 1]!.member).toBe('CheckpointRollback');
+	});
+	test('a refused rollback after a refused destroy keeps the operation unresolved', async () => {
+		const f = fixture();
+		f.state.failure = 'CheckpointDestroy';
+		f.state.rollbackRefused = true;
+		await expect(applyNativeLinuxIPv4(f.context, 'eth0', { mode: 'dhcp', dns: [] }, options, f.deps)).rejects.toBeInstanceOf(NativeMutationUnknown);
+		expect(f.writes.map(call => call.member)).toEqual(['CheckpointCreate', 'Update2', 'ActivateConnection', 'CheckpointDestroy', 'CheckpointRollback']);
+		expect(f.state.pending).toBe(true);
 	});
 	test('unknown update or activation never triggers rollback or retry', async () => {
 		for (const member of ['Update2', 'ActivateConnection']) {
