@@ -792,11 +792,23 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		const slowWrite = new Promise<void>(resolve => {
 			releaseSlowWrite = resolve;
 		});
-		let writeCalls = 0;
+		let slowWriteEntered!: () => void;
+		const slowWriteStarted = new Promise<void>(resolve => {
+			slowWriteEntered = resolve;
+		});
+		// Ordered by chunk, not by call count: B's write must already be in flight when A's first
+		// write fails and the retry cycle takes the write pause, whatever order the replies are
+		// verified in. A then fails once more inside the cycle before it lands.
+		let writesOfA = 0;
 		ds.writeChunk = async (_dir, _lish, fileIndex, chunkIndex, data) => {
-			writeCalls++;
-			if (writeCalls === 1 || writeCalls === 3) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
-			if (writeCalls === 2) await slowWrite;
+			if (chunkIndex === 1) {
+				slowWriteEntered();
+				await slowWrite;
+			} else {
+				writesOfA++;
+				if (writesOfA === 1) await slowWriteStarted;
+				if (writesOfA <= 2) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+			}
 			ds.writtenChunks.push({ fileIndex, chunkIndex, data });
 		};
 
