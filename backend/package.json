@@ -3,6 +3,7 @@
 	"type": "module",
 	"devDependencies": {
 		"@types/bun": "^1.4.2",
+		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/node": "^25.9.5",
 		"prettier": "3.9.6",
 		"prettier-plugin-svelte": "4.1.1",
@@ -32,6 +33,7 @@
 		"interface-datastore": "^10.0.1",
 		"it-length-prefixed": "^11.0.1",
 		"libp2p": "^3.3.11",
+		"libsodium-wrappers": "^0.7.15",
 		"msgpackr": "^2.1.0",
 		"uint8arraylist": "^3.0.2",
 		"uint8arrays": "^6.1.1"
