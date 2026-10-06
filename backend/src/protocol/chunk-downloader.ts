@@ -145,10 +145,13 @@ export class ChunkDownloader {
 		// non-zero \u2014 an in-flight failure requeues the chunk, possibly one that
 		// only the scanning peer can serve.
 		let inFlight = 0;
-		// The chunks behind `inFlight`. A rebuilt or requeued queue can list a chunk that a peer is
-		// still fetching; it is skipped so it is not fetched twice. If that fetch fails, its peer
-		// requeues the chunk itself.
-		const inFlightChunks = new Set<ChunkID>();
+		// The chunks behind `inFlight`, each with the claim of the request fetching it. A rebuilt or
+		// requeued queue can list a chunk that a peer is still fetching; it is skipped so it is not
+		// fetched twice. If that fetch fails, its peer requeues the chunk itself.
+		const inFlightChunks = new Map<ChunkID, object>();
+		const releaseClaim = (chunk: MissingChunk, claim: object): void => {
+			if (inFlightChunks.get(chunk.chunkID) === claim) inFlightChunks.delete(chunk.chunkID);
+		};
 		// Changes only when an in-flight request puts potentially useful work back
 		// into the queue. Idle peers watch this instead of repeatedly rotating the
 		// same per-peer notFound entries while nothing has settled.
@@ -158,8 +161,11 @@ export class ChunkDownloader {
 		let retainedWriteDrainResolvers: Array<() => void> = [];
 		const lock = new Mutex();
 		const writeRecoveryMutex = new Mutex();
-		const requeueChunk = async (chunk: MissingChunk): Promise<void> => {
+		// Releasing the claim together with the push matters: a sibling scanning the queue in between
+		// would skip the still-claimed entry, consume it, and leave the chunk in no queue at all.
+		const requeueChunk = async (chunk: MissingChunk, claim: object): Promise<void> => {
 			await lock.runExclusive(() => {
+				releaseClaim(chunk, claim);
 				queue.push(chunk);
 				requeueVersion++;
 			});
@@ -454,6 +460,7 @@ export class ChunkDownloader {
 						break;
 					}
 					let chunk: MissingChunk | undefined;
+					const claim = {};
 					let onlyNotFoundLeft = false;
 					let observedRequeueVersion = 0;
 					await lock.runExclusive(() => {
@@ -483,7 +490,7 @@ export class ChunkDownloader {
 						if (!chunk && unservable.length > 0) onlyNotFoundLeft = true;
 						if (chunk) {
 							inFlight++;
-							inFlightChunks.add(chunk.chunkID);
+							inFlightChunks.set(chunk.chunkID, claim);
 						}
 						observedRequeueVersion = requeueVersion;
 					});
@@ -525,7 +532,7 @@ export class ChunkDownloader {
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 						if (waitSignal.aborted) {
 							downloadLimiter.refund(limiterReservation);
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							break;
 						}
 						const result = await this.downloadChunk(client, chunk.chunkID, peerID);
@@ -535,7 +542,7 @@ export class ChunkDownloader {
 						// from a dropped peer is still verified below and kept — it is already here.
 						if (stopped && (typeof result === 'string' || stopReason === 'ban')) {
 							if (typeof result === 'string') downloadLimiter.refund(limiterReservation);
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							break;
 						}
 						// Non-data results transferred no payload \u2014 return the reservation so failed
@@ -547,7 +554,7 @@ export class ChunkDownloader {
 							// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.
 							console.log(`[DL] Peer ${peerID.slice(0, 12)} dropped to droppedPeers`);
 							await stopPeer('drop');
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							break;
 						}
 						if (result === 'chunk-not-found') {
@@ -561,7 +568,7 @@ export class ChunkDownloader {
 							skippedChunks++;
 							globalNotAvailable++;
 							consecutiveNotAvailable = 0;
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
 							continue;
 						}
@@ -570,7 +577,7 @@ export class ChunkDownloader {
 							globalNotAvailable++;
 							consecutiveNotAvailable++;
 							if (skippedChunks % 500 === 0) trace(`[DL] Peer ${peerID.slice(0, 12)} skipped ${skippedChunks} chunks (skip-chunk, consecutive: ${consecutiveNotAvailable}, global: ${globalNotAvailable}/${queue.length})`);
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							if (this.deps.isDisabled() || this.deps.isDestroyed()) break;
 							// Per-peer: disconnect if peer keeps failing transiently (10 consecutive busy/IO skips)
 							if (consecutiveNotAvailable >= 10) {
@@ -598,7 +605,7 @@ export class ChunkDownloader {
 							const count = (corruptCount.get(peerID) ?? 0) + 1;
 							corruptCount.set(peerID, count);
 							console.log(`[DL] Rejected chunk from ${peerID.slice(0, 12)} (${rejectReason}) (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							if (count >= ChunkDownloader.MAX_CORRUPT_CHUNKS) {
 								console.log(`[DL] Peer ${peerID.slice(0, 12)} banned: ${count} bad chunks`);
 								await stopPeer('ban');
@@ -615,7 +622,7 @@ export class ChunkDownloader {
 						await pauseController.waitIfWritePaused();
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
 						if (stopReason === 'ban') {
-							await requeueChunk(chunk);
+							await requeueChunk(chunk, claim);
 							break;
 						}
 						// Recovery verified the files from disk and may have found this chunk intact.
@@ -635,7 +642,7 @@ export class ChunkDownloader {
 								if (this.fileReallocInProgress.size > 0) {
 									// Another peer is already handling recovery \u2014 wait and re-queue
 									await pauseController.waitIfWritePaused();
-									await requeueChunk(chunk);
+									await requeueChunk(chunk, claim);
 									continue;
 								}
 								const globalAttempts = (this.fileReallocAttempts.get(-1) ?? 0) + 1;
@@ -761,7 +768,7 @@ export class ChunkDownloader {
 								const action = await retainedWrite(chunk, data, firstCode);
 								if (action === 'abort') break;
 								if (action === 'requeue') {
-									await requeueChunk(chunk);
+									await requeueChunk(chunk, claim);
 									continue;
 								}
 								// 'written' \u2192 fall through to markChunkDownloaded (chunk written from retained memory)
@@ -789,7 +796,7 @@ export class ChunkDownloader {
 						// The chunk's fate is settled (downloaded, requeued, or fatal) — release
 						// the in-flight claim so idle peers can make their exit/drop decision.
 						inFlight--;
-						inFlightChunks.delete(chunk.chunkID);
+						releaseClaim(chunk, claim);
 						releaseBudget();
 						if (retainedWriteDrainPending) notifyRetainedWriteDrain();
 					}

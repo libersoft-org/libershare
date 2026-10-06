@@ -4,7 +4,7 @@ import { PeerManager } from '../../../src/protocol/peer-manager.ts';
 import { PauseController } from '../../../src/protocol/pause-controller.ts';
 import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import { ProgressReporter } from '../../../src/protocol/progress-reporter.ts';
-import { CodedError, ErrorCodes, type ChunkID, type LISHid, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, type ErrorCode, type ChunkID, type LISHid, type IStoredLISH } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
 
 /**
@@ -125,6 +125,27 @@ class ScriptedClient {
 	}
 	abort(): void {
 		this.abortCalls++;
+	}
+}
+
+/** Holds the first request for a gated chunk until the test opens the gate, then fails it once. */
+class GatedClient extends ScriptedClient {
+	private gates = new Map<ChunkID, { opened: Promise<void>; open: () => void; used: boolean; failure: ErrorCode }>();
+	gate(c: ChunkID, failure: ErrorCode): void {
+		let open!: () => void;
+		const opened = new Promise<void>(r => (open = r));
+		this.gates.set(c, { opened, open, used: false, failure });
+	}
+	open(c: ChunkID): void {
+		this.gates.get(c)!.open();
+	}
+	override async requestChunk(l: LISHid, c: ChunkID): Promise<Uint8Array> {
+		const g = this.gates.get(c);
+		if (!g || g.used) return super.requestChunk(l, c);
+		g.used = true;
+		this.requests.push(c);
+		await g.opened;
+		throw new CodedError(g.failure, 'gated');
 	}
 }
 
@@ -566,6 +587,33 @@ describe('ChunkDownloader peerLoop — chunks in flight', () => {
 		expect([...slow.requests, ...fast.requests].filter(c => c === x.chunkID).length).toBe(1);
 		expect(ds.downloadedChunks.size).toBe(2);
 	}, 15000);
+
+	it('does not lose a requeued chunk to a sibling that scans the queue before the claim is released', async () => {
+		// Two failures settle a few microtasks apart; one of these offsets lands a sibling's queue scan
+		// between a requeue and the release of that chunk's in-flight claim.
+		const incomplete: number[] = [];
+		for (let offset = 0; offset < 12; offset++) {
+			const { missing, data } = makeChunks(2);
+			const [x, z] = [missing[0]!, missing[1]!];
+			const ds = new FakeDataServer(missing);
+			const pm = new PeerManager();
+			const cd = makeDownloader(ds, pm, 2);
+			const empty = new GatedClient(new Map());
+			empty.gate(x.chunkID, ErrorCodes.PEER_CHUNK_NOT_FOUND);
+			const full = new GatedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])));
+			full.gate(z.chunkID, ErrorCodes.PEER_BUSY);
+			pm.tryAdd('peer-empty-gated0', empty as never, 'DIRECT');
+			pm.tryAdd('peer-full-gated00', full as never, 'DIRECT');
+			const run = cd.run();
+			await Bun.sleep(30);
+			empty.open(x.chunkID);
+			for (let i = 0; i < offset; i++) await Promise.resolve();
+			full.open(z.chunkID);
+			await run;
+			if (ds.downloadedChunks.size !== 2) incomplete.push(offset);
+		}
+		expect(incomplete).toEqual([]);
+	}, 30000);
 });
 
 describe('ChunkDownloader peerLoop — pipelining', () => {
