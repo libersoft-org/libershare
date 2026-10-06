@@ -18,8 +18,8 @@ export const NEW_PASSWORD: string = 'new-demo-password';
 export const BSSID: string = '02:00:00:00:00:01';
 export const wifiOptions: WifiMutationOptions = { readTimeoutMs: 5000, scanTimeoutMs: 30000, updateTimeoutMs: 5000, activationTimeoutMs: 95000, rollbackTimeoutMs: 95000, checkpointSafetyMs: 30000, checkpointTimeoutSeconds: 356 };
 
-export function wifiSettings(uuid: string = UUID, pskFlags: number = 0, open = false): NativeNetworkSettings {
-	return { connection: { uuid: variant('s', uuid), type: variant('s', '802-11-wireless'), id: variant('s', 'Demo') }, '802-11-wireless': { ssid: variant('ay', Buffer.from('Demo')), mode: variant('s', 'infrastructure') }, ...(open ? {} : { '802-11-wireless-security': { 'key-mgmt': variant('s', 'wpa-psk'), 'psk-flags': variant('u', pskFlags) } }), ipv4: { method: variant('s', 'auto') }, ipv6: { method: variant('s', 'auto') } };
+export function wifiSettings(uuid: string = UUID, pskFlags: number = 0, open = false, ssid: Uint8Array = Buffer.from('Demo')): NativeNetworkSettings {
+	return { connection: { uuid: variant('s', uuid), type: variant('s', '802-11-wireless'), id: variant('s', 'Demo') }, '802-11-wireless': { ssid: variant('ay', ssid), mode: variant('s', 'infrastructure') }, ...(open ? {} : { '802-11-wireless-security': { 'key-mgmt': variant('s', 'wpa-psk'), 'psk-flags': variant('u', pskFlags) } }), ipv4: { method: variant('s', 'auto') }, ipv6: { method: variant('s', 'auto') } };
 }
 
 export interface WifiFixture {
@@ -36,11 +36,12 @@ export interface WifiFixture {
 }
 
 /** Synthetic NM model: checkpoint rollback restores active secrets but not an inactive profile's password. */
-export function wifiFixture(options: { existing?: boolean; flags?: number; open?: boolean; active?: boolean } = {}): WifiFixture {
+export function wifiFixture(options: { existing?: boolean; flags?: number; open?: boolean; active?: boolean; ssid?: Uint8Array } = {}): WifiFixture {
+	const ssid = options.ssid ?? Buffer.from('Demo');
 	const profiles = new Map<string, NativeNetworkSettings>();
 	const secrets = new Map<string, string>();
 	if (options.existing !== false) {
-		profiles.set(PROFILE, wifiSettings(UUID, options.flags ?? 0, options.open));
+		profiles.set(PROFILE, wifiSettings(UUID, options.flags ?? 0, options.open, ssid));
 		if (!options.open && !options.flags) secrets.set(PROFILE, OLD_PASSWORD);
 	}
 	const originalActive = options.active ? PROFILE : null;
@@ -110,7 +111,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 			return reply('');
 		},
 		scan: async () => [],
-		link: async () => ({ ssid: state.active ? 'Demo' : null, bssid: state.active ? (state.linkBssid ?? BSSID) : null, signal: state.active ? -38 : null }),
+		link: async () => ({ ssid: state.active ? Buffer.from(ssid).toString('utf8') : null, bssid: state.active ? (state.linkBssid ?? BSSID) : null, signal: state.active ? -38 : null }),
 		read: async (_endpoint, request) => {
 			reads.push(request);
 			if (request.member === 'GetDeviceByIpIface') return reply('o', DEVICE);
@@ -132,7 +133,7 @@ export function wifiFixture(options: { existing?: boolean; flags?: number; open?
 			if (request.member !== 'GetAll') throw new Error(`Unexpected read ${request.member}`);
 			if (request.path === DEVICE && request.args?.[0] === `${NM}.Device`) return reply('a{sv}', { DeviceType: variant('u', 2), Managed: variant('b', true), State: variant('u', state.rollbackBusy > 0 && state.rollbackBusy-- ? 70 : state.active ? 100 : 30), Autoconnect: variant('b', state.autoconnect), ActiveConnection: variant('o', activePath()), AvailableConnections: variant('ao', state.candidates) });
 			if (request.path === DEVICE) return reply('a{sv}', { AccessPoints: variant('ao', [AP]) });
-			if (request.path === AP) return reply('a{sv}', { Ssid: variant('ay', Buffer.from('Demo')), HwAddress: variant('s', BSSID), Mode: variant('u', 2), Frequency: variant('u', 2412), Flags: variant('u', state.flags), WpaFlags: variant('u', state.wpa), RsnFlags: variant('u', state.rsn) });
+			if (request.path === AP) return reply('a{sv}', { Ssid: variant('ay', ssid), HwAddress: variant('s', BSSID), Mode: variant('u', 2), Frequency: variant('u', 2412), Flags: variant('u', state.flags), WpaFlags: variant('u', state.wpa), RsnFlags: variant('u', state.rsn) });
 			if (request.path.includes('/ActiveConnection/')) {
 				const path = `${ROOT}/Settings/${request.path.split('/').pop()}`;
 				const settings = profiles.get(path)!;

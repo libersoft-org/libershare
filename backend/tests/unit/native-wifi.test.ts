@@ -73,6 +73,17 @@ describe('native Wi-Fi transactions', () => {
 			expect((await observeNativeLinuxWifi(f.records[f.records.length - 1], 5000, f.deps)).targetMatches).toBe(true);
 		}
 	});
+	test('a saved network whose name is not UTF-8 is found by its raw SSID bytes', async () => {
+		const raw = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+		const f = wifiFixture({ ssid: raw });
+		await connectNativeLinuxWifi(f.context, 'wlan0', raw.toString('utf8'), NEW_PASSWORD, BSSID, wifiOptions, f.deps, raw.toString('hex'));
+		expect(f.state.active).toBe(PROFILE);
+		expect(f.records[f.records.length - 1]!.targetSsidHex).toBe('636166e9');
+	});
+	test('a display name alone still cannot stand in for raw SSID bytes that differ', async () => {
+		const f = wifiFixture({ ssid: Buffer.from([0x63, 0x61, 0x66, 0xe9]) });
+		await expect(connectNativeLinuxWifi(f.context, 'wlan0', 'caf\ufffd', NEW_PASSWORD, BSSID, wifiOptions, f.deps)).rejects.toThrow('no longer available');
+	});
 	test('stored PSK is verified on a volatile clone before updating and activating the original UUID', async () => {
 		const f = wifiFixture();
 		await connectNativeLinuxWifi(f.context, 'wlan0', 'Demo', NEW_PASSWORD, BSSID, wifiOptions, f.deps);

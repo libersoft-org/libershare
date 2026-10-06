@@ -418,7 +418,7 @@ const linuxNetwork: NetworkPlatform = {
 	assertIdle: () => {},
 	applyIPv4: (interfaceID, config, options) => applyLinuxIPv4(assertDeviceName(interfaceID), config, options.addressingChanged, options.requireLease),
 	scanWifi: interfaceID => scanLinuxWifi(assertDeviceName(interfaceID)),
-	joinWifi: (interfaceID, password, network) => connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid),
+	joinWifi: (interfaceID, password, network) => connectLinuxWifi(assertDeviceName(interfaceID), network.ssid, password, network.bssid, network.ssidHex ?? null),
 	disconnectWifi: interfaceID => disconnectLinuxWifi(assertDeviceName(interfaceID)),
 };
 

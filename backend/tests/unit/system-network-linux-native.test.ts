@@ -112,7 +112,8 @@ describe('native Linux capabilities and active scans', () => {
 	test('RequestScan waits for LastScan and matches nmcli security and signal output', async () => {
 		const { deps, calls, closed } = fixture();
 		const result = await scanNativeLinuxWifi('wlan0', { timeoutMs: 1000 }, deps);
-		expect(result).toEqual(parseNmcliWifiList('Demo:02\\:00\\:00\\:00\\:00\\:01:76:WPA2:*\nEnterprise:02\\:00\\:00\\:00\\:00\\:02:60:WPA2 802.1X:'));
+		// The native scan adds the raw SSID bytes that nmcli's text cannot carry.
+		expect(result).toEqual(parseNmcliWifiList('Demo:02\\:00\\:00\\:00\\:00\\:01:76:WPA2:*\nEnterprise:02\\:00\\:00\\:00\\:00\\:02:60:WPA2 802.1X:').map(row => ({ ...row, ssidHex: Buffer.from(row.ssid).toString('hex') })));
 		expect(calls.filter(call => call.member === 'RequestScan')).toHaveLength(1);
 		expect(closed()).toBe(1);
 	});

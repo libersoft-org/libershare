@@ -374,8 +374,8 @@ const nativeWifiOptions: WifiMutationOptions = {
 	checkpointTimeoutSeconds: NETWORK_MANAGER_CHECKPOINT_TIMEOUT_SECONDS,
 };
 
-export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null): Promise<void> {
-	await connectNativeLinuxWifi(requireNativeMutationContext(), device, ssid, password, bssid, nativeWifiOptions);
+export async function connectLinuxWifi(device: string, ssid: string, password: string, bssid: string | null = null, ssidHex: string | null = null): Promise<void> {
+	await connectNativeLinuxWifi(requireNativeMutationContext(), device, ssid, password, bssid, nativeWifiOptions, undefined, ssidHex);
 }
 
 /** Deactivate the device without removing its saved profiles. */

@@ -337,7 +337,7 @@ export async function scanNativeLinuxWifi(device: string, options: NativeNetwork
 			const bssid = text(ap, 'HwAddress');
 			if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(bssid)) throw new Error('Invalid access point BSSID');
 			const secured = !!(flags & 1) || !!wpa || !!rsn;
-			const network = { ssid: Buffer.from(ssid).toString('utf8'), bssid: bssid.toUpperCase(), signal: Math.min(100, Math.max(0, number(ap, 'Strength', undefined, 'y'))), secured, security, supported: !enterprise && !owe && (!secured || !!((wpa | rsn) & (0x100 | 0x400))), active: apPath === active };
+			const network = { ssid: Buffer.from(ssid).toString('utf8'), ssidHex: Buffer.from(ssid).toString('hex'), bssid: bssid.toUpperCase(), signal: Math.min(100, Math.max(0, number(ap, 'Strength', undefined, 'y'))), secured, security, supported: !enterprise && !owe && (!secured || !!((wpa | rsn) & (0x100 | 0x400))), active: apPath === active };
 			return { network, path: apPath, frequency: number(ap, 'Frequency'), bitrate: number(ap, 'MaxBitrate'), wep: security === 'WEP' };
 		});
 		// The legacy parser re-sorts nmcli by strength, retaining compare_aps order for ties.
@@ -345,7 +345,7 @@ export async function scanNativeLinuxWifi(device: string, options: NativeNetwork
 		const distinct = new Map<string, NetWifiNetwork>();
 		for (const { network } of networks) {
 			if (!network.ssid) continue;
-			const key = `${network.ssid}\0${network.bssid}\0${network.security}`;
+			const key = `${network.ssidHex}\0${network.bssid}\0${network.security}`;
 			const previous = distinct.get(key);
 			if (!previous) distinct.set(key, network);
 			else if (network.active) previous.active = true;

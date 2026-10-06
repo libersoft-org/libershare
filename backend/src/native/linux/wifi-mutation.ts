@@ -78,12 +78,13 @@ async function originalState(session: WifiSession, device: string, path: string)
 	return { properties, metadata: { version: 1, operation: 'connect', device, originalActiveUuid: uuid, originalActiveFingerprint: fingerprint, originalBssid: link.bssid?.toLowerCase() ?? null, originalAutoconnect: autoconnect, targetSsidHex: null, targetBssid: null, targetAuthentication: null, selectedProfileUuid: null, desiredProfileUuid: null, originalProfileFingerprint: null, desiredProfileFingerprint: null, secretSalt: null, oldSecretFingerprint: null, newSecretFingerprint: null, wasActive: false, credentialVerified: false, cloneId: null, cloneUuid: null, checkpointPath: null, phase: 'prepared' } };
 }
 
-async function targetAccessPoint(session: WifiSession, devicePath: string, ssid: string, bssid: string | null): Promise<WifiAccessPoint> {
+/** Match the raw SSID bytes: a name that is not UTF-8 does not survive the trip through its display text. */
+async function targetAccessPoint(session: WifiSession, devicePath: string, ssid: Buffer, bssid: string | null): Promise<WifiAccessPoint> {
 	const wireless = await session.all(devicePath, `${NM}.Device.Wireless`);
 	const matches: WifiAccessPoint[] = [];
 	for (const path of wifiPaths(wireless, 'AccessPoints')) {
 		const ap = decodeWifiAccessPoint(path, await session.all(path, `${NM}.AccessPoint`));
-		if (Buffer.from(ap.ssid).equals(Buffer.from(ssid)) && (bssid === null || ap.bssid === bssid.toLowerCase())) matches.push(ap);
+		if (Buffer.from(ap.ssid).equals(ssid) && (bssid === null || ap.bssid === bssid.toLowerCase())) matches.push(ap);
 	}
 	if (matches.length !== 1) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, matches.length ? 'Wi-Fi target is ambiguous; select its access point' : 'Wi-Fi network is no longer available');
 	return matches[0]!;
@@ -124,8 +125,9 @@ function savedAuthentication(settings: NativeNetworkSettings): 'open' | 'wpa-psk
 	throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'This Wi-Fi authentication method is not supported');
 }
 
-export async function connectNativeLinuxWifi(context: NativeMutationContext, device: string, ssid: string, password: string, bssid: string | null, options: WifiMutationOptions, deps?: WifiMutationDeps): Promise<void> {
-	if (!isValidSSID(ssid) || (bssid !== null && !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(bssid))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Invalid Wi-Fi target');
+export async function connectNativeLinuxWifi(context: NativeMutationContext, device: string, ssid: string, password: string, bssid: string | null, options: WifiMutationOptions, deps?: WifiMutationDeps, ssidHex: string | null = null): Promise<void> {
+	if (!isValidSSID(ssid) || (bssid !== null && !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(bssid)) || (ssidHex !== null && !/^(?:[0-9a-f]{2}){1,32}$/i.test(ssidHex))) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Invalid Wi-Fi target');
+	const ssidBytes = ssidHex === null ? Buffer.from(ssid) : Buffer.from(ssidHex, 'hex');
 	const session = new WifiSession(options, context, deps);
 	let metadata: WifiRecoveryData | undefined;
 	let path: string | undefined;
@@ -143,7 +145,7 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 		metadata = initial.metadata;
 		session.ensureBudget(options.scanTimeoutMs, true);
 		await session.deps.scan(device, Math.min(options.scanTimeoutMs, session.remainingMs()));
-		const ap = await targetAccessPoint(session, path, ssid, bssid);
+		const ap = await targetAccessPoint(session, path, ssidBytes, bssid);
 		const offered = wifiPersonalSecurity(ap);
 		if (offered === null) throw new CodedError(ErrorCodes.NETCONFIG_UNSUPPORTED, 'This Wi-Fi authentication method is not supported');
 		if (offered === 'open' ? password !== '' : !isValidWifiKey((ap.wpa | ap.rsn) & 0x400 ? 'WPA3' : 'WPA2', password)) throw new CodedError(ErrorCodes.NETCONFIG_INVALID, 'Invalid Wi-Fi password');
