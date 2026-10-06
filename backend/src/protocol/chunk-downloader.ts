@@ -587,6 +587,9 @@ export class ChunkDownloader {
 							if (actualHash !== chunk.chunkID) rejectReason = `bad hash: expected ${chunk.chunkID.slice(0, 12)}, got ${actualHash.slice(0, 12)}`;
 						}
 						if (rejectReason) {
+							// Never ask this peer for the chunk again: a sibling worker would otherwise pick the
+							// requeued chunk straight back from the same peer before the ban lands.
+							notFound.add(chunk.chunkID);
 							const count = (corruptCount.get(peerID) ?? 0) + 1;
 							corruptCount.set(peerID, count);
 							console.log(`[DL] Rejected chunk from ${peerID.slice(0, 12)} (${rejectReason}) (${count}/${ChunkDownloader.MAX_CORRUPT_CHUNKS})`);
