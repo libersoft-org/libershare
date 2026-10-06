@@ -26,6 +26,7 @@ import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
 import { NetworkRestartManager } from './network-restart.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { getLocalAddresses } from '../container.ts';
+import { setHostApp } from '../native/host-app.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 	isLocalClient: boolean;
@@ -580,6 +581,9 @@ export class APIServer {
 			message: (client, message) => this.handleMessage(client, message),
 			disconnect: failed => this.onIpcDisconnect(failed),
 		});
+		const stdio = this.stdio;
+		// Only the app process holds the Location Services grant that reveals macOS Wi-Fi names.
+		if (process.platform === 'darwin') setHostApp(request => stdio.hostCall(request));
 		this.stdio.start();
 	}
 

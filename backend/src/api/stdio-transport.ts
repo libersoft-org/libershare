@@ -6,6 +6,7 @@ const MAX_SESSIONS = 16;
 const MAX_QUEUED_FRAMES = 512;
 const MAX_QUEUED_BYTES = 2 * (IPC_MAX_PAYLOAD_SIZE + 9);
 const MAX_PENDING_REQUESTS = 128;
+const MAX_HOST_REQUESTS = 4;
 
 interface Session extends APIClient {
 	id: number;
@@ -34,6 +35,8 @@ export class StdioTransport {
 	private failed = false;
 	private readySent = false;
 	private lastSession = 0;
+	private lastHostRequest = 0;
+	private readonly hostCalls = new Map<number, { resolve: (reply: string) => void; reject: (error: Error) => void }>();
 	private readonly idleWaiters = new Set<() => void>();
 	private readonly callbacks: Callbacks;
 	private readonly input: Readable;
@@ -56,6 +59,23 @@ export class StdioTransport {
 		if (this.ended || this.inputEnded || this.readySent) return;
 		this.readySent = true;
 		this.enqueue(IPC_KIND.Ready, 0, new Uint8Array([IPC_VERSION]));
+	}
+
+	/**
+	 * Ask the desktop app for work only its own process may do. The reply settles the promise
+	 * whenever the app finishes, so a caller that stops waiting still learns when it ended.
+	 */
+	hostCall(request: string): Promise<string> {
+		if (this.ended || this.inputEnded || !this.readySent) return Promise.reject(new Error('The desktop app is not connected'));
+		if (this.hostCalls.size >= MAX_HOST_REQUESTS) return Promise.reject(new Error('Too many desktop app requests'));
+		const id = (this.lastHostRequest = (this.lastHostRequest % 0xffffffff) + 1);
+		return new Promise((resolve, reject) => {
+			this.hostCalls.set(id, { resolve, reject });
+			if (!this.enqueue(IPC_KIND.HostRequest, id, Buffer.from(request))) {
+				this.hostCalls.delete(id);
+				reject(new Error('The desktop app request could not be queued'));
+			}
+		});
 	}
 
 	private readonly onData = (chunk: Buffer): void => {
@@ -87,6 +107,13 @@ export class StdioTransport {
 	private receive(frame: IpcFrame): void {
 		if (this.ended || this.inputEnded) return;
 		if (!this.readySent || frame.session === 0) throw new Error('Invalid session');
+		if (frame.kind === IPC_KIND.HostReply) {
+			const call = this.hostCalls.get(frame.session);
+			if (!call) throw new Error('Unknown host reply');
+			this.hostCalls.delete(frame.session);
+			call.resolve(new TextDecoder('utf-8', { fatal: true }).decode(frame.payload));
+			return;
+		}
 		if (frame.kind === IPC_KIND.Open) {
 			if (frame.payload.length || frame.session <= this.lastSession || this.sessions.size >= MAX_SESSIONS) throw new Error('Invalid open');
 			this.lastSession = frame.session;
@@ -187,6 +214,9 @@ export class StdioTransport {
 
 	private stopInput(): void {
 		this.inputEnded = true;
+		// No reply can arrive any more; a caller must not wait for one.
+		for (const call of this.hostCalls.values()) call.reject(new Error('The desktop app disconnected'));
+		this.hostCalls.clear();
 		this.input.off('data', this.onData);
 		this.input.off('end', this.onEnd);
 		this.input.pause();

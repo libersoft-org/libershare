@@ -3,13 +3,20 @@ import { MAX_API_MESSAGE_SIZE } from './product.ts';
 export const IPC_VERSION: number = 1;
 export const IPC_HEADER_SIZE: number = 5;
 export const IPC_MAX_PAYLOAD_SIZE: number = MAX_API_MESSAGE_SIZE;
-export const IPC_KIND: Readonly<{ Ready: 1; Open: 2; Opened: 3; Text: 4; Binary: 5; Close: 6 }> = {
+/**
+ * `HostRequest` goes from the backend to the desktop app and `HostReply` back, under the same
+ * request id in the session field: work only the app process may do, such as macOS Wi-Fi, whose
+ * network names the system reveals only to the application holding Location Services access.
+ */
+export const IPC_KIND: Readonly<{ Ready: 1; Open: 2; Opened: 3; Text: 4; Binary: 5; Close: 6; HostRequest: 7; HostReply: 8 }> = {
 	Ready: 1,
 	Open: 2,
 	Opened: 3,
 	Text: 4,
 	Binary: 5,
 	Close: 6,
+	HostRequest: 7,
+	HostReply: 8,
 };
 export type IpcKind = (typeof IPC_KIND)[keyof typeof IPC_KIND];
 
@@ -20,7 +27,7 @@ export interface IpcFrame {
 }
 
 function isKind(kind: number): kind is IpcKind {
-	return Number.isInteger(kind) && kind >= IPC_KIND.Ready && kind <= IPC_KIND.Close;
+	return Number.isInteger(kind) && kind >= IPC_KIND.Ready && kind <= IPC_KIND.HostReply;
 }
 
 function validateBodySize(size: number): void {
