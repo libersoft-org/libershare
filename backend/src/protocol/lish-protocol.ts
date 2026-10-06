@@ -563,12 +563,6 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 		// Handle multiple requests on the same stream. A stream abort does not guarantee that
 		// every source iterator wakes up, so the reset signal must also interrupt next().
 		while (!abortSignal?.aborted) {
-			// Take the next request only once the previous reply has left the write queue. A peer
-			// that pipelines requests — or never reads its replies — would otherwise have every
-			// requested chunk read from disk and held here in memory at once. Every request gets
-			// exactly one reply, so before the first one nothing of ours can be queued.
-			if (requestCount > 0) await waitForWriteBuffer(stream, abortSignal);
-			if (abortSignal?.aborted) break;
 			const next = await nextProtocolMessage(iterator, abortSignal);
 			if (next.done) break;
 			const msg = next.value;
@@ -595,6 +589,15 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				const response: LISHGetChunkResponse = { error: ErrorCodes.PEER_INVALID_REQUEST };
 				sendLengthPrefixed(stream, codecEncode(response));
 				continue;
+			}
+			// Backpressure: a reply goes out only once the previous one has left the write queue, so a
+			// peer that pipelines requests — or never reads its replies — holds at most one queued
+			// reply and one prepared one here. A chunk is read from disk first and waits only before
+			// it is sent, so the disk read overlaps the previous chunk's transmission.
+			const isChunkRequest = request.type === 'getChunk' || request.type === undefined;
+			if (!isChunkRequest && requestCount > 1) {
+				await waitForWriteBuffer(stream, abortSignal);
+				if (abortSignal?.aborted) break;
 			}
 
 			if (request.type === 'getLishs') {
@@ -746,6 +749,8 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					activeStreamCount.set(chunkReq.lishID, (activeStreamCount.get(chunkReq.lishID) ?? 0) + 1);
 					if (remotePeerID) registerUploadPeer(chunkReq.lishID, fullRemotePeer, connType);
 				}
+				await waitForWriteBuffer(stream, abortSignal);
+				if (abortSignal?.aborted || stream.status !== 'open') break;
 				// Send raw binary chunk — msgpack native bin type, no base64.
 				const response: LISHGetChunkResponse = { data: chunkData };
 				sendLengthPrefixed(stream, codecEncode(response));

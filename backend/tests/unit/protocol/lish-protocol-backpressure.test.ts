@@ -71,14 +71,15 @@ beforeEach(() => enableUpload(LISH));
 afterEach(() => resetUploadState());
 
 describe('LISH responder backpressure', () => {
-	it('serves the next chunk request only after the previous reply left the queue', async () => {
+	it('holds one queued and one prepared chunk while the previous reply has not left the queue', async () => {
 		const stream = new WindowedStream();
 		const { server, chunks } = dataServer();
 		const handler = handleLISHProtocol(stream, server);
 		stream.receive(...[1, 2, 3, 4].map(i => ({ type: 'getChunk', lishID: LISH, chunkID: `c${i}` })));
-		await until(() => chunks() > 0);
+		await until(() => chunks() > 1);
 		await Bun.sleep(50);
-		expect(chunks()).toBe(1);
+		// The first reply sits in the shut window; the second chunk is read from disk ahead of time.
+		expect(chunks()).toBe(2);
 		stream.open(64 * 1024 * 1024);
 		await until(() => chunks() === 4);
 		expect(chunks()).toBe(4);
@@ -110,6 +111,6 @@ describe('LISH responder backpressure', () => {
 		stream.abort(new Error('peer gone'));
 		const finished = await Promise.race([handler.then(() => true), Bun.sleep(1000).then(() => false)]);
 		expect(finished).toBe(true);
-		expect(chunks()).toBe(1);
+		expect(chunks()).toBeLessThanOrEqual(2);
 	});
 });
