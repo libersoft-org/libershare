@@ -476,6 +476,52 @@ describe('ChunkDownloader peerLoop — stopping a peer', () => {
 	}, 15000);
 });
 
+describe('ChunkDownloader peerLoop — writes around recovery', () => {
+	it('holds a reply that arrives during a recovery write pause until the pause lifts', async () => {
+		const { missing, data } = makeChunks(1);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const pc = new PauseController(
+			() => false,
+			() => false
+		);
+		const cd = makeDownloader(ds, pm, 1, { pauseController: pc });
+		const client = new ScriptedClient(new Map([[missing[0]!.chunkID, data.get(missing[0]!.chunkID)!]]), 100);
+		pm.tryAdd('peer-recovery-hold', client as never, 'DIRECT');
+		const run = cd.run();
+		await Bun.sleep(30);
+		// Another peer's recovery takes the pause while this request is on the wire.
+		pc.pauseWrites();
+		await Bun.sleep(150);
+		expect(ds.written.length).toBe(0);
+		pc.resumeWrites();
+		await run;
+		expect(ds.written.length).toBe(1);
+	}, 15000);
+
+	it('drops a reply for a chunk that recovery found intact while the reply waited', async () => {
+		const { missing, data } = makeChunks(1);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const pc = new PauseController(
+			() => false,
+			() => false
+		);
+		const cd = makeDownloader(ds, pm, 1, { pauseController: pc });
+		const client = new ScriptedClient(new Map([[missing[0]!.chunkID, data.get(missing[0]!.chunkID)!]]), 100);
+		pm.tryAdd('peer-recovery-done', client as never, 'DIRECT');
+		const run = cd.run();
+		await Bun.sleep(30);
+		pc.pauseWrites();
+		await Bun.sleep(150);
+		// Recovery verified the file from disk and marked the chunk downloaded.
+		ds.downloadedChunks.add(missing[0]!.chunkID);
+		pc.resumeWrites();
+		await run;
+		expect(ds.written.length).toBe(0);
+	}, 15000);
+});
+
 describe('ChunkDownloader peerLoop — chunks in flight', () => {
 	it('does not fetch a chunk twice when the queue lists it again while it is in flight', async () => {
 		const { missing, data } = makeChunks(2);

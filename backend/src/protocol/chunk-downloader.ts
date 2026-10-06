@@ -545,6 +545,12 @@ export class ChunkDownloader {
 					skippedChunks = 0;
 					consecutiveNotAvailable = 0;
 					globalNotAvailable = 0;
+					// The reply may have arrived while another peer's recovery holds the write pause: it is
+					// re-allocating and verifying the files, so nothing may be written until it is done.
+					await pauseController.waitIfWritePaused();
+					if (this.deps.abortSignal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
+					// Recovery verified the files from disk and may have found this chunk intact.
+					if (dataServer.isChunkDownloaded(lishID, chunk.chunkID)) continue;
 
 					try {
 						await writeChunkToAllSlots(chunk, data);
