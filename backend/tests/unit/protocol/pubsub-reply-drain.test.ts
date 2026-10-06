@@ -175,3 +175,45 @@ describe('pubsub search replies and the reset drain', () => {
 		network.resumeLISHProtocolHandlers();
 	});
 });
+
+describe('pubsub replies still dialing at drain', () => {
+	afterEach(() => resetUploadState());
+
+	for (const kind of ['want', 'search'] as const) {
+		it(`ends a ${kind} reply whose dial has not finished`, async () => {
+			const LISH = `pubsub-dial-${kind}`;
+			const lish = { id: LISH, name: 'Shared', directory: tmpdir(), files: [{ size: 1 }] };
+			const dataServer = { get: () => lish, list: () => [lish], getHaveChunks: () => 'all' };
+			const network = new Network(`/tmp/pubsub-dial-${kind}`, dataServer as never, {} as never);
+			const internals = network as unknown as Record<string, any>;
+			internals['node'] = { peerId: { toString: () => 'self' }, getMultiaddrs: () => [] };
+			internals['canServePubsubRequestTo'] = () => true;
+			internals['isDirectPeer'] = () => true;
+			internals['isJoinedToLishnet'] = () => true;
+			let dialing = false;
+			let streamOpened = false;
+			// The dial ends only through its signal, like a libp2p dial to a peer that never answers.
+			internals['dialProtocolByPeerId'] = (_peer: string, _protocol: string, signal?: AbortSignal) =>
+				new Promise((_resolve, reject) => {
+					dialing = true;
+					signal?.addEventListener('abort', () => reject(new Error('dial aborted')), { once: true });
+				}).then(() => {
+					streamOpened = true;
+					return { stream: new SilentPeerStream() };
+				});
+			enableUpload(LISH);
+
+			if (kind === 'want') internals['lishHandlers'].dispatchWant({ type: 'want', lishID: LISH }, 'net-a', 'peer-asker');
+			else internals['lishHandlers'].dispatchSearch({ type: 'searchLishs', searchID: 'dial-drain', query: 'shared' }, 'net-a', 'peer-asker');
+			for (let i = 0; i < 100 && !dialing; i++) await Bun.sleep(5);
+			expect(dialing).toBe(true);
+
+			const drained = await Promise.race([network.pauseLISHProtocolHandlersAndDrain().then(() => true), Bun.sleep(1000).then(() => false)]);
+			expect(drained).toBe(true);
+			expect(streamOpened).toBe(false);
+			expect(internals['lishHandlers'].run.replies.size).toBe(0);
+			expect(internals['lastWantResponseTime'].size).toBe(0);
+			network.resumeLISHProtocolHandlers();
+		});
+	}
+});
