@@ -1,5 +1,7 @@
 declare const LISH_COREWLAN_WORKER_ENTRY: string | undefined;
 import { type NetWifiInfo, type NetWifiNetwork } from '@shared';
+import { hostApp, type HostAppCall } from './native/host-app.ts';
+import { coreWlanInterfaceState, coreWlanNamesVisible, coreWlanScanRows, type CoreWlanNetwork, type CoreWlanSnapshot } from './system-network-corewlan-rows.js';
 
 export interface MacWifiInterface {
 	device: string;
@@ -10,7 +12,7 @@ export interface MacWifiInterface {
 type CoreWlanRequest = { operation: 'state' } | { operation: 'scan'; device: string } | { operation: 'disconnect'; device: string } | { operation: 'associate'; device: string; ssidHex: string; password: string; securityType: number; bssid: string | null };
 
 // Shared worker phase: 0 = preparing/reading, 1 = mutation started, 2 = cancelled.
-let pending: { worker: Worker; phase: Int32Array; mutationUnsettled: boolean } | null = null;
+let pending: { worker: Worker | null; phase: Int32Array; mutationUnsettled: boolean } | null = null;
 const NATIVE_BUSY = 'macOS Wi-Fi native operation is still finishing; try again after it has stopped';
 interface CoreWlanReader {
 	readonly worker: Worker;
@@ -93,6 +95,8 @@ export function macSsidHex(ssid: string, ssidHex: string | null = null): string 
 /** Keep synchronous native calls off the backend event loop; credentials stay in process memory. */
 function runCoreWlan<T>(request: CoreWlanRequest): Promise<T> {
 	if (pending) return Promise.reject(new Error(NATIVE_BUSY));
+	const host = hostApp();
+	if (host) return runInHostApp(host, request) as Promise<T>;
 	return new Promise((resolve, reject) => {
 		const reading = request.operation === 'state' || request.operation === 'scan';
 		const pooled = reading ? getReader() : null;
@@ -189,4 +193,75 @@ export function associateMacWifi(device: string, ssid: string, password: string,
 
 export function disconnectCoreWlanWifi(device: string): Promise<void> {
 	return runCoreWlan({ operation: 'disconnect', device });
+}
+
+type HostAppReply = { error: string } | { result?: unknown };
+
+/** Last proven name access per interface, read through the desktop app. */
+const hostNamesVisible = new Map<string, boolean>();
+
+/** The app's raw CoreWLAN answer, shaped by the same rules the in-process worker applies. */
+function shapeHostAppResult(request: CoreWlanRequest, result: unknown): unknown {
+	if (request.operation === 'state') {
+		const interfaces = result as Array<{ snapshot: CoreWlanSnapshot; networks: CoreWlanNetwork[] }>;
+		return interfaces
+			.filter(item => item.snapshot.device)
+			.map(item => {
+				const device = item.snapshot.device!;
+				const visible = coreWlanNamesVisible(item.snapshot, item.networks, hostNamesVisible.get(device));
+				hostNamesVisible.set(device, visible);
+				return coreWlanInterfaceState(item.snapshot, visible);
+			});
+	}
+	if (request.operation === 'scan') {
+		const { snapshot, networks } = result as { snapshot: CoreWlanSnapshot; networks: CoreWlanNetwork[] };
+		if (networks.length && !networks.some(network => network.ssidHex)) throw new Error('macOS did not expose Wi-Fi network names');
+		return coreWlanScanRows(networks, snapshot);
+	}
+	return undefined;
+}
+
+/**
+ * Run one CoreWLAN request in the desktop app, the process macOS lets see network names.
+ *
+ * The app cannot be interrupted mid-call, so the slot stays taken until it answers: a request that
+ * outlives its deadline is reported as failed, and a change that did is reported as unsettled and
+ * keeps blocking further network changes until the app's late answer arrives.
+ */
+function runInHostApp(host: HostAppCall, request: CoreWlanRequest): Promise<unknown> {
+	const mutation = request.operation === 'associate' || request.operation === 'disconnect';
+	const current = { worker: null, phase: new Int32Array(new SharedArrayBuffer(4)), mutationUnsettled: false };
+	// The app starts the change as soon as it reads the request.
+	if (mutation) Atomics.store(current.phase, 0, 1);
+	pending = current;
+	const answer = host(JSON.stringify(request)).finally(() => {
+		if (pending === current) pending = null;
+	});
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(
+			() => {
+				current.mutationUnsettled = mutation;
+				reject(new Error(mutation ? `macOS Wi-Fi ${request.operation === 'disconnect' ? 'disconnect' : 'association'} timed out; its result is unknown and further network changes are blocked until the native operation stops` : 'macOS Wi-Fi native operation timed out before any network change was started'));
+			},
+			request.operation === 'associate' ? 45_000 : 20_000
+		);
+		answer.then(
+			text => {
+				clearTimeout(timer);
+				try {
+					const reply = JSON.parse(text) as HostAppReply;
+					if ('error' in reply) throw new Error(reply.error);
+					resolve(shapeHostAppResult(request, reply.result));
+				} catch (error) {
+					reject(error instanceof Error ? error : new Error('macOS Wi-Fi app answer was invalid'));
+				}
+			},
+			error => {
+				clearTimeout(timer);
+				// A lost app after the change was sent leaves its outcome unknown.
+				current.mutationUnsettled = mutation;
+				reject(error instanceof Error ? error : new Error('The desktop app did not answer'));
+			}
+		);
+	});
 }

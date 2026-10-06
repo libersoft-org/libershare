@@ -17,6 +17,10 @@ const OPENED: u8 = 3;
 const TEXT: u8 = 4;
 const BINARY: u8 = 5;
 const CLOSE: u8 = 6;
+/// The backend asks the app for work only this process may do; the session field is the request id.
+#[cfg(target_os = "macos")]
+const HOST_REQUEST: u8 = 7;
+const HOST_REPLY: u8 = 8;
 
 type Completion = mpsc::Sender<Result<(), &'static str>>;
 
@@ -74,7 +78,8 @@ impl BridgeState {
 		let old = self.session.take()?;
 		let mut kept = VecDeque::new();
 		while let Some(job) = self.queue.pop_front() {
-			if frame_session(&job.body) == old.id {
+			// A host reply's id is a request id, unrelated to window sessions.
+			if job.body[0] != HOST_REPLY && frame_session(&job.body) == old.id {
 				self.queued_bytes -= job.body.len();
 				self.queued_frames -= 1;
 				if let Some(done) = job.done {
@@ -127,6 +132,19 @@ impl BridgeState {
 			done: Some(done),
 		});
 		Ok(())
+	}
+
+	#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+	fn queue_host_reply(&mut self, id: u32, reply: &[u8]) {
+		if self.exited || self.failed {
+			return;
+		}
+		let mut body = vec![HOST_REPLY];
+		body.extend_from_slice(&id.to_be_bytes());
+		body.extend_from_slice(reply);
+		self.queued_bytes += body.len();
+		self.queued_frames += 1;
+		self.queue.push_back(WriteJob { body, done: None });
 	}
 
 	fn acknowledge(&mut self, id: u32, sequence: u32) {
@@ -412,6 +430,25 @@ impl BackendBridge {
 						return;
 					};
 					self.deliver(session, text);
+				}
+				#[cfg(target_os = "macos")]
+				HOST_REQUEST if session != 0 => {
+					let Ok(request) = String::from_utf8(body[5..].to_vec()) else {
+						self.fatal();
+						return;
+					};
+					// CoreWLAN blocks for seconds; the pipe keeps flowing meanwhile.
+					let bridge = self.clone();
+					std::thread::spawn(move || {
+						let reply = crate::corewlan::handle(&request);
+						bridge
+							.0
+							.state
+							.lock()
+							.unwrap()
+							.queue_host_reply(session, reply.as_bytes());
+						bridge.0.changed.notify_all();
+					});
 				}
 				CLOSE if session != 0 && body.len() == 5 => {
 					let old = {
@@ -790,6 +827,19 @@ mod tests {
 		assert_eq!(state.queue.front().unwrap().body, [CLOSE, 0, 0, 0, 1]);
 		assert_eq!(state.queued_bytes, 5);
 		assert_eq!(state.queued_frames, 1);
+	}
+
+	#[test]
+	fn a_closed_window_session_keeps_a_host_reply_that_shares_its_number() {
+		let mut state = active_state();
+		state.queue_host_reply(2, b"{}");
+		assert_eq!(state.invalidate(true), Some(2));
+		assert_eq!(
+			state.queue.front().unwrap().body,
+			[HOST_REPLY, 0, 0, 0, 2, b'{', b'}']
+		);
+		assert_eq!(state.queue.back().unwrap().body, [CLOSE, 0, 0, 0, 2]);
+		assert_eq!(state.queued_frames, 2);
 	}
 
 	fn active_state() -> BridgeState {
