@@ -11,6 +11,11 @@ export function openDatabase(dataDir: string): Database {
 	const opened = new Database(dbPath);
 	try {
 		opened.run('PRAGMA journal_mode = WAL');
+		// WAL with NORMAL syncs at checkpoints instead of on every commit. A download commits
+		// per chunk (have flag, byte counters), and a seeder per served chunk, so FULL put an
+		// fsync on every chunk on both sides. NORMAL keeps the database consistent; a power cut
+		// can only lose the last commits — chunks then download again, their data is re-verified.
+		opened.run('PRAGMA synchronous = NORMAL');
 		opened.run('PRAGMA foreign_keys = ON');
 		console.log(`[DB] ${dbPath}`);
 		initLISHsTables(opened);
