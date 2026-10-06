@@ -111,6 +111,16 @@ describe('native Windows IPv4 transaction', () => {
 		expect(f.current().stores).toEqual(initial().stores);
 		expect((await observeNativeWindowsIPv4(f.saved(), 1000, f.deps)).target).toBe(true);
 	});
+	test('a change of one DNS family is verified against that family and keeps the other', async () => {
+		const f = fixture();
+		await applyNativeWindowsIPv4(f.context, guid, { mode: 'static', address: '192.0.2.10', prefixLength: 24, gateway: '192.0.2.1', dns: ['198.51.100.53'] }, { addressingChanged: false, requireLease: true }, f.deps);
+		expect(f.calls.map(call => call.step.kind === 'dns' && call.step.policy.family)).toEqual([2]);
+		expect(f.current().dns.map(policy => [policy.family, policy.servers])).toEqual([
+			[2, ['198.51.100.53']],
+			[23, ['2001:db8::53']],
+		]);
+		expect((await observeNativeWindowsIPv4(f.saved(), 1000, f.deps)).target).toBe(true);
+	});
 	test('static apply replaces both stores, waits for Preferred and preserves the route metric', async () => {
 		const f = fixture();
 		await applyNativeWindowsIPv4(f.context, guid, staticConfig, { addressingChanged: true, requireLease: true }, f.deps);

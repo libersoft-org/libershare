@@ -165,7 +165,20 @@ export function assertWindowsIPv4Target(current: WindowsIPv4Snapshot, saved: Win
 	if (desired.dns === undefined) return;
 	if (!desired.dns.length) {
 		if (current.dns.some(policy => !policy.automatic)) throw new Error('DNS apply did not restore automatic policy');
-	} else if (current.dns.every(policy => policy.automatic) || dnsKey(current.dns.flatMap(policy => policy.servers)) !== dnsKey(desired.dns)) throw new Error('DNS apply did not set the requested servers');
+	} else
+		// Per family, as windowsDnsChanges writes them: a family the request names gets exactly its
+		// servers, and a family it leaves out must still be what it was before the change.
+		for (const family of [2, 23] as const) {
+			const wanted = desired.dns.filter(server => isIP(server) === (family === 2 ? 4 : 6));
+			const now = current.dns.find(policy => policy.family === family);
+			if (wanted.length) {
+				if (!now || now.automatic || dnsKey(now.servers) !== dnsKey(wanted)) throw new Error('DNS apply did not set the requested servers');
+			} else if (dnsPolicyKey(now) !== dnsPolicyKey(saved.snapshot.dns.find(policy => policy.family === family))) throw new Error('DNS apply changed the servers of the other address family');
+		}
+}
+
+function dnsPolicyKey(policy: WindowsDnsPolicy | undefined): string {
+	return policy ? `${policy.automatic}:${dnsKey(policy.servers)}` : 'none';
 }
 
 export function isWindowsIPv4Recovery(value: unknown): value is WindowsIPv4Recovery {
