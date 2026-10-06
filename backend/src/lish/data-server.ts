@@ -247,53 +247,74 @@ export class DataServer {
 	}
 
 	/**
-	 * A chunk reader for one stream of requests: it keeps each file it read open for the next
+	 * A chunk reader for one stream of requests: it keeps the files it read open for the next
 	 * chunk, instead of opening the dataset and the file, reading their size and closing both for
-	 * every chunk (on Windows that is several round trips to the I/O worker). Files close after
-	 * `idleMs` without a read — so an idle stream does not keep them locked — and on `close()`.
+	 * every chunk (on Windows that is several round trips to the I/O worker). It keeps at most
+	 * `maxFiles` of them, closing the least recently used one first, so a stream walking through
+	 * many files cannot run the process out of file handles. Files that no read is using close
+	 * `idleMs` after the last read finished — so an idle stream does not keep them locked — and on
+	 * `close()`; a file is never closed under a read that is still opening or reading it.
 	 * The chunk's location is still looked up for every read, so a deleted LISH or reset chunk is
 	 * never served from a kept file; a moved dataset gets a new key and is opened afresh.
 	 */
-	createChunkReader(idleMs = 2000): ChunkReader {
-		const files = new Map<string, Promise<OpenChunkFile>>();
+	createChunkReader(idleMs = 2000, maxFiles = 4): ChunkReader {
+		interface KeptFile {
+			readonly opened: Promise<OpenChunkFile>;
+			users: number;
+			dropped: boolean;
+		}
+		// Insertion order is use order: a used entry is moved to the end.
+		const files = new Map<string, KeptFile>();
 		let timer: ReturnType<typeof setTimeout> | undefined;
-		const drop = (key: string, entry: Promise<OpenChunkFile>): Promise<void> => {
+		// Forget the entry; its file closes once the last read using it is done.
+		const drop = async (key: string, entry: KeptFile): Promise<void> => {
 			if (files.get(key) === entry) files.delete(key);
-			return entry.then(
-				opened => opened.close(),
-				() => {}
-			);
+			entry.dropped = true;
+			if (entry.users === 0)
+				await entry.opened.then(
+					opened => opened.close(),
+					() => {}
+				);
 		};
-		const closeAll = async (): Promise<void> => {
-			const entries = [...files.entries()];
-			files.clear();
-			await Promise.all(entries.map(([key, entry]) => drop(key, entry)));
-		};
+		const dropUnused = (): Promise<void[]> => Promise.all([...files.entries()].filter(([, entry]) => entry.users === 0).map(([key, entry]) => drop(key, entry)));
 		return {
-			getChunk: (lishID, chunkID) => {
-				clearTimeout(timer);
-				timer = setTimeout(() => void closeAll(), idleMs);
-				timer.unref?.();
-				return this.readChunk(lishID, chunkID, async (id, filePath) => {
+			getChunk: (lishID, chunkID) =>
+				this.readChunk(lishID, chunkID, async (id, filePath) => {
 					const key = JSON.stringify([id, this.getDatasetRoot(id) ?? getLISHMeta(this.db, id)?.directory ?? null, filePath]);
 					let entry = files.get(key);
-					if (!entry) {
-						entry = this.openChunkFile(id, filePath);
-						files.set(key, entry);
-						const opening = entry;
-						opening.catch(() => {
-							if (files.get(key) === opening) files.delete(key);
-						});
+					files.delete(key);
+					entry ??= { opened: this.openChunkFile(id, filePath), users: 0, dropped: false };
+					files.set(key, entry);
+					entry.users++;
+					for (const [oldKey, oldEntry] of files) {
+						if (files.size <= maxFiles) break;
+						if (oldEntry.users === 0) void drop(oldKey, oldEntry);
 					}
-					const opened = await entry;
 					const kept = entry;
-					// A failed read may mean the kept file went bad: drop it so the next read reopens it.
-					return { file: opened.file, size: opened.size, done: failed => (failed ? drop(key, kept) : Promise.resolve()) };
-				});
-			},
+					let opened: OpenChunkFile;
+					try {
+						opened = await kept.opened;
+					} catch (error) {
+						kept.users--;
+						void drop(key, kept);
+						throw error;
+					}
+					return {
+						file: opened.file,
+						size: opened.size,
+						done: async failed => {
+							kept.users--;
+							clearTimeout(timer);
+							timer = setTimeout(() => void dropUnused(), idleMs);
+							timer.unref?.();
+							// A failed read may mean the kept file went bad: drop it so the next read reopens it.
+							if (failed || kept.dropped) await drop(key, kept);
+						},
+					};
+				}),
 			close: async () => {
 				clearTimeout(timer);
-				await closeAll();
+				await Promise.all([...files.entries()].map(([key, entry]) => drop(key, entry)));
 			},
 		};
 	}
