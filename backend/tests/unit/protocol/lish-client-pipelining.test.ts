@@ -99,7 +99,7 @@ describe('LISHClient pipelined requests', () => {
 		expect((await first).id).toBe('lish-one');
 		expect((await second).id).toBe('lish-two');
 		const bodies = frames.map(f => f.length - 2); // both bodies are under 16 KiB: two-byte varint prefix
-		expect(progress[0]!.at(-1)).toEqual([bodies[0]!, bodies[0]!]);
-		expect(progress[1]!.at(-1)).toEqual([bodies[1]!, bodies[1]!]);
+		expect(progress[0]![progress[0]!.length - 1]).toEqual([bodies[0]!, bodies[0]!]);
+		expect(progress[1]![progress[1]!.length - 1]).toEqual([bodies[1]!, bodies[1]!]);
 	});
 });
