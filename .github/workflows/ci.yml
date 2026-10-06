@@ -82,6 +82,9 @@ jobs:
         run: |
           TZ=UTC bun test tests/unit/native-darwin-clock.test.ts tests/unit/native-darwin-clock-oracle.test.ts
           TZ=Pacific/Honolulu bun test tests/unit/native-darwin-clock.test.ts tests/unit/native-darwin-clock-oracle.test.ts
+      - name: Preserve NTP file metadata on macOS
+        working-directory: backend
+        run: bun test tests/unit/native-darwin-time.test.ts
       - name: Verify the compiled macOS clock worker
         working-directory: backend
         run: |
