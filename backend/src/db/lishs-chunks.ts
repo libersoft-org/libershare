@@ -141,7 +141,10 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 
 	// Indexed lookups only: the seeder runs this for every chunk it serves, and reading every chunk
 	// row of the LISH made each lookup — and so each served chunk — cost O(chunks in the LISH).
-	// A chunk's index is its position among its file's rows in insertion (id) order.
+	// A chunk's index is its position among its file's rows in insertion (id) order. addLISH inserts
+	// a file's rows in one go inside one transaction and rows are never deleted one by one, so the
+	// ids of a file are consecutive and the index is the distance from the file's first id — one
+	// index probe, where counting the rows before it grew with the chunk's position in the file.
 	const row = db
 		.query<{ path: string; fileID: number; chunkRowID: number }, [number, string]>(
 			`SELECT f.path AS path, f.id AS fileID, c.id AS chunkRowID FROM lishs_chunks c
@@ -151,6 +154,6 @@ export function findChunkLocation(db: Database, lishID: LISHid, chunkID: ChunkID
 		)
 		.get(internalID, chunkID);
 	if (!row) return null;
-	const before = db.query<{ n: number }, [number, number]>('SELECT COUNT(*) AS n FROM lishs_chunks WHERE id_lishs_files = ? AND id < ?').get(row.fileID, row.chunkRowID);
-	return { filePath: row.path, chunkIndex: before?.n ?? 0, fileInternalID: row.fileID };
+	const first = db.query<{ id: number }, [number]>('SELECT MIN(id) AS id FROM lishs_chunks WHERE id_lishs_files = ?').get(row.fileID);
+	return { filePath: row.path, chunkIndex: row.chunkRowID - (first?.id ?? row.chunkRowID), fileInternalID: row.fileID };
 }

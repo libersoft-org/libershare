@@ -154,6 +154,31 @@ describe('findChunkLocation', () => {
 		expect(loc?.chunkIndex).toBe(2);
 		expect(queries).toBeLessThanOrEqual(3);
 	});
+
+	it('finds the last chunk of a long file as fast as the first one', () => {
+		const count = 200_000;
+		const checksums = Array.from({ length: count }, (_, c) => `sha256:long${c}`);
+		addLISH(
+			db,
+			createTestLISH({
+				id: TEST_LISH_ID,
+				chunkSize: 1024,
+				files: [
+					{ path: 'a.bin', size: 1024, checksums: ['sha256:a0'] },
+					{ path: 'long.bin', size: count * 1024, checksums },
+				],
+			} as never)
+		);
+		db.run('UPDATE lishs_chunks SET have = TRUE');
+		const lookup = (chunk: string): number => {
+			const start = performance.now();
+			for (let i = 0; i < 50; i++) expect(findChunkLocation(db, TEST_LISH_ID, chunk as never)?.chunkIndex).toBe(Number(chunk.slice('sha256:long'.length)));
+			return (performance.now() - start) / 50;
+		};
+		lookup('sha256:long0');
+		// Counting the rows before the chunk took milliseconds here; one index probe takes microseconds.
+		expect(lookup(`sha256:long${count - 1}`)).toBeLessThan(1);
+	});
 });
 
 // ---------------------------------------------------------------------------
