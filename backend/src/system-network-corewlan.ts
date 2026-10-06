@@ -176,8 +176,17 @@ function runCoreWlan<T>(request: CoreWlanRequest): Promise<T> {
 	});
 }
 
+let stateRead: Promise<MacWifiInterface[]> | null = null;
+
+/**
+ * The interface list and the capability probe read together; one native read answers both, so the
+ * second never meets the busy slot and reports Wi-Fi as unconfigurable.
+ */
 export function readCoreWlanWifi(): Promise<MacWifiInterface[]> {
-	return runCoreWlan({ operation: 'state' });
+	stateRead ??= runCoreWlan<MacWifiInterface[]>({ operation: 'state' }).finally(() => {
+		stateRead = null;
+	});
+	return stateRead;
 }
 
 export function scanCoreWlanWifi(device: string): Promise<NetWifiNetwork[]> {

@@ -30,6 +30,18 @@ test('a read that shows no network while macOS settles keeps the interface confi
 	expect((await readCoreWlanWifi())[0]!.configurable).toBe(true);
 });
 
+test('reads made together share one native read instead of one failing as busy', async () => {
+	let calls = 0;
+	setHostApp(async () => {
+		calls++;
+		await Bun.sleep(10);
+		return JSON.stringify({ result: [{ snapshot: { ...snapshot, ssidHex }, networks: [] }] });
+	});
+	const [first, second] = await Promise.all([readCoreWlanWifi(), readCoreWlanWifi()]);
+	expect(first).toEqual(second);
+	expect(calls).toBe(1);
+});
+
 test('a scan whose names macOS withheld is refused', async () => {
 	setHostApp(async () => JSON.stringify({ result: { snapshot, networks: [{ ssidHex: null, bssid: null, securityType: 4, signal: -40 }] } }));
 	await expect(scanCoreWlanWifi('en0')).rejects.toThrow('did not expose Wi-Fi network names');
