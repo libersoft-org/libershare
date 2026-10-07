@@ -120,7 +120,7 @@ Periodic peer-discovery broadcast. Contains the sender's own directly dialable m
 
 Request / response messages over a libp2p stream. Every message is a MessagePack-encoded object framed with an unsigned-varint length prefix. A single stream can carry any number of requests; the responder answers each request with exactly one response, in order. Binary chunk data uses the MessagePack native binary type — no base64 overhead.
 
-A requester may pipeline: it can send further requests before the earlier replies arrive and pairs each reply with its request by order alone (replies carry no request ID). The responder reads the next request only after its previous reply has left its write queue, so a requester that pipelines — or never reads — cannot make it buffer more than one reply beyond what the stream's flow control lets through.
+A requester may pipeline: it can send further requests before the earlier replies arrive and pairs each reply with its request by order alone (replies carry no request ID). The responder may read and prepare the next reply (for a chunk, read it from disk) while the previous one is still being sent, but sends it only after the previous reply has left its write queue. This holds for every reply, errors included, so a requester that pipelines — or never reads — makes it hold at most one queued reply and one prepared one beyond what the stream's flow control lets through.
 
 Frame size is checked on the length prefix, before the body is read, and depends on the direction:
 
