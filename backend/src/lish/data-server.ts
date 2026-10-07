@@ -26,7 +26,7 @@ export interface ChunkReader {
 interface OpenChunkFile {
 	readonly file: DatasetFileHandle;
 	readonly size: number;
-	/** What the file's path names now, or null when nothing is there. */
+	/** What the file's chosen path names now, resolved from the dataset root again; null when nothing is there. */
 	statPath(): Promise<DatasetEntryInfo | null>;
 	close(): Promise<void>;
 }
@@ -306,11 +306,12 @@ export class DataServer {
 							// A kept file is the one the path named when it was opened. Check the path still names
 							// it, and take its current size: a file deleted, renamed or replaced on disk must not go
 							// on being served from the old handle, and one that grew must not be cut at its old size.
-							// Windows refuses to delete or rename a file while it is open here, so its path cannot
-							// change and the costly path lookup — several I/O round trips per chunk — is skipped.
+							// Windows refuses to delete or rename a file, or a folder above it, while it is open here,
+							// so its path cannot change and the costly lookup — several I/O round trips per chunk —
+							// is skipped.
 							if (reused) {
-								// The kept dataset refuses a path whose object changed since it was opened; that is a
-								// change too. A fresh open below reports whatever is really wrong with the path.
+								// A path that cannot be resolved now counts as changed; the fresh open below then
+								// reports whatever is really wrong with it, as an uncached read would.
 								const [info, atPath] = await Promise.all([opened.file.stat(), PATH_CAN_CHANGE_WHILE_OPEN ? opened.statPath().catch(() => null) : undefined]);
 								if (atPath !== undefined && atPath?.identity !== info.identity) {
 									kept.users--;
@@ -355,7 +356,16 @@ export class DataServer {
 				return {
 					file,
 					size: info.size,
-					statPath: () => dataset.statFile(filePath),
+					// Through a freshly opened root, not the kept one: a kept root follows its folder when the
+					// folder or one of its parents is moved, so it cannot tell that the chosen path changed.
+					statPath: async () => {
+						const current = await this.openDataset(lishID);
+						try {
+							return await current.statFile(filePath);
+						} finally {
+							await current.close();
+						}
+					},
 					close: async () => {
 						try {
 							await file.close();

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDatabase } from '../../../src/db/database.ts';
@@ -20,6 +20,7 @@ describe('DataServer.createChunkReader', () => {
 	let db: ReturnType<typeof openDatabase>;
 	let opened = 0;
 	let closed = 0;
+	let fileOpens = 0;
 	let maxOpen = 0;
 	let openDelayMs = 0;
 	let dataServer: DataServer;
@@ -32,6 +33,7 @@ describe('DataServer.createChunkReader', () => {
 		addLISH(db, lish);
 		opened = 0;
 		closed = 0;
+		fileOpens = 0;
 		maxOpen = 0;
 		openDelayMs = 0;
 		const counting: typeof openDataset = async (...args) => {
@@ -39,6 +41,11 @@ describe('DataServer.createChunkReader', () => {
 			maxOpen = Math.max(maxOpen, opened - closed);
 			if (openDelayMs > 0) await Bun.sleep(openDelayMs);
 			const dataset = await openDataset(...args);
+			const openFile = dataset.openFile.bind(dataset);
+			dataset.openFile = (...fileArgs) => {
+				fileOpens++;
+				return openFile(...fileArgs);
+			};
 			const close = dataset.close.bind(dataset);
 			dataset.close = async () => {
 				closed++;
@@ -61,10 +68,11 @@ describe('DataServer.createChunkReader', () => {
 		expect(text(await reader.getChunk(LISH_ID, CHUNKS[0]!))).toBe('AAAA');
 		expect(text(await reader.getChunk(LISH_ID, CHUNKS[1]!))).toBe('BBBB');
 		expect(text(await reader.getChunk(LISH_ID, CHUNKS[2]!))).toBe('CC');
-		expect(opened).toBe(1);
-		expect(closed).toBe(0);
+		// Off Windows each reuse also resolves the path through a fresh root, which it closes again.
+		expect(fileOpens).toBe(1);
+		expect(opened - closed).toBe(1);
 		await reader.close();
-		expect(closed).toBe(1);
+		expect(closed).toBe(opened);
 	});
 
 	it('closes kept files after the idle time and reopens them for the next chunk', async () => {
@@ -155,6 +163,52 @@ describe('DataServer.createChunkReader', () => {
 		await reader.getChunk(LISH_ID, CHUNKS[0]!);
 		expect(() => renameSync(join(dir, 'data.bin'), join(dir, 'backup.bin'))).toThrow();
 		expect(() => rmSync(join(dir, 'data.bin'))).toThrow();
+		expect(() => renameSync(dir, `${dir}-moved`)).toThrow();
 		await reader.close();
+	});
+
+	describe('when the shared folder itself moves', () => {
+		const NESTED = 'lish-chunk-reader-nested' as LISHid;
+		const NESTED_CHUNKS = ['chunk-n-0', 'chunk-n-1', 'chunk-n-2'] as ChunkID[];
+		let parent: string;
+		let share: string;
+		beforeEach(() => {
+			parent = join(dir, 'parent');
+			share = join(parent, 'share');
+			mkdirSync(share, { recursive: true });
+			writeFileSync(join(share, 'data.bin'), 'AAAABBBBCC');
+			addLISH(db, { id: NESTED, name: 'nested', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', directory: share, files: [{ path: 'data.bin', size: 10, checksums: NESTED_CHUNKS }], chunks: [...NESTED_CHUNKS] });
+		});
+		const settle = (read: Promise<unknown>): Promise<string> =>
+			read.then(
+				value => (typeof value === 'string' ? value : text(value)),
+				(error: { code?: string; message?: string }) => `threw ${error.code ?? error.message}`
+			);
+
+		it.skipIf(process.platform === 'win32')('does not serve the old data after the shared folder was renamed away', async () => {
+			const reader = dataServer.createChunkReader();
+			await reader.getChunk(NESTED, NESTED_CHUNKS[0]!);
+			renameSync(share, join(parent, 'share-moved'));
+			expect(await settle(reader.getChunk(NESTED, NESTED_CHUNKS[1]!))).not.toBe('BBBB');
+			await reader.close().catch(() => {});
+		});
+
+		it.skipIf(process.platform === 'win32')('serves the folder that took the place of the shared one', async () => {
+			const reader = dataServer.createChunkReader();
+			await reader.getChunk(NESTED, NESTED_CHUNKS[0]!);
+			renameSync(share, join(parent, 'share-moved'));
+			mkdirSync(share);
+			writeFileSync(join(share, 'data.bin'), 'XXXXYYYYZZ');
+			expect(await settle(reader.getChunk(NESTED, NESTED_CHUNKS[1]!))).toBe('YYYY');
+			await reader.close().catch(() => {});
+		});
+
+		it.skipIf(process.platform === 'win32')('does not serve the old data after a folder above the shared one was renamed away', async () => {
+			const reader = dataServer.createChunkReader();
+			await reader.getChunk(NESTED, NESTED_CHUNKS[0]!);
+			renameSync(parent, join(dir, 'parent-moved'));
+			expect(await settle(reader.getChunk(NESTED, NESTED_CHUNKS[1]!))).not.toBe('BBBB');
+			await reader.close().catch(() => {});
+		});
 	});
 });
