@@ -3,7 +3,7 @@ import { SUPPORTED_ALGOS } from '@shared';
 import { mkdtempSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
-import { checksumBytes } from '../../../src/lish/checksum.ts';
+import { BytesChecksumPool, checksumBytes } from '../../../src/lish/checksum.ts';
 
 describe('checksumBytes', () => {
 	const data = new Uint8Array(70_000).map((_, i) => (i * 7) & 0xff).subarray(5, 65_000);
@@ -72,4 +72,52 @@ console.log((await Promise.all(jobs)).join(','));`
 		const expected = new Bun.CryptoHasher('sha3-256').update(new Uint8Array(4)).digest('hex');
 		expect((await new Response(child.stdout).text()).trim()).toBe([expected, expected, expected].join(','));
 	}, 10000);
+
+	describe('when a worker cannot be started or handed a job', () => {
+		const RealWorker = globalThis.Worker;
+		afterEach(() => {
+			globalThis.Worker = RealWorker;
+		});
+		const data4 = new Uint8Array([1, 2, 3, 4]);
+		const expected = new Bun.CryptoHasher('sha3-256').update(data4).digest('hex');
+
+		/** A stand-in Worker that fails where the test says; records which instances were stopped. */
+		function fakeWorker(fail: { construct?: number; post?: boolean }): { terminated: number[] } {
+			const state = { created: 0, terminated: [] as number[] };
+			globalThis.Worker = class {
+				readonly id: number;
+				onmessage: unknown;
+				onerror: unknown;
+				constructor() {
+					this.id = ++state.created;
+					if (this.id === fail.construct) throw new Error('cannot start a worker');
+				}
+				ref(): void {}
+				unref(): void {}
+				postMessage(): void {
+					if (fail.post) throw new Error('cannot hand over the job');
+				}
+				terminate(): void {
+					state.terminated.push(this.id);
+				}
+			} as unknown as typeof Worker;
+			return state;
+		}
+
+		it('hashes on the main thread and stops the workers already started when one fails to start', async () => {
+			const state = fakeWorker({ construct: 2 });
+			const pool = new BytesChecksumPool('unused.js', 3);
+			expect(await pool.checksum(data4, 'sha3-256')).toBe(expected);
+			expect(state.terminated).toEqual([1]);
+			expect(await pool.checksum(data4, 'sha3-256')).toBe(expected);
+		});
+
+		it('hashes on the main thread and stops every worker when a job cannot be handed over', async () => {
+			const state = fakeWorker({ post: true });
+			const pool = new BytesChecksumPool('unused.js', 2);
+			expect(await pool.checksum(data4, 'sha3-256')).toBe(expected);
+			expect(state.terminated.sort()).toEqual([1, 2]);
+			expect(await pool.checksum(data4, 'sha3-256')).toBe(expected);
+		});
+	});
 });

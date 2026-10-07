@@ -42,7 +42,14 @@ export class BytesChecksumPool {
 	}
 
 	async checksum(data: Uint8Array, algo: HashAlgorithm): Promise<string> {
-		const workers = this.failed ? undefined : (this.workers ??= this.start());
+		if (!this.failed) {
+			try {
+				this.workers ??= this.start();
+			} catch {
+				this.fail();
+			}
+		}
+		const workers = this.workers;
 		if (!workers) return checksumOnMainThread(data, algo);
 		const worker = workers[this.next++ % workers.length]!;
 		const index = this.nextID++;
@@ -54,36 +61,59 @@ export class BytesChecksumPool {
 		const bytes = copy.buffer;
 		return new Promise((resolve, reject) => {
 			this.pending.set(index, { data, algo, resolve, reject });
-			for (const w of workers) w.ref();
-			worker.postMessage({ bytes, algo, index }, [bytes]);
+			try {
+				for (const w of workers) w.ref();
+				worker.postMessage({ bytes, algo, index }, [bytes]);
+			} catch {
+				this.fail();
+			}
 		});
 	}
 
+	/**
+	 * Give up on the workers: stop them all — they were referenced for the jobs in flight, and left
+	 * running they would keep the process alive with no job left to unreference them — and finish
+	 * every job they still held on the main thread.
+	 */
+	private fail(): void {
+		this.failed = true;
+		for (const w of this.workers ?? []) {
+			try {
+				w.terminate();
+			} catch {}
+		}
+		this.workers = undefined;
+		const jobs = [...this.pending.values()];
+		this.pending.clear();
+		for (const job of jobs) settleOnMainThread(job);
+	}
+
 	private start(): Worker[] {
-		return Array.from({ length: this.size }, () => {
-			const worker = new Worker(this.workerPath);
-			worker.unref();
-			worker.onmessage = (event: MessageEvent<{ index: number; checksum?: string; error?: string }>) => {
-				const job = this.pending.get(event.data.index);
-				if (!job) return;
-				this.pending.delete(event.data.index);
-				if (this.pending.size === 0) for (const w of this.workers ?? []) w.unref();
-				if (event.data.checksum !== undefined) job.resolve(event.data.checksum);
-				else settleOnMainThread(job);
-			};
-			worker.onerror = event => {
-				event.preventDefault();
-				this.failed = true;
-				// The siblings were referenced for the jobs being cancelled here; left running they would
-				// keep the process alive, and their late replies find no job to unreference them.
-				for (const w of this.workers ?? []) w.terminate();
-				this.workers = undefined;
-				const jobs = [...this.pending.values()];
-				this.pending.clear();
-				for (const job of jobs) settleOnMainThread(job);
-			};
-			return worker;
-		});
+		const workers: Worker[] = [];
+		try {
+			for (let i = 0; i < this.size; i++) {
+				const worker = new Worker(this.workerPath);
+				workers.push(worker);
+				worker.unref();
+				worker.onmessage = (event: MessageEvent<{ index: number; checksum?: string; error?: string }>) => {
+					const job = this.pending.get(event.data.index);
+					if (!job) return;
+					this.pending.delete(event.data.index);
+					if (this.pending.size === 0) for (const w of this.workers ?? []) w.unref();
+					if (event.data.checksum !== undefined) job.resolve(event.data.checksum);
+					else settleOnMainThread(job);
+				};
+				worker.onerror = event => {
+					event.preventDefault();
+					this.fail();
+				};
+			}
+		} catch (error) {
+			// Do not leave the workers that did start behind.
+			for (const w of workers) w.terminate();
+			throw error;
+		}
+		return workers;
 	}
 }
 
