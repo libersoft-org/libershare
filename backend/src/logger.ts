@@ -1,5 +1,5 @@
 import { createConsola, LogLevels, type ConsolaReporter, type LogObject } from 'consola';
-import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from 'fs';
+import { closeSync, fstatSync, mkdirSync, openSync, renameSync, statSync, writeSync } from 'fs';
 import { dirname } from 'path';
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 const levelMap: Record<LogLevel, number> = {
@@ -87,11 +87,26 @@ function rotateLogFile(filePath: string): void {
 	} catch {}
 }
 
-function createFileReporter(filePath: string): ConsolaReporter {
+/**
+ * Reporter that appends log lines to `filePath`, keeping one descriptor open. Every `checkEveryMs`
+ * it checks that the path still names the open file, so a log moved or deleted from outside the
+ * app (external rotation) is followed by a fresh file instead of the old, possibly unlinked one.
+ */
+export function createFileReporter(filePath: string, checkEveryMs = 1000): ConsolaReporter {
 	try {
 		mkdirSync(dirname(filePath), { recursive: true });
 	} catch {}
 	let writeCount = 0;
+	let checkedAt = Date.now();
+	const stillAtPath = (descriptor: number): boolean => {
+		try {
+			const open = fstatSync(descriptor);
+			const atPath = statSync(filePath);
+			return open.ino === atPath.ino && open.dev === atPath.dev;
+		} catch {
+			return false;
+		}
+	};
 	// One descriptor kept open: appendFileSync opened and closed the file for every line, which on
 	// Windows (with on-access scanning) cost milliseconds per line on the transfer hot path.
 	let fd: number | null = null;
@@ -109,6 +124,15 @@ function createFileReporter(filePath: string): ConsolaReporter {
 			const prefix = LOG_PREFIX ? `[${LOG_PREFIX}] ` : '';
 			const args = logObj.args.map(serializeArg).join(' ');
 			const line = `${prefix}[${timestamp}] [${levelName}] ${args}\n`;
+			if (fd !== null && Date.now() - checkedAt >= checkEveryMs) {
+				checkedAt = Date.now();
+				if (!stillAtPath(fd)) {
+					try {
+						closeSync(fd);
+					} catch {}
+					fd = null;
+				}
+			}
 			fd ??= open();
 			if (fd !== null) {
 				try {
