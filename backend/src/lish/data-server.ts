@@ -281,36 +281,55 @@ export class DataServer {
 			getChunk: (lishID, chunkID) =>
 				this.readChunk(lishID, chunkID, async (id, filePath) => {
 					const key = JSON.stringify([id, this.getDatasetRoot(id) ?? getLISHMeta(this.db, id)?.directory ?? null, filePath]);
-					let entry = files.get(key);
-					files.delete(key);
-					entry ??= { opened: this.openChunkFile(id, filePath), users: 0, dropped: false };
-					files.set(key, entry);
-					entry.users++;
-					for (const [oldKey, oldEntry] of files) {
-						if (files.size <= maxFiles) break;
-						if (oldEntry.users === 0) void drop(oldKey, oldEntry);
-					}
-					const kept = entry;
-					let opened: OpenChunkFile;
-					try {
-						opened = await kept.opened;
-					} catch (error) {
-						kept.users--;
-						void drop(key, kept);
-						throw error;
-					}
-					return {
-						file: opened.file,
-						size: opened.size,
-						done: async failed => {
+					for (;;) {
+						let entry = files.get(key);
+						const reused = entry !== undefined;
+						files.delete(key);
+						entry ??= { opened: this.openChunkFile(id, filePath), users: 0, dropped: false };
+						files.set(key, entry);
+						entry.users++;
+						for (const [oldKey, oldEntry] of files) {
+							if (files.size <= maxFiles) break;
+							if (oldEntry.users === 0) void drop(oldKey, oldEntry);
+						}
+						const kept = entry;
+						let opened: OpenChunkFile;
+						let size: number;
+						try {
+							opened = await kept.opened;
+							size = opened.size;
+							// A kept file is the one the path named when it was opened. Check it still is, and
+							// take its current size: a file deleted or replaced on disk must not go on being
+							// served from the old handle, and one that grew must not be cut at its old size.
+							// ponytail: a replaced file that keeps another hard link still has links > 0 and
+							// is served until the stream idles; compare with the path's identity if that matters.
+							if (reused) {
+								const info = await opened.file.stat();
+								if (info.links === 0) {
+									kept.users--;
+									await drop(key, kept);
+									continue;
+								}
+								size = info.size;
+							}
+						} catch (error) {
 							kept.users--;
-							clearTimeout(timer);
-							timer = setTimeout(() => void dropUnused(), idleMs);
-							timer.unref?.();
-							// A failed read may mean the kept file went bad: drop it so the next read reopens it.
-							if (failed || kept.dropped) await drop(key, kept);
-						},
-					};
+							await drop(key, kept);
+							throw error;
+						}
+						return {
+							file: opened.file,
+							size,
+							done: async failed => {
+								kept.users--;
+								clearTimeout(timer);
+								timer = setTimeout(() => void dropUnused(), idleMs);
+								timer.unref?.();
+								// A failed read may mean the kept file went bad: drop it so the next read reopens it.
+								if (failed || kept.dropped) await drop(key, kept);
+							},
+						};
+					}
 				}),
 			close: async () => {
 				clearTimeout(timer);

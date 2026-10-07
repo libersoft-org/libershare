@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDatabase } from '../../../src/db/database.ts';
@@ -103,5 +103,32 @@ describe('DataServer.createChunkReader', () => {
 		expect(text(await reader.getChunk(LISH_ID, CHUNKS[0]!))).toBe('AAAA');
 		await reader.close();
 		expect(closed).toBe(opened);
+	});
+
+	it('reads past the old end of a kept file that grew since it was opened', async () => {
+		writeFileSync(join(dir, 'data.bin'), 'AAAA');
+		const reader = dataServer.createChunkReader();
+		expect(text(await reader.getChunk(LISH_ID, CHUNKS[0]!))).toBe('AAAA');
+		appendFileSync(join(dir, 'data.bin'), 'BBBBCC');
+		expect(text(await reader.getChunk(LISH_ID, CHUNKS[1]!))).toBe('BBBB');
+		await reader.close();
+	});
+
+	// Windows refuses to delete or replace a file that is open, so these cases cannot happen there.
+	it.skipIf(process.platform === 'win32')('does not serve a kept file that was deleted from disk', async () => {
+		const reader = dataServer.createChunkReader();
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		rmSync(join(dir, 'data.bin'));
+		expect(await reader.getChunk(LISH_ID, CHUNKS[1]!)).toBe('file_missing');
+		await reader.close();
+	});
+
+	it.skipIf(process.platform === 'win32')('serves the new file when the kept one was replaced on disk', async () => {
+		const reader = dataServer.createChunkReader();
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		writeFileSync(join(dir, 'next.bin'), 'XXXXYYYYZZ');
+		renameSync(join(dir, 'next.bin'), join(dir, 'data.bin'));
+		expect(text(await reader.getChunk(LISH_ID, CHUNKS[1]!))).toBe('YYYY');
+		await reader.close();
 	});
 });
