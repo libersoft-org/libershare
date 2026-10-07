@@ -131,4 +131,30 @@ describe('DataServer.createChunkReader', () => {
 		expect(text(await reader.getChunk(LISH_ID, CHUNKS[1]!))).toBe('YYYY');
 		await reader.close();
 	});
+
+	it.skipIf(process.platform === 'win32')('does not serve a kept file that was renamed away', async () => {
+		const reader = dataServer.createChunkReader();
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		renameSync(join(dir, 'data.bin'), join(dir, 'backup.bin'));
+		expect(await reader.getChunk(LISH_ID, CHUNKS[1]!)).toBe('file_missing');
+		await reader.close();
+	});
+
+	it.skipIf(process.platform === 'win32')('serves the new file when the kept one was renamed away and another took its name', async () => {
+		const reader = dataServer.createChunkReader();
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		renameSync(join(dir, 'data.bin'), join(dir, 'backup.bin'));
+		writeFileSync(join(dir, 'data.bin'), 'XXXXYYYYZZ');
+		expect(text(await reader.getChunk(LISH_ID, CHUNKS[1]!))).toBe('YYYY');
+		await reader.close();
+	});
+
+	// The reader skips its path check on Windows because a file it holds open cannot be moved away.
+	it.skipIf(process.platform !== 'win32')('keeps a file it holds open from being renamed or deleted on Windows', async () => {
+		const reader = dataServer.createChunkReader();
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		expect(() => renameSync(join(dir, 'data.bin'), join(dir, 'backup.bin'))).toThrow();
+		expect(() => rmSync(join(dir, 'data.bin'))).toThrow();
+		await reader.close();
+	});
 });

@@ -3,7 +3,7 @@ import { openDataset, type DatasetRoot, type SafeDataset } from './safe-dataset-
 import { conservativeDatasetRoot } from './dataset-root.ts';
 import { DatasetWriteScope } from './dataset-write-scope.ts';
 import { readDatasetRange } from './dataset-chunk-io.ts';
-import type { DatasetFileHandle } from './safe-dataset-types.ts';
+import type { DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.ts';
 import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot, addDataset as dbAddDataset, relocateDataset as dbRelocateDataset } from '../db/lishs-roots.ts';
 import { getDatasetLinkBindings as dbGetDatasetLinkBindings, type DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { clearLishData, clearLishnetData } from '../db/database.ts';
@@ -26,8 +26,13 @@ export interface ChunkReader {
 interface OpenChunkFile {
 	readonly file: DatasetFileHandle;
 	readonly size: number;
+	/** What the file's path names now, or null when nothing is there. */
+	statPath(): Promise<DatasetEntryInfo | null>;
 	close(): Promise<void>;
 }
+
+/** Whether a file can be deleted or renamed while it is open; see DataServer.createChunkReader. */
+const PATH_CAN_CHANGE_WHILE_OPEN = process.platform !== 'win32';
 
 export class DataServer {
 	private db: Database;
@@ -298,14 +303,16 @@ export class DataServer {
 						try {
 							opened = await kept.opened;
 							size = opened.size;
-							// A kept file is the one the path named when it was opened. Check it still is, and
-							// take its current size: a file deleted or replaced on disk must not go on being
-							// served from the old handle, and one that grew must not be cut at its old size.
-							// ponytail: a replaced file that keeps another hard link still has links > 0 and
-							// is served until the stream idles; compare with the path's identity if that matters.
+							// A kept file is the one the path named when it was opened. Check the path still names
+							// it, and take its current size: a file deleted, renamed or replaced on disk must not go
+							// on being served from the old handle, and one that grew must not be cut at its old size.
+							// Windows refuses to delete or rename a file while it is open here, so its path cannot
+							// change and the costly path lookup — several I/O round trips per chunk — is skipped.
 							if (reused) {
-								const info = await opened.file.stat();
-								if (info.links === 0) {
+								// The kept dataset refuses a path whose object changed since it was opened; that is a
+								// change too. A fresh open below reports whatever is really wrong with the path.
+								const [info, atPath] = await Promise.all([opened.file.stat(), PATH_CAN_CHANGE_WHILE_OPEN ? opened.statPath().catch(() => null) : undefined]);
+								if (atPath !== undefined && atPath?.identity !== info.identity) {
 									kept.users--;
 									await drop(key, kept);
 									continue;
@@ -348,6 +355,7 @@ export class DataServer {
 				return {
 					file,
 					size: info.size,
+					statPath: () => dataset.statFile(filePath),
 					close: async () => {
 						try {
 							await file.close();
