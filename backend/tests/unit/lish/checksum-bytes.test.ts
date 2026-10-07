@@ -51,9 +51,9 @@ describe('checksumBytes', () => {
 		}
 	});
 
-	it('lets the process exit after one worker of the pool dies while its siblings still work', async () => {
+	it('finishes every pending job on the main thread and lets the process exit when one worker dies', async () => {
 		const dir = mkdtempSync(join(tmpdir(), 'lish-checksum-pool-'));
-		// Job 1 kills its worker; the other jobs are answered late, after the failure cancelled them.
+		// Job 1 kills its worker; the others would be answered late, after the failure took them over.
 		writeFileSync(join(dir, 'worker.js'), `self.onmessage = e => { if (e.data.index === 1) throw new Error('worker died'); setTimeout(() => self.postMessage({ index: e.data.index, checksum: 'late' }), 300); };`);
 		const slashes = (path: string): string => path.replaceAll('\\', '/');
 		const module = slashes(resolve(import.meta.dir, '../../../src/lish/checksum.ts'));
@@ -62,13 +62,14 @@ describe('checksumBytes', () => {
 			join(dir, 'main.ts'),
 			`import { BytesChecksumPool } from '${module}';
 const pool = new BytesChecksumPool('${workerPath}', 3);
-const jobs = [1, 2, 3].map(() => pool.checksum(new Uint8Array(4), 'sha3-256').catch(() => 'cancelled'));
+const jobs = [1, 2, 3].map(() => pool.checksum(new Uint8Array(4), 'sha3-256').catch(() => 'failed'));
 console.log((await Promise.all(jobs)).join(','));`
 		);
 		const child = Bun.spawn([process.execPath, 'run', join(dir, 'main.ts')], { stdout: 'pipe', stderr: 'pipe' });
 		const exited = await Promise.race([child.exited.then(() => true), Bun.sleep(5000).then(() => false)]);
 		if (!exited) child.kill();
 		expect(exited).toBe(true);
-		expect(await new Response(child.stdout).text()).toContain('cancelled');
+		const expected = new Bun.CryptoHasher('sha3-256').update(new Uint8Array(4)).digest('hex');
+		expect((await new Response(child.stdout).text()).trim()).toBe([expected, expected, expected].join(','));
 	}, 10000);
 });

@@ -23,14 +23,15 @@ const WEB_DIGEST: Partial<Record<HashAlgorithm, string>> = { sha256: 'SHA-256', 
 /**
  * Hashes in-memory bytes for the algorithms WebCrypto lacks (SHA-3, BLAKE2, SHA-512/256) on a few
  * workers, so no supported algorithm runs on the main thread. Workers start on first use and
- * are unreferenced while idle; if one dies, hashing falls back to the main thread.
+ * are unreferenced while idle. If one dies, hashing falls back to the main thread — also for the
+ * jobs already handed to the workers, so a worker failure never fails a chunk.
  */
 export class BytesChecksumPool {
 	private workers: Worker[] | undefined;
 	private failed = false;
 	private next = 0;
 	private nextID = 1;
-	private readonly pending = new Map<number, { resolve(checksum: string): void; reject(error: Error): void }>();
+	private readonly pending = new Map<number, { data: Uint8Array; algo: HashAlgorithm; resolve(checksum: string): void; reject(error: unknown): void }>();
 
 	private readonly workerPath: string;
 	private readonly size: number;
@@ -52,7 +53,7 @@ export class BytesChecksumPool {
 		copy.set(data);
 		const bytes = copy.buffer;
 		return new Promise((resolve, reject) => {
-			this.pending.set(index, { resolve, reject });
+			this.pending.set(index, { data, algo, resolve, reject });
 			for (const w of workers) w.ref();
 			worker.postMessage({ bytes, algo, index }, [bytes]);
 		});
@@ -68,7 +69,7 @@ export class BytesChecksumPool {
 				this.pending.delete(event.data.index);
 				if (this.pending.size === 0) for (const w of this.workers ?? []) w.unref();
 				if (event.data.checksum !== undefined) job.resolve(event.data.checksum);
-				else job.reject(new Error(event.data.error ?? 'checksum worker failed'));
+				else settleOnMainThread(job);
 			};
 			worker.onerror = event => {
 				event.preventDefault();
@@ -79,7 +80,7 @@ export class BytesChecksumPool {
 				this.workers = undefined;
 				const jobs = [...this.pending.values()];
 				this.pending.clear();
-				for (const job of jobs) job.reject(new Error('checksum worker stopped'));
+				for (const job of jobs) settleOnMainThread(job);
 			};
 			return worker;
 		});
@@ -87,6 +88,15 @@ export class BytesChecksumPool {
 }
 
 const bytesPool = new BytesChecksumPool();
+
+/** Hash a job the workers could not finish on the main thread; the caller still holds its bytes. */
+function settleOnMainThread(job: { data: Uint8Array; algo: HashAlgorithm; resolve(checksum: string): void; reject(error: unknown): void }): void {
+	try {
+		job.resolve(checksumOnMainThread(job.data, job.algo));
+	} catch (error) {
+		job.reject(error);
+	}
+}
 
 function checksumOnMainThread(data: Uint8Array, algo: HashAlgorithm): string {
 	const hasher = new Bun.CryptoHasher(algo as any);
