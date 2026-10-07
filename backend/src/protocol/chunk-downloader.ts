@@ -737,7 +737,11 @@ export class ChunkDownloader {
 									downloadedCount = allTotal - allMissing.length;
 									// Re-initialize per-file counters from verified DB state
 									progressReporter.loadFileProgress(this.buildFileProgressEntries());
+									// This chunk is among the missing ones and its write is abandoned: release it in the
+									// rebuild, as a requeue does, or a sibling scanning the rebuilt queue would skip and drop it.
+									const abandoned = chunk;
 									await lock.runExclusive(() => {
+										releaseClaim(abandoned, claim);
 										queue.length = queueIdx;
 										for (const mc of allMissing) queue.push(mc);
 										requeueVersion++;

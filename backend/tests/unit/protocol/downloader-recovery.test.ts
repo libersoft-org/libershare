@@ -4,6 +4,7 @@ import { ChunkDownloader, type ChunkDownloaderDeps, type RetryInfo } from '../..
 import { PeerManager } from '../../../src/protocol/peer-manager.ts';
 import { PauseController } from '../../../src/protocol/pause-controller.ts';
 import { ProgressReporter } from '../../../src/protocol/progress-reporter.ts';
+import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import type { ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
 import { MockNetwork } from '../helpers/mock-network.ts';
@@ -459,6 +460,34 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.pauseController.writePaused).toBe(false);
 		expect(h.pauseController.progressPaused).toBe(false);
 	});
+
+	it('does not lose the recovering chunk to a sibling that scans the rebuilt queue before its claim is released', async () => {
+		// A sibling worker waits for budget while recovery rebuilds the queue; the budget frees up a few
+		// microtasks later. One of these offsets lands its queue scan right after the rebuild.
+		const incomplete: number[] = [];
+		for (let offset = 0; offset < 60; offset++) {
+			const h = harness(0);
+			h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), null];
+			(h.ds as unknown as { getFilesForVerification: () => null }).getFilesForVerification = () => null;
+			const lishChunk = 1024 * 1024;
+			const budget = new ByteBudget(() => 2 * lishChunk);
+			const held = await budget.reserve(lishChunk);
+			(h.deps as { inflightBudget?: ByteBudget }).inflightBudget = budget;
+			(h.deps as unknown as { fileAllocator: unknown }).fileAllocator = {
+				findMissingFiles: async () => {
+					void (async () => {
+						for (let i = 0; i < offset; i++) await Promise.resolve();
+						held();
+					})();
+					return [];
+				},
+				allocateFiles: async () => {},
+			} as never;
+			await h.cd.run();
+			if (!h.ds.downloadedChunks.has(h.chunkID)) incomplete.push(offset);
+		}
+		expect(incomplete).toEqual([]);
+	}, 30000);
 
 	it('write fails several times → buffer held across all retries, still one fetch', async () => {
 		const h = harness(3);
