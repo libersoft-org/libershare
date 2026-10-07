@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
-import { dirname, isAbsolute, join } from 'node:path';
+import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { encodeNetworkHelperRequest, isHelperOperationId, parseNetworkHelperResponse, type NetworkHelperRequest, type NetworkHelperResponse } from '../network-helper-protocol.ts';
 import { windowsProgramDataPath } from '../network-helper-windows.ts';
 import type { NativeEndRule } from './mutation-proof.ts';
@@ -27,7 +27,8 @@ export interface HelperResultRecord {
 
 export interface HelperResultSecurity {
 	verify(path: string, directory: boolean, anchor?: boolean): Promise<void>;
-	createDirectory(path: string): Promise<void>;
+	/** `owned`: the directory belongs to the helper, so an existing one may have its read access repaired. */
+	createDirectory(path: string, owned: boolean): Promise<void>;
 	writeNew(path: string, text: string): Promise<void>;
 }
 
@@ -48,22 +49,33 @@ export function trustedUnixHelperResult(uid: number, mode: number): boolean {
 	return uid === 0 && (mode & 0o022) === 0;
 }
 
-const security: HelperResultSecurity = {
+/**
+ * The modes are set explicitly after creation: the helper may run under a restrictive umask (077),
+ * which would leave results the unprivileged backend cannot read and turn every change into an
+ * unknown outcome.
+ */
+export const helperResultSecurity: HelperResultSecurity = {
 	verify: async (path, directory, anchor = false) => {
 		const info = await lstat(path);
 		if (info.isSymbolicLink() || (directory ? !info.isDirectory() : !info.isFile())) throw new Error('Invalid helper result path');
 		if (process.platform === 'win32') assertWindowsHelperResultAccess(path, anchor);
 		else if (!trustedUnixHelperResult(info.uid, info.mode)) throw new Error('Untrusted helper result permissions');
 	},
-	createDirectory: async path => {
-		if (process.platform === 'win32') createWindowsHelperResultDirectory(path);
-		else {
-			try {
-				await mkdir(path, { mode: 0o755 });
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-			}
+	createDirectory: async (path, owned) => {
+		if (process.platform === 'win32') {
+			createWindowsHelperResultDirectory(path);
+			return;
 		}
+		try {
+			await mkdir(path, { mode: 0o755 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			if (!owned) return;
+			// Only the helper's own root-owned directory is repaired, never a symlink or a system parent.
+			const info = await lstat(path);
+			if (info.isSymbolicLink() || !info.isDirectory() || info.uid !== 0 || process.getuid?.() !== 0) return;
+		}
+		await chmod(path, 0o755);
 	},
 	writeNew: async (path, text) => {
 		if (process.platform === 'win32') {
@@ -72,6 +84,7 @@ const security: HelperResultSecurity = {
 		}
 		const handle = await open(path, 'wx', 0o644);
 		try {
+			await handle.chmod(0o644);
 			await handle.writeFile(text);
 			await handle.sync();
 		} finally {
@@ -115,7 +128,7 @@ export function helperResultCanExpire(record: HelperResultRecord, bootId: string
 export class HelperResultStore {
 	readonly directory: string;
 	private readonly permissions: HelperResultSecurity;
-	constructor(directory: string = helperResultsDirectory(), permissions: HelperResultSecurity = security) {
+	constructor(directory: string = helperResultsDirectory(), permissions: HelperResultSecurity = helperResultSecurity) {
 		if (!isAbsolute(directory)) throw new Error('Helper result directory must be absolute');
 		this.directory = directory;
 		this.permissions = permissions;
@@ -128,8 +141,12 @@ export class HelperResultStore {
 		const parent = dirname(this.directory),
 			anchor = dirname(parent);
 		await this.permissions.verify(anchor, true, process.platform === 'win32');
-		for (const path of [parent, this.directory]) {
-			await this.permissions.createDirectory(path);
+		// The parent is the helper's own only when it is a LiberShare directory, not a system one such as /var/lib.
+		for (const [path, owned] of [
+			[parent, basename(parent) === 'LiberShare'],
+			[this.directory, true],
+		] as const) {
+			await this.permissions.createDirectory(path, owned);
 			await this.permissions.verify(path, true);
 		}
 	}

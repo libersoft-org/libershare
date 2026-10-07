@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { decodeNetworkHelperRequest, encodeNetworkHelperRequest, type NetworkHelperRequest } from '../../src/network-helper-protocol.ts';
-import { HelperResultStore, createHelperCancellation, helperResultCanExpire, helperRequestHash, helperResultsDirectory, trustedUnixHelperResult, validateHelperResult, type HelperResultRecord, type HelperResultSecurity } from '../../src/native/helper-results-store.ts';
+import { HelperResultStore, createHelperCancellation, helperResultSecurity, helperResultCanExpire, helperRequestHash, helperResultsDirectory, trustedUnixHelperResult, validateHelperResult, type HelperResultRecord, type HelperResultSecurity } from '../../src/native/helper-results-store.ts';
 import { observeHelperOperation, readTrustedHelperResult, type HelperOperationRule, type HelperObservationDeps } from '../../src/native/helper-results.ts';
 import { executeRecordedHelper, type HelperExecutorDeps } from '../../src/native/helper-results-executor.ts';
 import { requireNativeMutationContext, withDispatchDeadline } from '../../src/native/mutation-context.ts';
@@ -454,4 +454,19 @@ describe('helper handoff and recovery', () => {
 		expect(receipt?.executorReturned).toBe(true);
 		expect(receipt?.result?.outcome).toBe('known');
 	});
+});
+
+test.skipIf(process.platform === 'win32')('results stay readable by the backend when the helper runs under umask 077', async () => {
+	const base = await mkdtemp(join(tmpdir(), 'helper-results-umask-'));
+	directories.push(base);
+	const previous = process.umask(0o077);
+	try {
+		const directory = join(base, 'helper-results');
+		await helperResultSecurity.createDirectory(directory, true);
+		await helperResultSecurity.writeNew(join(directory, 'result.json'), '{}');
+		expect((await lstat(directory)).mode & 0o777).toBe(0o755);
+		expect((await lstat(join(directory, 'result.json'))).mode & 0o777).toBe(0o644);
+	} finally {
+		process.umask(previous);
+	}
 });
