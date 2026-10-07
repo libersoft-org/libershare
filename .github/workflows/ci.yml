@@ -34,6 +34,7 @@ jobs:
         run: ./test-fe.sh
       - name: Frontend browser fixtures (headless Chrome)
         working-directory: frontend
+        timeout-minutes: 10
         run: bun run test:fixtures
       - name: Shared and CLI typecheck
         run: |

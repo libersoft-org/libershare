@@ -69,9 +69,12 @@ async function runFixture(name: string): Promise<string> {
 			socket.close();
 		}
 	} finally {
-		browser.kill();
-		await browser.exited;
-		rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
+		// Teardown is bounded: a browser or server that does not go away must not hang the run.
+		browser.kill('SIGKILL');
+		await Promise.race([browser.exited, Bun.sleep(5000)]);
+		try {
+			rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
+		} catch {}
 	}
 }
 
@@ -83,7 +86,7 @@ try {
 		if (status !== 'passed') failed++;
 	}
 } finally {
-	await server.close();
+	await Promise.race([server.close(), Bun.sleep(5000)]);
 }
 console.log(`${fixtures.length - failed}/${fixtures.length} browser fixtures passed`);
 process.exit(failed ? 1 : 0);
