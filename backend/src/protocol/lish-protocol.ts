@@ -328,8 +328,10 @@ export class LISHClient {
 				try {
 					assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
 				} catch (e) {
-					if (e instanceof CodedError) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim());
-					throw e;
+					if (!(e instanceof CodedError)) throw e;
+					// Logged here: callers only see the peer-fault code and move on to the next peer.
+					console.warn(`[PROTO] getLish ${safeLishID}: manifest refused, ${e.code} ${e.detail ?? ''}`.trim());
+					throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim());
 				}
 				// Emitted only after validation passes — a rejected manifest must not flash a full bar.
 				if (total > 0) safeEmit(total, total);
