@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<link rel="icon" href="data:," />
+	<title>Manifest signature browser regressions</title>
+	<pre id="results">Running...</pre>
+	<div id="view"></div>
+	<script>
+		// This fixture has no backend. Vite's own websocket remains available.
+		const NativeSocket = window.WebSocket;
+		window.WebSocket = class extends EventTarget {
+			static CONNECTING = 0;
+			static OPEN = 1;
+			static CLOSING = 2;
+			static CLOSED = 3;
+			readyState = 0;
+			constructor(url, protocols) {
+				super();
+				if (new URL(url).pathname !== '/ws') return new NativeSocket(url, protocols);
+			}
+			send() {
+				throw new Error('Unexpected backend websocket request');
+			}
+			close() {
+				this.readyState = 3;
+			}
+		};
+		const nativeFetch = window.fetch.bind(window);
+		window.fetch = (input, options) => (new URL(input, location.href).pathname === '/status' ? Promise.resolve(Response.json({ ok: true, authRequired: false, authenticated: true })) : nativeFetch(input, options));
+	</script>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import NetworkLishsPeerList from '/src/pages/Network/NetworkLishsPeerList.svelte';
+		import NetworkLishs from '/src/pages/Network/NetworkLishs.svelte';
+		import NetworkLishDetailView from '/src/pages/Network/NetworkLishDetailView.svelte';
+		import NetworkPeersPeerDetail from '/src/pages/Network/NetworkPeersPeerDetail.svelte';
+		import DownloadLISHProgress from '/src/pages/Download/DownloadLISHProgress.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { findBindingForElement } from '/src/scripts/navArea.svelte.ts';
+		import { currentLanguage, translations, t, translateError } from '/src/scripts/language.ts';
+
+		const A = '12D3KooWJ1TsijH7H5F74hfAD5XishQz3sxrmAtVY37GtNd9CqYf';
+		const Q = '12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo';
+		const X = 'f0000000-0000-4000-8000-000000000006';
+		const target = document.querySelector('#view');
+		const results = [];
+		const calls = [];
+		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, create: api.lishs.create };
+		let peerListing = [];
+		api.on = () => () => {};
+		api.subscribe = async () => {};
+		api.unsubscribe = async () => {};
+		api.call = async method => {
+			throw new Error(`Unexpected API request: ${method}`);
+		};
+		api.lishnets.addPeerLish = async (...args) => {
+			calls.push(['addPeerLish', ...args]);
+			return { lishID: args[0] };
+		};
+		api.lishnets.getPeerLish = async (...args) => {
+			calls.push(['getPeerLish', ...args]);
+			return { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], publisher: args[3] ?? undefined };
+		};
+		api.lishnets.getPeerLishs = async () => ({ lishs: structuredClone(peerListing) });
+		api.lishs.create = async (...args) => {
+			calls.push(['create', ...args]);
+			return { lishID: X, publisher: args[12] ? A : undefined };
+		};
+
+		const label = key => get(t)(key);
+		const assert = (condition, message) => {
+			if (!condition) throw new Error(message);
+		};
+		const settle = async () => {
+			for (let i = 0; i < 3; i++) {
+				await tick();
+				await new Promise(resolve => setTimeout(resolve, 0));
+			}
+		};
+		const buttons = () => [...target.querySelectorAll('[role="button"]')];
+		const button = key => buttons().find(el => (el.getAttribute('aria-label') ?? el.textContent.trim()) === label(key));
+		const text = () => target.textContent;
+		let component;
+		async function show(Component, props) {
+			if (component) await unmount(component);
+			calls.length = 0;
+			component = mount(Component, { target, props: { areaID: 'fixture', ...props } });
+			await settle();
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		const search = results => ({ query: '', searching: false, results, error: '', searchID: 's', startedAt: null, refusedPeers: 0, start: async () => {}, cancel: async () => {}, clear() {}, dispose() {} });
+
+		try {
+			for (const lang of ['en', 'cs']) {
+				const dictionary = await (await fetch(`/langs/${lang}.json`)).json();
+				currentLanguage.set(lang);
+				const deadline = Date.now() + 3000;
+				while (get(translations).lish?.reportedPublisher !== dictionary.lish.reportedPublisher && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+				assert(get(translations).lish?.reportedPublisher === dictionary.lish.reportedPublisher, `${lang}: language did not load`);
+
+				await test(`${lang}: a search row shows the reported publisher and sends it as the expectation`, async () => {
+					await show(NetworkLishsPeerList, { row: { id: X, name: 'Item', publisher: Q, peers: [{ peerID: 'peer-1', networkID: 'n' }] }, networks: [], onBack() {}, onOpenPeer() {} });
+					assert(text().includes(label('lish.reportedPublisher')) && text().includes(Q), 'Reported publisher is not shown');
+					assert(!text().includes(label('lish.signedBy')), 'A reported publisher is shown as a signer');
+					button('network.addToDownloads').click();
+					await settle();
+					assert(
+						calls.some(c => c[0] === 'addPeerLish' && c[1] === X && c[4] === Q),
+						`Add did not send the row publisher: ${JSON.stringify(calls)}`
+					);
+				});
+
+				await test(`${lang}: an unsigned row expects an unsigned manifest`, async () => {
+					await show(NetworkLishsPeerList, { row: { id: X, name: 'Item', peers: [{ peerID: 'peer-1', networkID: 'n' }] }, networks: [], onBack() {}, onOpenPeer() {} });
+					button('network.details').click();
+					await settle();
+					const call = calls.find(c => c[0] === 'getPeerLish');
+					assert(call && call[4] === null, `Detail did not send null for an unsigned row: ${JSON.stringify(calls)}`);
+					assert(text().includes(label('lish.unsigned')), 'Unsigned preview is not marked');
+				});
+
+				await test(`${lang}: opening a peer from a search row passes the row publisher`, async () => {
+					let opened;
+					await show(NetworkLishsPeerList, { row: { id: X, name: 'Item', publisher: A, peers: [{ peerID: 'peer-1', networkID: 'n' }] }, networks: [], onBack() {}, onOpenPeer: (...args) => (opened = args) });
+					// Rows are confirmed through the navigation registry, the way the mouse manager does it.
+					findBindingForElement([...target.querySelectorAll('.peer-id')].find(el => el.textContent === 'peer-1')).item.onConfirm();
+					await settle();
+					assert(opened && opened[2] === X && opened[3] === A, `Peer was opened without the publisher: ${JSON.stringify(opened)}`);
+				});
+
+				await test(`${lang}: two publishers under one ID give two rows and a warning`, async () => {
+					await show(NetworkLishs, {
+						baseY: 0,
+						search: search([
+							{ id: X, name: 'Item', publisher: A, peers: [{ peerID: 'p1', networkID: 'n' }] },
+							{ id: X, name: 'Item', publisher: Q, peers: [{ peerID: 'p2', networkID: 'n' }] },
+						]),
+						onOpenLishPeers() {},
+					});
+					assert(target.querySelectorAll('.lish-publisher').length === 2, 'Rows with different publishers merged');
+					assert(text().includes(label('lish.publishersDiffer')), 'Different publishers are not flagged');
+					assert(!text().includes(label('lish.signedBy')), 'A search result claims a verified signer');
+				});
+
+				await test(`${lang}: the peer view keeps the original expectation when the peer reports another publisher`, async () => {
+					peerListing = [{ id: X, name: 'Item', totalSize: 4, publisher: Q }];
+					await show(NetworkPeersPeerDetail, { peer: { peerID: 'peer-1', networks: [{ networkID: 'n', networkName: 'N' }], direct: 1, relay: 0 }, networkID: 'n', highlightLishID: X, highlightPublisher: A });
+					assert(text().includes(label('lish.otherPublisherOnPeer')), 'Other publisher is not flagged');
+					assert(!target.querySelector('.wrap.highlight'), 'A different publisher is highlighted as the target');
+					button('network.addToDownloads').click();
+					await settle();
+					assert(
+						calls.some(c => c[0] === 'addPeerLish' && c[4] === A),
+						`Add did not keep the original expectation: ${JSON.stringify(calls)}`
+					);
+				});
+
+				await test(`${lang}: the peer view highlights the matching (id, publisher) target`, async () => {
+					peerListing = [{ id: X, name: 'Item', totalSize: 4, publisher: A }];
+					await show(NetworkPeersPeerDetail, { peer: { peerID: 'peer-1', networks: [{ networkID: 'n', networkName: 'N' }], direct: 1, relay: 0 }, networkID: 'n', highlightLishID: X, highlightPublisher: A });
+					assert(!text().includes(label('lish.otherPublisherOnPeer')), 'Matching publisher is flagged');
+					assert(target.querySelector('.wrap.highlight'), 'Matching target is not highlighted');
+				});
+
+				await test(`${lang}: a verified preview says who signed it`, async () => {
+					await show(NetworkLishDetailView, { detail: { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], publisher: A } });
+					assert(text().includes(label('lish.signedBy')) && text().includes(A), 'Signer is not shown');
+				});
+
+				await test(`${lang}: creating with sign sends the flag and shows the signer`, async () => {
+					await show(DownloadLISHProgress, { params: { dataPath: '/data', sign: true }, onBack() {}, onComplete() {} });
+					const call = calls.find(c => c[0] === 'create');
+					assert(call && call[13] === true, `Create did not send sign: ${JSON.stringify(calls)}`);
+					assert(text().includes(label('lish.signedBy')) && text().includes(A), 'Created signer is not shown');
+				});
+
+				await test(`${lang}: signature errors are translated`, async () => {
+					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY']) {
+						const message = translateError(Object.assign(new Error(code), { code, detail: 'x' }));
+						assert(!message.includes(code), `${code} is not translated: ${message}`);
+					}
+				});
+			}
+		} catch (error) {
+			results.push({ name: 'fixture setup', passed: false, error: error.message });
+		} finally {
+			if (component) await unmount(component);
+			Object.assign(api, { on: originals.on, subscribe: originals.subscribe, unsubscribe: originals.unsubscribe, call: originals.call });
+			Object.assign(api.lishnets, { addPeerLish: originals.addPeerLish, getPeerLish: originals.getPeerLish, getPeerLishs: originals.getPeerLishs });
+			api.lishs.create = originals.create;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			window.lishSignatureTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 18 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
