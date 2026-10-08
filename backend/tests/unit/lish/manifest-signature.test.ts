@@ -57,14 +57,23 @@ describe('verifyManifestSignature', () => {
 	});
 
 	it('rejects a non-canonical spelling of the publisher, even when signed over it', async () => {
-		// The base32 CID form parses to the same Peer ID; the shape check in shared refuses it. The
-		// canonical-form check in the backend is defence in depth: no string that passes the shape
-		// check is known to parse to a differently spelled Peer ID, so this test does not cover it.
+		// The base32 CID form parses to the same Peer ID; here the shape check in shared refuses it.
 		const key = await fixedKey();
 		const cid = peerIdFromPrivateKey(key).toCID().toString(base32);
 		const withCid = { ...manifest(), publisher: cid };
 		const lish = { ...withCid, signature: encodeSignature(await key.sign(signedManifestBytes(withCid))) };
 		await expect(verifyManifestSignature(lish)).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+	});
+
+	it('rejects a CID spelling that passes the shape check, in the backend canonical check', async () => {
+		// For the all-zero seed the base32 CID happens to use only base58 letters ("bafz…"): it passes
+		// the shape check and verifies cryptographically; only the canonical comparison refuses it.
+		const key = await generateKeyPairFromSeed('Ed25519', new Uint8Array(32));
+		const cid = peerIdFromPrivateKey(key).toCID().toString(base32);
+		expect(cid).toBe('bafzaajaiaejcao3ke66m5nvefvrkhkgqfjxq243fgikxohpciotdvqciugfvtwrj');
+		const withCid = { ...manifest(), publisher: cid };
+		const lish = { ...withCid, signature: encodeSignature(await key.sign(signedManifestBytes(withCid))) };
+		await expect(verifyManifestSignature(lish)).rejects.toMatchObject({ ...invalid, detail: 'publisher is not in canonical form' });
 	});
 
 	it('rejects half a signature', async () => {
