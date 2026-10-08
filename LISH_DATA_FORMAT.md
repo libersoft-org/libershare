@@ -33,8 +33,30 @@ interface ILISH {
 	directories?: IDirectoryEntry[]; // Array of directories (optional)
 	files?: IFileEntry[]; // Array of files (optional)
 	links?: ILinkEntry[]; // Array of symbolic links and hard links (optional)
+	publisher?: string; // Peer ID of the publisher who signed the manifest (optional, with `signature`)
+	signature?: string; // Ed25519 signature of the whole manifest, base64url without padding (optional, with `publisher`)
 }
 ```
+
+### Publisher signature
+
+A LISH may be signed by its publisher. `publisher` and `signature` are either both present or both absent; an unsigned LISH has neither.
+
+- `publisher` is the canonical base58btc string of an Ed25519 libp2p Peer ID. The public key is embedded in it, so anyone can verify the signature without another lookup
+- `signature` is the 64-byte Ed25519 signature, encoded as base64url without padding (86 characters)
+- The ID stays a random UUID; the signature does not turn it into a content hash. It proves who published this exact manifest, not that the publisher owns the ID
+
+**Signed bytes.** The signature covers the UTF-8 bytes of `libershare/lish-manifest/v1` followed by one line feed (`\n`) and the canonical JSON of the manifest:
+
+- the manifest without `signature` and without local fields (`directory`, `finalDirectory`, `chunks`); `publisher` is included
+- `directories`, `files` and `links` are always present (an absent collection is written as `[]`), entries in the order given
+- `hardlink` is always present on a link (`false` when absent)
+- optional fields that are absent are left out (an empty `name` or `description` counts as absent); `null` is never allowed
+- object keys sorted by UTF-16 code unit order, no whitespace, strings and numbers serialized as by `JSON.stringify`; numbers are safe integers
+
+**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, or a `publisher` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
+
+**Verification.** Every place that admits a manifest (import, a `.lish` file to download, a manifest from a peer, a preview) verifies the signature when present. A node that already stores a LISH ID keeps its publisher for the life of the item: a manifest under the same ID from another publisher, or unsigned for a signed item (and the other way round), is refused.
 
 ### Directory entry
 
@@ -185,6 +207,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 - ✅ Creation and modification timestamps
 - ✅ Arbitrary chunk sizes
 - ✅ Multiple hash algorithms for checksums
+- ✅ Optional publisher signature (Ed25519, node identity)
 
 ## Notes
 
