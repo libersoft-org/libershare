@@ -28,11 +28,16 @@ async function runFixture(name: string): Promise<string> {
 	const deadline = Date.now() + FIXTURE_TIMEOUT_MS;
 	try {
 		const portFile = join(profile, 'DevToolsActivePort');
-		while (!existsSync(portFile) || !readFileSync(portFile, 'utf8').includes('\n')) {
+		let portText = '';
+		while (!portText.includes('\n')) {
 			if (Date.now() > deadline) return 'timeout';
 			await Bun.sleep(100);
+			// On Windows Chrome may still hold the file open while writing it (EBUSY): try again.
+			try {
+				if (existsSync(portFile)) portText = readFileSync(portFile, 'utf8');
+			} catch {}
 		}
-		const port = readFileSync(portFile, 'utf8').split('\n')[0];
+		const port = portText.split('\n')[0];
 		let page: { webSocketDebuggerUrl: string } | undefined;
 		while (!page) {
 			if (Date.now() > deadline) return 'timeout';
