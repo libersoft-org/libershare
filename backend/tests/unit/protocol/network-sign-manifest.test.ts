@@ -6,8 +6,9 @@ import { Network } from '../../../src/protocol/network.ts';
 import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
 
 /** `signManifest` runs on the live identity; a stand-in `this` supplies just that state. */
-function signWith(state: { node: unknown; currentPrivateKey: unknown }, lish: ILISH): Promise<ILISH> {
-	return Network.prototype.signManifest.call(state as never, lish);
+function signWith(state: { node: unknown; currentPrivateKey: unknown; lifecycle?: string }, lish: ILISH): Promise<ILISH> {
+	const self = { lifecycle: 'running', ...state, isRunning: Network.prototype.isRunning };
+	return Network.prototype.signManifest.call(self as never, lish);
 }
 
 const manifest = { id: 'a3000000-0000-4000-8000-000000000010', name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 4, checksums: ['e'.repeat(64)] }] } as ILISH;
@@ -45,7 +46,11 @@ describe('Network.signManifest', () => {
 		await expect(signWith({ node: {}, currentPrivateKey: rsa }, manifest)).rejects.toMatchObject({ code: ErrorCodes.LISH_SIGNING_UNSUPPORTED_KEY });
 	});
 
-	it('refuses to sign while the network is not running', async () => {
-		await expect(signWith({ node: null, currentPrivateKey: await generateKeyPair('Ed25519') }, manifest)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
+	it('refuses to sign while the network is not running, even with a node and key still present', async () => {
+		const key = await generateKeyPair('Ed25519');
+		await expect(signWith({ node: null, currentPrivateKey: key }, manifest)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
+		for (const lifecycle of ['starting', 'stopping', 'failed', 'stopped']) {
+			await expect(signWith({ node: {}, currentPrivateKey: key, lifecycle }, manifest)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
+		}
 	});
 });

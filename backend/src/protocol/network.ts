@@ -3856,7 +3856,8 @@ export class Network {
 	 * if the identity is replaced meanwhile. Only manifest bytes are ever signed with it.
 	 */
 	async signManifest(lish: ILISH): Promise<ILISH> {
-		const key = this.node ? this.currentPrivateKey : null;
+		// Only a running node: while starting, stopping or after a failed stop the key still exists.
+		const key = this.isRunning() && this.node ? this.currentPrivateKey : null;
 		if (!key) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
 		if (key.type !== 'Ed25519') throw new CodedError(ErrorCodes.LISH_SIGNING_UNSUPPORTED_KEY, key.type);
 		const { signature: _old, ...unsigned } = lish;
