@@ -1,4 +1,4 @@
-import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, isPublisherShape, type IStoredLISH } from '@shared';
 import { encode, decode } from './codec.ts';
 import { MAX_LIST_RESPONSE_SIZE } from './constants.ts';
 import { readRemoteError } from './lish-response.ts';
@@ -7,6 +7,8 @@ export interface LISHListEntry {
 	id: string;
 	name?: string;
 	totalSize?: number;
+	/** Reported publisher of a signed item; the signature is checked only with the manifest. */
+	publisher?: string;
 }
 
 export interface LISHListRequest {
@@ -40,6 +42,7 @@ function entries(list: readonly IStoredLISH[], query: string | undefined, advert
 			id: lish.id,
 			...(lish.name !== undefined ? { name: lish.name } : {}),
 			totalSize: (lish.files ?? []).reduce((sum, file) => sum + file.size, 0),
+			...(lish.publisher !== undefined ? { publisher: lish.publisher } : {}),
 		}));
 }
 
@@ -110,7 +113,8 @@ function listEntries(value: unknown): LISHListEntry[] {
 	for (const entry of value) {
 		if (!entry || typeof entry !== 'object' || Array.isArray(entry) || ArrayBuffer.isView(entry) || (Object.getPrototypeOf(entry) !== Object.prototype && Object.getPrototypeOf(entry) !== null) || !Object.prototype.hasOwnProperty.call(entry, 'id') || typeof entry.id !== 'string' || entry.id.length === 0 || (entry.name !== undefined && typeof entry.name !== 'string') || (entry.totalSize !== undefined && (!Number.isSafeInteger(entry.totalSize) || entry.totalSize < 0))) throw invalid();
 	}
-	return value as LISHListEntry[];
+	// A malformed publisher drops only its row: an older or buggy peer must not cost the whole page.
+	return (value as LISHListEntry[]).filter(entry => entry.publisher === undefined || isPublisherShape(entry.publisher));
 }
 
 async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {

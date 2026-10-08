@@ -88,7 +88,7 @@ export interface LISHAnnounceHaveRequest {
 export interface LISHSearchResultRequest {
 	type: 'searchResult';
 	searchID: string;
-	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
+	lishs: Array<{ id: string; name?: string; totalSize?: number; publisher?: string }>;
 }
 // Discriminated responses: always exactly one of { data | manifest | lishs } OR { error }.
 export type LISHGetChunkResponse =
@@ -135,7 +135,7 @@ export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAn
 export interface SearchResultAnnouncement {
 	searchID: string;
 	peerID: string;
-	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
+	lishs: Array<{ id: string; name?: string; totalSize?: number; publisher?: string }>;
 }
 type SearchResultHandler = (ann: SearchResultAnnouncement) => void;
 const searchResultHandlers = new Map<string, SearchResultHandler>();

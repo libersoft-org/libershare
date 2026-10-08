@@ -18,6 +18,11 @@ const PERMISSIONS = /^[0-7]{1,4}$/;
 const PEER_ID_SHAPE = /^[1-9A-HJ-NP-Za-km-z]{1,128}$/;
 const SIGNATURE_SHAPE = /^[A-Za-z0-9_-]{86}$/;
 
+/** Whether `value` has the shape of a publisher Peer ID (base58btc); used for publishers peers only report. */
+export function isPublisherShape(value: unknown): value is string {
+	return typeof value === 'string' && PEER_ID_SHAPE.test(value);
+}
+
 /** Whether the manifest claims a publisher signature (either field present). */
 export function isSignedLISH(lish: Pick<ILISH, 'publisher' | 'signature'>): boolean {
 	return lish.publisher !== undefined || lish.signature !== undefined;
