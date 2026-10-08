@@ -745,16 +745,24 @@ ensure_docker_buildx() {
 }
 
 build_docker_image() {
+	# The image is labelled with its Dockerfile's checksum so an edited Dockerfile
+	# (e.g. a new Bun pin) is never silently served by an image built from an older one.
+	_dockerfile_sum="$(cksum < "$SCRIPT_DIR/Dockerfile" | awk '{print $1 "-" $2}')"
+	_image_sum="$(docker image inspect -f '{{ index .Config.Labels "org.libershare.dockerfile-cksum" }}' "$DOCKER_IMAGE" 2>/dev/null || true)"
 	if [ "$DOCKER_REBUILD" = "1" ]; then
 		echo "=== Rebuilding Docker image (--docker-rebuild) ==="
 		docker rmi "$DOCKER_IMAGE" 2>/dev/null || true
-		DOCKER_BUILDKIT=1 docker build --network=host --no-cache -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
-	elif docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
+		DOCKER_BUILDKIT=1 docker build --network=host --no-cache --label "org.libershare.dockerfile-cksum=$_dockerfile_sum" -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
+	elif [ "$_image_sum" = "$_dockerfile_sum" ]; then
 		echo "=== Docker image $DOCKER_IMAGE already exists (cached) ==="
 	else
-		echo "=== Building Docker image ==="
-		echo "    (first build may take a long time)"
-		DOCKER_BUILDKIT=1 docker build --network=host -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
+		if docker image inspect "$DOCKER_IMAGE" >/dev/null 2>&1; then
+			echo "=== Dockerfile changed since $DOCKER_IMAGE was built, rebuilding ==="
+		else
+			echo "=== Building Docker image ==="
+			echo "    (first build may take a long time)"
+		fi
+		DOCKER_BUILDKIT=1 docker build --network=host --label "org.libershare.dockerfile-cksum=$_dockerfile_sum" -t "$DOCKER_IMAGE" "$SCRIPT_DIR"
 	fi
 }
 
