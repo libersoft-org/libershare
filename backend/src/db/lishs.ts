@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { type IStoredLISH, type LISHid } from '@shared';
+import { CodedError, ErrorCodes, type IStoredLISH, type LISHid } from '@shared';
 import { getInternalID } from './lishs-schema.ts';
 
 // Schema/DDL + migrations (and the shared getInternalID resolver) live in
@@ -22,12 +22,24 @@ export function lishExists(db: Database, lishID: LISHid): boolean {
 	return (row?.c ?? 0) > 0;
 }
 
-export function addLISH(db: Database, lish: IStoredLISH): void {
+/** Options of {@link addLISH}. */
+export interface AddLISHOptions {
+	/** Refuse with `LISH_ALREADY_EXISTS` when the ID is already stored (checked inside the write). */
+	readonly requireNew?: boolean;
+}
+
+export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions = {}): void {
 	const tx = db.transaction(() => {
+		// The final check against concurrent writers: whatever was verified before an await, the row
+		// as it is now decides. An item keeps its publisher (or stays unsigned) for its whole life.
+		const stored = db.query<{ publisher: string | null }, [string]>('SELECT publisher FROM lishs WHERE lish_id = ?').get(lish.id);
+		if (stored && options.requireNew) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
+		const publisher = lish.publisher ?? null;
+		if (stored && stored.publisher !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored.publisher ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
 		// Upsert main record — preserves upload_enabled/download_enabled on conflict
 		db.run(
-			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(lish_id) DO UPDATE SET
 			   name = excluded.name,
 			   description = excluded.description,
@@ -35,9 +47,14 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 			   chunk_size = excluded.chunk_size,
 			   checksum_algo = excluded.checksum_algo,
 			   directory = excluded.directory,
-			   final_directory = excluded.final_directory`,
-			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null]
+			   final_directory = excluded.final_directory,
+			   publisher = excluded.publisher,
+			   signature = excluded.signature`,
+			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null, publisher, lish.signature ?? null]
 		);
+		// A signed body is replaced whole: a collection it leaves out is empty, never "keep the old
+		// rows", or the stored body would no longer match its signature.
+		if (lish.signature !== undefined) lish = { ...lish, files: lish.files ?? [], directories: lish.directories ?? [], links: lish.links ?? [] };
 		const internalID = getInternalID(db, lish.id as LISHid)!;
 
 		// Replace child records only when replacement data is provided (prevents wiping download progress)
