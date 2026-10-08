@@ -57,8 +57,9 @@ describe('verifyManifestSignature', () => {
 	});
 
 	it('rejects a non-canonical spelling of the publisher, even when signed over it', async () => {
-		// The base32 CID form parses to the same Peer ID; the shape check in shared already refuses
-		// it, and the canonical-form check in the backend stays as the second line.
+		// The base32 CID form parses to the same Peer ID; the shape check in shared refuses it. The
+		// canonical-form check in the backend is defence in depth: no string that passes the shape
+		// check is known to parse to a differently spelled Peer ID, so this test does not cover it.
 		const key = await fixedKey();
 		const cid = peerIdFromPrivateKey(key).toCID().toString(base32);
 		const withCid = { ...manifest(), publisher: cid };

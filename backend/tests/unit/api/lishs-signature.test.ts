@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
@@ -14,6 +14,7 @@ import { initLISHsHandlers, type ManifestSigner } from '../../../src/api/lishs.t
 import { initLISHnetsHandlers } from '../../../src/api/lishnets.ts';
 import { setActiveDownloadersRef } from '../../../src/api/transfer.ts';
 import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
+import { withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
 
 /**
  * The signature through the real import, create and add-from-peer pipelines over a real store:
@@ -111,6 +112,24 @@ describe('import keeps the signature', () => {
 		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A });
 	});
 
+	it('an import waiting for the ID reads the publisher stored meanwhile and refuses before stopping its work', async () => {
+		const lishs = handlers();
+		let importing!: Promise<unknown>;
+		let destroyed = false;
+		await withLISHOwnership(ID, async () => {
+			// Q is verified and now waits for the ID that another operation owns.
+			importing = lishs.importManifest(await sign(manifest({ name: 'Q' }), keyQ), downloadDir, { overwrite: true });
+			importing.catch(() => {});
+			// That operation stores A and starts work for it before letting go.
+			dataServer.add((await sign(manifest(), keyA)) as never);
+			setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyed = true) }]]));
+			await Bun.sleep(30);
+		});
+		await expect(importing).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		expect(destroyed).toBe(false);
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A });
+	});
+
 	it('refuses a signature that does not match the body', async () => {
 		const lishs = handlers();
 		await expect(lishs.importManifest({ ...(await sign(manifest(), keyA)), name: 'Changed' }, downloadDir)).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
@@ -122,25 +141,6 @@ describe('import keeps the signature', () => {
 		const signed = await sign(manifest(), keyA);
 		expect(await lishs.parseFromJSON({ json: JSON.stringify(signed) })).toEqual([signed]);
 		await expect(lishs.parseFromJSON({ json: JSON.stringify({ ...signed, name: 'Changed' }) })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
-	});
-});
-
-describe('create with sign', () => {
-	it('signs the new manifest, stores it and reports the publisher', async () => {
-		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
-		await writeFile(source, 'signed payload');
-		const lishs = handlers(signerA);
-		const result = await lishs.create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never);
-		expect(result.publisher).toBe(A);
-		const stored = dataServer.get(result.lishID)!;
-		expect(await verifyManifestSignature(stored)).toEqual({ signed: true, publisher: A });
-	});
-
-	it('refuses to sign without a running network and creates nothing', async () => {
-		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
-		await writeFile(source, 'payload');
-		await expect(handlers().create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
-		expect(dataServer.list()).toHaveLength(0);
 	});
 
 	it('a preview refuses a signed manifest carrying non-text fields the signature does not cover', async () => {
@@ -194,6 +194,37 @@ describe('export and import keep the signed bytes', () => {
 				otherDB.close();
 			}
 		}
+	});
+});
+
+describe('create with sign', () => {
+	it('signs the new manifest, stores it and reports the publisher', async () => {
+		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
+		await writeFile(source, 'signed payload');
+		const lishs = handlers(signerA);
+		const result = await lishs.create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never);
+		expect(result.publisher).toBe(A);
+		const stored = dataServer.get(result.lishID)!;
+		expect(await verifyManifestSignature(stored)).toEqual({ signed: true, publisher: A });
+	});
+
+	it('signs a manifest written only to a file, with sharing and downloading both off', async () => {
+		const dir = await tempDir('lish-sig-src-');
+		const source = join(dir, 'data.bin');
+		await writeFile(source, 'file only payload');
+		const lishFile = join(dir, 'item.lish');
+		const result = await handlers(signerA).create({ dataPath: source, lishFile, addToSharing: false, addToDownloading: false, sign: true } as never, undefined as never);
+		expect(result.publisher).toBe(A);
+		expect(dataServer.list()).toHaveLength(0);
+		const written = JSON.parse(await readFile(lishFile, 'utf8')) as ILISH;
+		expect(await verifyManifestSignature(written)).toEqual({ signed: true, publisher: A });
+	});
+
+	it('refuses to sign without a running network and creates nothing', async () => {
+		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
+		await writeFile(source, 'payload');
+		await expect(handlers().create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
+		expect(dataServer.list()).toHaveLength(0);
 	});
 });
 

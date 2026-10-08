@@ -4,6 +4,7 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { encodeSignature, ErrorCodes, signedManifestBytes, type ILISH, type IStoredLISH, type LISHid } from '@shared';
 import { addLISH, getLISH } from '../../../src/db/lishs.ts';
 import { withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
+import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
 import { createTestDB } from '../helpers/fixtures.ts';
 
 const ID = 'b0000000-0000-4000-8000-000000000002' as LISHid;
@@ -53,16 +54,18 @@ describe('addLISH keeps the stored publisher', () => {
 		expect(() => addLISH(db, manifest() as IStoredLISH, { requireNew: true })).toThrow(expect.objectContaining({ code: ErrorCodes.LISH_ALREADY_EXISTS }));
 	});
 
-	it('replaces every collection of a signed body, so the stored body still matches its signature', async () => {
-		const db = createTestDB();
-		addLISH(db, (await sign(manifest({ directories: [{ path: 'old' }], links: [{ path: 'l', target: 'a.txt' }] }), keyA)) as IStoredLISH);
+	it('replaces every collection of a signed body, so the reloaded body still verifies', async () => {
 		const { directories: _d, links: _l, ...withoutCollections } = manifest();
-		const second = (await sign(withoutCollections as ILISH, keyA)) as IStoredLISH;
-		addLISH(db, second);
-		const stored = getLISH(db, ID)!;
-		expect(stored.directories ?? []).toEqual([]);
-		expect(stored.links ?? []).toEqual([]);
-		expect(stored.signature).toBe(second.signature!);
+		for (const replacement of [withoutCollections, { ...withoutCollections, directories: [], links: [] }]) {
+			const db = createTestDB();
+			addLISH(db, (await sign(manifest({ directories: [{ path: 'old' }], links: [{ path: 'l', target: 'a.txt' }] }), keyA)) as IStoredLISH);
+			addLISH(db, (await sign(replacement as ILISH, keyA)) as IStoredLISH);
+			const stored = getLISH(db, ID)!;
+			expect(stored.directories ?? []).toEqual([]);
+			expect(stored.links ?? []).toEqual([]);
+			// Rebuilt from the rows: stale directories or links would change the signed bytes.
+			expect(await verifyManifestSignature(stored)).toEqual({ signed: true, publisher: A });
+		}
 	});
 });
 

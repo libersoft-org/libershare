@@ -56,6 +56,13 @@ test('a local download waits for an import owning the ID and is refused by the p
 	const data = { get: () => stored, getMissingChunks: () => [], getAllChunkCount: () => 1 } as unknown as DataServer;
 	const networks = { getRunningNetwork: () => new MockNetwork(), set onNetworkLeft(_c: unknown) {}, set onNetworkJoined(_c: unknown) {} } as unknown as Networks;
 	const start = spyOn(Downloader.prototype, 'download').mockImplementation(() => new Promise(() => {}));
+	// Known point: the file was read and passed its first comparison (nothing stored yet).
+	const realInit = Downloader.prototype.init;
+	let initDone = false;
+	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string) {
+		await realInit.call(this, path);
+		initDone = true;
+	});
 	const handlers = initTransferHandlers(
 		networks,
 		data,
@@ -68,7 +75,7 @@ test('a local download waits for an import owning the ID and is refused by the p
 		let downloading!: Promise<unknown>;
 		await withLISHOwnership(ID, async () => {
 			downloading = handlers.download({ networkID: 'net-a', lishPath }, undefined);
-			await new Promise(resolve => setTimeout(resolve, 50));
+			while (!initDone) await Bun.sleep(5);
 			// The import still owns the ID: the file was read, but nothing may be active yet.
 			expect(handlers.getActiveTransfers()).toEqual([]);
 			stored = (await sign(manifest, keyA)) as IStoredLISH;
@@ -78,5 +85,6 @@ test('a local download waits for an import owning the ID and is refused by the p
 		expect(handlers.getActiveTransfers()).toEqual([]);
 	} finally {
 		start.mockRestore();
+		init.mockRestore();
 	}
 });
