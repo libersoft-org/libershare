@@ -57,3 +57,8 @@ function acquire(mutex: Mutex, signal: AbortSignal | undefined): Promise<() => v
 		}, reject);
 	});
 }
+
+/** Owner plus waiters for one LISH ID; lets tests confirm an operation is queued on the lock. */
+export function lishOwnershipUsers(lishID: string): number {
+	return owners.get(lishID)?.users ?? 0;
+}

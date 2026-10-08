@@ -14,7 +14,7 @@ import { initLISHsHandlers, type ManifestSigner } from '../../../src/api/lishs.t
 import { initLISHnetsHandlers } from '../../../src/api/lishnets.ts';
 import { setActiveDownloadersRef } from '../../../src/api/transfer.ts';
 import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
-import { withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
+import { lishOwnershipUsers } from '../../../src/lish/lish-ownership.ts';
 
 /**
  * The signature through the real import, create and add-from-peer pipelines over a real store:
@@ -112,23 +112,40 @@ describe('import keeps the signature', () => {
 		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A });
 	});
 
-	it('an import waiting for the ID reads the publisher stored meanwhile and refuses before stopping its work', async () => {
-		const lishs = handlers();
-		let importing!: Promise<unknown>;
-		let destroyed = false;
-		await withLISHOwnership(ID, async () => {
-			// Q is verified and now waits for the ID that another operation owns.
-			importing = lishs.importManifest(await sign(manifest({ name: 'Q' }), keyQ), downloadDir, { overwrite: true });
-			importing.catch(() => {});
-			// That operation stores A and starts work for it before letting go.
-			dataServer.add((await sign(manifest(), keyA)) as never);
-			setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyed = true) }]]));
-			await Bun.sleep(30);
+	for (const variant of ['another key', 'unsigned'] as const) {
+		it(`an import (${variant}) queued behind a real import of A reads A under the lock and never reaches its own write`, async () => {
+			const lishs = handlers();
+			// A's import holds the ID: it has written A and is stopping old work, which the test holds.
+			let releaseA!: () => void;
+			const heldA = new Promise<void>(resolve => (releaseA = resolve));
+			setActiveDownloadersRef(new Map([[ID, { destroy: () => heldA }]]));
+			const writes: string[] = [];
+			const realAdd = dataServer.addDataset.bind(dataServer);
+			dataServer.addDataset = (lish, root, finalRoot, options) => {
+				writes.push(lish.publisher ?? 'unsigned');
+				return realAdd(lish, root, finalRoot, options);
+			};
+			const signedA = await sign(manifest(), keyA);
+			const importingA = lishs.importManifest(signedA, downloadDir);
+			while (writes.length === 0) await Bun.sleep(2);
+			const rootA = dataServer.getDatasetRoot(ID);
+			// Q passed its own checks and now waits for the ID (owner + one waiter).
+			const other = variant === 'unsigned' ? manifest({ name: 'Q' }) : await sign(manifest({ name: 'Q' }), keyQ);
+			const importingQ = lishs.importManifest(other, downloadDir, { overwrite: true });
+			importingQ.catch(() => {});
+			while (lishOwnershipUsers(ID) < 2) await Bun.sleep(2);
+			// From here on A has running work that only a passing Q would stop.
+			let destroyedByQ = false;
+			releaseA();
+			await importingA;
+			setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyedByQ = true) }]]));
+			await expect(importingQ).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+			expect(writes).toEqual([A]);
+			expect(destroyedByQ).toBe(false);
+			expect(dataServer.getDatasetRoot(ID)).toEqual(rootA);
+			expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A, signature: signedA.signature });
 		});
-		await expect(importing).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
-		expect(destroyed).toBe(false);
-		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A });
-	});
+	}
 
 	it('refuses a signature that does not match the body', async () => {
 		const lishs = handlers();
