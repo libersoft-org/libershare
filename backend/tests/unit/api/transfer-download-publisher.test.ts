@@ -13,6 +13,7 @@ import { lishOwnershipUsers } from '../../../src/lish/lish-ownership.ts';
 import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
+import * as files from '../../../src/lish/safe-dataset-files.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 import type { Networks } from '../../../src/lishnet/lishnets.ts';
 
@@ -114,6 +115,83 @@ test('a local download waits for a real import owning the ID and is refused by t
 	} finally {
 		start.mockRestore();
 		init.mockRestore();
+		await lishs.stopVerifyAll();
+		db.close();
+	}
+});
+
+test('a local download cannot activate while a real import holds the ID before writing anything', async () => {
+	initDownloadState(new Set(), () => {});
+	initUploadState(new Set(), () => {});
+	const dataDir = await tempDir('lish-local-data-');
+	const db = openDatabase(dataDir);
+	const dataServer = new DataServer(db);
+	const settings = await Settings.create(dataDir);
+	await settings.set('storage.tempPath', await tempDir('lish-local-tmp-'));
+	await settings.set('network.autoStartSharing', false);
+	await settings.set('network.autoStartDownloading', false);
+	const lishs = initLISHsHandlers(
+		dataServer,
+		() => {},
+		() => {},
+		settings
+	);
+	const lishPath = join(await tempDir('lish-local-file-'), 'item.lish');
+	await writeFile(lishPath, JSON.stringify(await sign(manifest, keyQ)));
+	const networks = { getRunningNetwork: () => new MockNetwork(), set onNetworkLeft(_c: unknown) {}, set onNetworkJoined(_c: unknown) {} } as unknown as Networks;
+	const handlers = initTransferHandlers(
+		networks,
+		dataServer,
+		dataDir,
+		() => {},
+		() => {},
+		settings
+	);
+	const start = spyOn(Downloader.prototype, 'download').mockImplementation(() => new Promise(() => {}));
+	// Known point: the file was read and passed its first comparison, with nothing stored yet.
+	const realInit = Downloader.prototype.init;
+	let releaseInit!: () => void;
+	const initHeld = new Promise<void>(resolve => (releaseInit = resolve));
+	let initDone = false;
+	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string) {
+		await realInit.call(this, path);
+		initDone = true;
+		await initHeld;
+	});
+	let open: { mockRestore(): void } | undefined;
+	try {
+		const downloading = handlers.download({ networkID: 'net-a', lishPath }, undefined);
+		downloading.catch(() => {});
+		while (!initDone) await Bun.sleep(2);
+		// The real import of A takes the ID and is held at its first preparation step: A is not stored.
+		let releaseA!: () => void;
+		const heldA = new Promise<void>(resolve => (releaseA = resolve));
+		let preparing = false;
+		const realOpen = files.openDataset;
+		open = spyOn(files, 'openDataset').mockImplementation((async (...args: Parameters<typeof realOpen>) => {
+			if (!preparing) {
+				preparing = true;
+				await heldA;
+			}
+			return realOpen(...args);
+		}) as typeof realOpen);
+		const importingA = lishs.importManifest(await sign(manifest, keyA), await tempDir('lish-local-dl-'));
+		while (!preparing) await Bun.sleep(2);
+		releaseInit();
+		// The download now waits behind the import; neither A nor an active download exists yet.
+		while (lishOwnershipUsers(ID) < 2) await Bun.sleep(2);
+		expect(dataServer.get(ID as never)).toBeFalsy();
+		expect(handlers.getActiveTransfers()).toEqual([]);
+		releaseA();
+		await importingA;
+		await expect(downloading).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		expect(start).not.toHaveBeenCalled();
+		expect(handlers.getActiveTransfers()).toEqual([]);
+		expect(dataServer.get(ID as never)?.publisher).toBe(peerIdFromPrivateKey(keyA).toString());
+	} finally {
+		start.mockRestore();
+		init.mockRestore();
+		open?.mockRestore();
 		await lishs.stopVerifyAll();
 		db.close();
 	}
