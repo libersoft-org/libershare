@@ -280,6 +280,8 @@
 		margin: 0.5vh 0 1vh;
 		font-size: 2vh;
 		line-height: 1.4;
+		color: var(--secondary-foreground);
+		opacity: 0.85;
 	}
 
 	.row {
