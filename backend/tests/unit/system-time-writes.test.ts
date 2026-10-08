@@ -1,16 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { applySystemTimeSettings, buildSetClockCommands, buildSetNtpEnabledCommands, buildSetNtpServerCommands, buildSetTimezoneCommands, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, runAll, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type CommandRunner, type SystemCommand, type SystemTimeWriters, type WindowsModeState, W32TM_ERROR_RE, W32TM_SERVICE_INACTIVE_RE, SC_ALREADY_RUNNING_RE, SC_NOT_ACTIVE_RE, MAC_NEEDS_ROOT_RE, run, EXEC_TIMEOUT_MS, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
-import { READ_BUDGET_MS, SAVE_BUDGET_MS, SEQUENCE_BUDGET_MS, remainingSaveBudget, withSaveBudget } from '../../src/system-time-common.ts';
+import { applySystemTimeSettings, clockWriteRefusal, getSystemTimeStatus, listHostTimezones, listSystemTimezones, resetHostTimezones, setSystemClock, setSystemNtpEnabled, setSystemNtpServer, setSystemTimezone, type TimeOperationRunner, type SystemTimeWriters, type WindowsModeState, WRITE_TIMEOUT_MS, withSystemTimeLock } from '../../src/system-time.ts';
+import { READ_BUDGET_MS, EXEC_TIMEOUT_MS, SEQUENCE_BUDGET_MS, remainingSaveBudget, withSaveBudget } from '../../src/system-time-common.ts';
 import { SIGNATURE_TIMEOUT_MS, WINDOWS_TIME_HELPER_TIMEOUT_MS } from '../../src/network-helper-client.ts';
 import { WINDOWS_ELEVATION_WAIT_MS } from '../../src/network-helper-windows.ts';
 import { SYSTEM_TIME_READ_TIMEOUT_MS, SYSTEM_TIME_SAVE_TIMEOUT_MS } from '@shared';
 import type { SystemTimeChanges, SystemTimeStatus } from '@shared';
-import { W32TM_STATUS, fakeRunner } from '../helpers/system-time-fixtures.ts';
-
-/** The blank line `sc.exe` puts between its `[SC] ... FAILED <code>:` line and the localized reason. */
-const CRLF2 = '\r\n\r\n';
-
-const AT = { year: 2026, month: 8, day: 14, hours: 23, minutes: 46, seconds: 28 };
+import { fakeRunner } from '../helpers/system-time-fixtures.ts';
 
 /** A host where everything is available and synchronisation is off. */
 function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeStatus {
@@ -27,46 +22,6 @@ function statusFixture(overrides: Partial<SystemTimeStatus> = {}): SystemTimeSta
 		...overrides,
 	};
 }
-
-describe('buildSetClockCommands', () => {
-	/**
-	 * No date on Linux, on purpose: systemd resolves a bare `HH:MM:SS` against the host's own
-	 * today. A date computed here would come from this process's offset, and on Linux that is
-	 * not the host's - `timedatectl show` reports no offset, so the status falls back to this
-	 * runtime's ICU. Databases an hour apart put the computed day on the wrong side of
-	 * midnight, and "set the clock to 01:00" then moved the calendar day as well.
-	 * Measured on a systemd host: `systemd-analyze timestamp '00:30:00'` normalises to the
-	 * current local date, and `timedatectl set-time "HH:MM:SS"` accepts the form.
-	 */
-	it('sends only the time on linux, leaving the date to the host', () => {
-		expect(buildSetClockCommands('linux', AT)).toEqual([{ cmd: 'timedatectl', args: ['set-time', '23:46:28'] }]);
-	});
-
-	it('sends only the time on macOS, leaving the date alone', () => {
-		expect(buildSetClockCommands('darwin', AT)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settime', '23:46:28'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-
-	/**
-	 * No date of ours on Windows either. `Set-Date -Date` writes the date as well as the time,
-	 * and between the status read a date would come from and this command there is another
-	 * read and a PowerShell start: read at 23:59:59 on the 13th, run at 00:00:01 on the 14th,
-	 * and a requested 00:05:00 moves the calendar back a day. `Get-Date` inside the command
-	 * resolves the day at the write itself.
-	 */
-	it('builds the windows argv so the command resolves the day itself', () => {
-		const [command] = buildSetClockCommands('win32', AT);
-		expect(command?.cmd).toBe('powershell');
-		expect(command?.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
-		expect(command?.args[3]).toContain('Set-Date -Date (Get-Date -Hour 23 -Minute 46 -Second 28 -Millisecond 0) -ErrorAction Stop');
-		// And nothing that looks like a date this process worked out.
-		expect(command?.args[3]).not.toMatch(/\d{4}-\d{2}-\d{2}/);
-	});
-
-	it('zero-pads single-digit parts', () => {
-		expect(buildSetClockCommands('linux', { hours: 3, minutes: 4, seconds: 5 })[0]?.args[1]).toBe('03:04:05');
-		expect(buildSetClockCommands('darwin', { ...AT, hours: 0, minutes: 0, seconds: 0 })[0]?.args[1]).toBe('00:00:00');
-	});
-});
 
 /**
  * The limits of one save have to nest, innermost first.
@@ -102,63 +57,6 @@ describe('the timeouts of one save', () => {
 });
 
 /**
- * Reads have to answer to the save's budget as well.
- *
- * They did not: a write consulted the remainder and a READ took its own 5 s however late the
- * save already was, so the reads before a write could spend the whole allowance. On Windows
- * that is not merely slow - the elevated helper is deliberately held to less than the
- * launcher's wait so it can report where it got to, and reads running past that had it
- * terminated with a timezone already changed and nothing said about it.
- *
- * Measured with a real child rather than by comparing constants, because the failure was that
- * a real child outlived a limit nobody applied to it.
- */
-describe('a child process under a save budget', () => {
-	/** Something that sleeps, spelled the way each platform's own trusted executable does. */
-	const slowChild = (): { cmd: string; args: string[] } => (process.platform === 'win32' ? { cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 10'] } : { cmd: '/bin/sleep', args: ['10'] });
-
-	it('is cut short by what the save has left, not by its own limit', async () => {
-		const { cmd, args } = slowChild();
-		const started = performance.now();
-		// Two seconds left of the save, and a read that would take ten.
-		const outcome = await withSaveBudget(async () => run(cmd, args, EXEC_TIMEOUT_MS), performance.now.bind(performance), 2_000);
-		const spent = performance.now() - started;
-		expect(outcome.kind).toBe('timeout');
-		// Inside the remainder, with room for process startup - and nowhere near the child's
-		// own ten seconds or the 5 s read limit that used to apply regardless.
-		expect(spent).toBeLessThan(5_000);
-	});
-
-	it('is not started at all once the save has nothing left', async () => {
-		const { cmd, args } = slowChild();
-		let clock = 0;
-		const started = performance.now();
-		const outcome = await withSaveBudget(
-			async () => {
-				clock = SAVE_BUDGET_MS + 1;
-				return run(cmd, args, EXEC_TIMEOUT_MS);
-			},
-			() => clock,
-			SAVE_BUDGET_MS
-		);
-		expect(outcome.kind).toBe('timeout');
-		// No process was spawned, so this is immediate rather than a millisecond-long kill.
-		expect(performance.now() - started).toBeLessThan(500);
-	});
-
-	/** Outside a save there is no remainder to consult, and the ordinary read limit stands. */
-	it('keeps its own limit when nothing set a budget', async () => {
-		const { cmd, args } = slowChild();
-		const started = performance.now();
-		const outcome = await run(cmd, args, 1_200);
-		const spent = performance.now() - started;
-		expect(outcome.kind).toBe('timeout');
-		expect(spent).toBeGreaterThan(900);
-		expect(spent).toBeLessThan(6_000);
-	});
-});
-
-/**
  * A read of the host has to fit inside the wait the screen gives it, and that is a ceiling on
  * the TOTAL - not on each command.
  *
@@ -170,30 +68,6 @@ describe('a child process under a save budget', () => {
  * relation between two constants.
  */
 describe('a whole host read under its budget', () => {
-	const slowChild = (): { cmd: string; args: string[] } => (process.platform === 'win32' ? { cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 10'] } : { cmd: '/bin/sleep', args: ['10'] });
-
-	it('stops several individually-patient reads from outlasting it together', async () => {
-		const { cmd, args } = slowChild();
-		const started = performance.now();
-		// Four reads, each of which would happily take its own limit, and 3 s for all of them.
-		const kinds = await withSaveBudget(
-			async () => {
-				const seen: string[] = [];
-				for (let index = 0; index < 4; index++) seen.push((await run(cmd, args, EXEC_TIMEOUT_MS)).kind);
-				return seen;
-			},
-			performance.now.bind(performance),
-			3_000
-		);
-		const spent = performance.now() - started;
-		expect(kinds).toHaveLength(4);
-		// The budget held for all four together, with room for process startup - not four
-		// times the read limit.
-		expect(spent).toBeLessThan(6_000);
-		// And the later ones were not started at all once there was nothing left.
-		expect(kinds.every(kind => kind === 'timeout')).toBe(true);
-	});
-
 	/** The status read opens such a budget; without it the reads inside see no deadline. */
 	it('is what the status read runs its platform reader under', async () => {
 		const seen: Array<number | null> = [];
@@ -228,58 +102,6 @@ describe('a whole host read under its budget', () => {
 		// The ceiling exists because the parts do not add up on their own: seven commands of
 		// the ordinary read limit are already past the screen's wait.
 		expect(7 * EXEC_TIMEOUT_MS).toBeGreaterThan(SYSTEM_TIME_READ_TIMEOUT_MS);
-	});
-});
-
-/**
- * Switching synchronisation on has to switch on the thing that does it - AND tell the running
- * service about it.
- *
- * The registry write that puts the NTP client provider back was already there. What was
- * missing is the notification: the service keeps working from what it read at startup, and
- * `sc start` is correctly benign against a service that is already up, so nothing made it
- * re-read. `/resync` does not - that asks for a synchronisation with the configuration the
- * service already has, which is the one with the client switched off - and Microsoft
- * documents `w32tm /config /update` as the alternative to restarting it.
- *
- * It happened to work on a host with no source at all, because inventing one there already
- * ends in `/update`. Everywhere else the switch reported success and the client stayed off.
- */
-describe('switching windows synchronisation on with the NTP client switched off', () => {
-	const argv = (commands: SystemCommand[]): string[] => commands.map(command => [command.cmd, ...command.args].join(' '));
-
-	it('tells the running service to re-read the provider it just got back', () => {
-		const commands = argv(buildSetNtpEnabledCommands('win32', true, 'manual', false));
-		expect(commands).toContain('reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient /v Enabled /t REG_DWORD /d 1 /f');
-		expect(commands).toContain('w32tm /config /update');
-		// In that order, and before the resync: notifying after asking for a synchronisation
-		// would have the sync run against the configuration being replaced.
-		expect(commands.indexOf('w32tm /config /update')).toBeGreaterThan(commands.findIndex(entry => entry.startsWith('reg add')));
-		expect(commands.indexOf('w32tm /config /update')).toBeLessThan(commands.indexOf('w32tm /resync'));
-		// And it must not move the host's time source while it is at it.
-		expect(commands.some(entry => entry.includes('/syncfromflags'))).toBe(false);
-	});
-
-	/** A service that is not running is nothing to report here, exactly as for a peer list. */
-	it('treats an inactive service as nothing to notify', () => {
-		const update = buildSetNtpEnabledCommands('win32', true, 'manual', false).find(command => command.args.join(' ') === '/config /update');
-		expect(update?.benignOutput).toBe(W32TM_SERVICE_INACTIVE_RE);
-	});
-
-	/** Nothing was written, so there is nothing to tell the service about. */
-	it('does not notify when the provider was already on', () => {
-		expect(argv(buildSetNtpEnabledCommands('win32', true, 'manual', true))).not.toContain('w32tm /config /update');
-	});
-
-	/**
-	 * A host with no source at all already ends in `/update` as part of inventing one, and
-	 * that one carries `/syncfromflags:manual` on purpose. A second bare `/update` would be
-	 * noise.
-	 */
-	it('does not add a second notification where inventing a source already updates', () => {
-		const commands = argv(buildSetNtpEnabledCommands('win32', true, 'none', false));
-		expect(commands).toContain('w32tm /config /syncfromflags:manual /update');
-		expect(commands).not.toContain('w32tm /config /update');
 	});
 });
 
@@ -348,358 +170,6 @@ describe('a clock another daemon is steering', () => {
 	});
 });
 
-describe('runAll sequence budget', () => {
-	const commands: SystemCommand[] = [
-		{ cmd: 'first', args: [] },
-		{ cmd: 'second', args: [] },
-	];
-
-	it('hands each command only what is left of the budget', async () => {
-		const limits: Array<number | undefined> = [];
-		let clock = 0;
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			clock += 80_000;
-			return { kind: 'ok', output: '' };
-		};
-		const answer = await runAll('linux', commands, exec, () => clock);
-		expect(answer.success).toBe(true);
-		expect(limits[0]).toBe(WRITE_TIMEOUT_MS);
-		// 80 s of the budget is gone, so the second command gets the remainder and not a fresh 90 s.
-		expect(limits[1]).toBe(SEQUENCE_BUDGET_MS - 80_000);
-	});
-
-	/**
-	 * A spawn call takes whole milliseconds and refuses anything else, so the remainder of a
-	 * budget - which comes from `performance.now()` and is fractional - cannot be handed
-	 * straight to it. Measured live on Windows against an elevated save bounded to 45 s:
-	 * `The value of "timeout" is out of range. It must be an unsigned integer. Received
-	 * 44817.258400000006`, reported as a failed `w32tm` step and a host that might be
-	 * half-changed. It stayed hidden while budgets were large, because `Math.min` then returned
-	 * the integer write limit and the fraction never got through.
-	 */
-	it('hands a command a whole number of milliseconds even from a fractional remainder', async () => {
-		const limits: Array<number | undefined> = [];
-		let clock = 0.5;
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			clock += 80_000.2584;
-			return { kind: 'ok', output: '' };
-		};
-		expect((await runAll('linux', commands, exec, () => clock)).success).toBe(true);
-		expect(limits.length).toBe(2);
-		for (const limit of limits) {
-			expect(Number.isInteger(limit)).toBe(true);
-			// Still a real limit: zero would mean no limit at all to the process being spawned.
-			expect(limit!).toBeGreaterThan(0);
-			expect(limit!).toBeLessThanOrEqual(WRITE_TIMEOUT_MS);
-		}
-		// And it is the remainder, floored - not a fresh write limit.
-		expect(limits[1]).toBe(Math.floor(SEQUENCE_BUDGET_MS - 80_000.2584));
-	});
-
-	/**
-	 * Flooring alone is not enough at the very end of a budget. A fraction of a millisecond is
-	 * still time left, so the command is started - and floored to zero it would be started with
-	 * NO limit at all, which is the opposite of what a spent budget should do.
-	 */
-	it('never hands a command a zero limit at the end of the budget', async () => {
-		const limits: Array<number | undefined> = [];
-		let clock = 0;
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			clock = SEQUENCE_BUDGET_MS - 0.4;
-			return { kind: 'ok', output: '' };
-		};
-		expect((await runAll('linux', commands, exec, () => clock)).success).toBe(true);
-		expect(limits.length).toBe(2);
-		expect(limits[1]).toBe(1);
-	});
-
-	/**
-	 * A command starting with nothing left is refused, and `ran: false` is the honest report:
-	 * it was never started, so it cannot have changed anything - while the commands before it
-	 * did, which is what `changed` says.
-	 */
-	it('refuses a command that would start past the deadline', async () => {
-		let clock = 0;
-		const started: string[] = [];
-		const exec: CommandRunner = async cmd => {
-			started.push(cmd);
-			clock += SEQUENCE_BUDGET_MS;
-			return { kind: 'ok', output: '' };
-		};
-		const answer = await runAll('linux', commands, exec, () => clock);
-		expect(started).toEqual(['first']);
-		expect(answer.success).toBe(false);
-		expect(answer.outcome).toBe('error');
-		expect(answer.message).toContain('did not finish within');
-		expect(answer.changed).toBe(true);
-	});
-
-	/** Monotonic, because these are the commands that move the wall clock. */
-	it('is not measured against a clock the commands themselves can move', async () => {
-		const limits: Array<number | undefined> = [];
-		const exec: CommandRunner = async (_cmd, _args, timeoutMs) => {
-			limits.push(timeoutMs);
-			return { kind: 'ok', output: '' };
-		};
-		// A wall clock jumping an hour back mid-sequence would make the deadline unreachable; a
-		// monotonic reading cannot do that, so a fixed clock is the right stand-in here.
-		await runAll('linux', commands, exec, () => 0);
-		expect(limits).toEqual([WRITE_TIMEOUT_MS, WRITE_TIMEOUT_MS]);
-	});
-});
-
-describe('buildSetTimezoneCommands', () => {
-	it('passes the IANA identifier straight through on linux and macOS', () => {
-		expect(buildSetTimezoneCommands('linux', 'Europe/Prague', null)).toEqual([{ cmd: 'timedatectl', args: ['set-timezone', 'Europe/Prague'] }]);
-		expect(buildSetTimezoneCommands('darwin', 'Europe/Prague', null)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-settimezone', 'Europe/Prague'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-
-	it('uses the converted identifier on windows', () => {
-		expect(buildSetTimezoneCommands('win32', 'Europe/Prague', 'Central Europe Standard Time')).toEqual([{ cmd: 'tzutil', args: ['/s', 'Central Europe Standard Time'] }]);
-	});
-
-	it('yields no command on windows without a converted identifier', () => {
-		expect(buildSetTimezoneCommands('win32', 'Europe/Prague', null)).toEqual([]);
-	});
-});
-
-describe('buildSetNtpServerCommands', () => {
-	it('only restarts the daemon on linux, where the address lives in the drop-in', () => {
-		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', true)).toEqual([{ cmd: 'systemctl', args: ['restart', 'systemd-timesyncd'] }]);
-	});
-
-	/**
-	 * `systemctl restart` starts a stopped unit. Running it while the user has
-	 * synchronisation switched off would re-arm the daemon and let it step the clock
-	 * they are about to set by hand — the drop-in on disk is the whole change here.
-	 */
-	it('runs nothing on linux while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('linux', 'ntp.example.org', false)).toEqual([]);
-	});
-
-	it('configures the peer and resyncs on windows while synchronisation is on', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', true, true)).toEqual([
-			{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/update'], failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE },
-			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE },
-		]);
-	});
-
-	/**
-	 * A resync is a request to the Windows Time service, and forcing one while the user has
-	 * just switched synchronisation OFF would do the one thing they asked not to happen. So
-	 * `/resync` follows the configured state, which comes from the registry and is always
-	 * readable.
-	 *
-	 * `/update` does NOT: it is sent either way and forgiven when there is no service to
-	 * receive it. It used to be conditional on the service being seen as running, and a
-	 * service that could not be read - or was still starting - was read as stopped, so a
-	 * RUNNING service was never told about the new peer. Measured on Windows 11: with the
-	 * service stopped, `/config ... /update` wrote the peer list into the registry anyway and
-	 * printed only "The service has not been started. (0x80070426)".
-	 */
-	it('still notifies, but does not force a resync, while synchronisation is off', () => {
-		expect(buildSetNtpServerCommands('win32', 'ntp.example.org', false, false)).toEqual([{ cmd: 'w32tm', args: ['/config', '/manualpeerlist:ntp.example.org,0x8', '/update'], failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE }]);
-	});
-
-	/**
-	 * Both kinds, because `w32tm` reports this one with a NON-ZERO status: measured exit 38
-	 * on Windows 11 against a stopped service, with the peer list written to the registry
-	 * all the same. An earlier reading of that measurement said exit 0 - it came from
-	 * `cmd /c "... & echo %errorlevel%"`, where cmd expands the variable while PARSING the
-	 * line and therefore prints the status of whatever ran before.
-	 */
-	it.each(['ok', 'failed'] as const)('treats the missing service as nothing to report, not as a failed write: %s', async kind => {
-		const runner: CommandRunner = async () => (kind === 'ok' ? { kind: 'ok', output: 'The following error occurred: The service has not been started. (0x80070426)' } : { kind: 'failed', code: 38, output: 'The following error occurred: The service has not been started. (0x80070426)' });
-		expect((await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', false, false), runner)).success).toBe(true);
-	});
-
-	it('still fails when the step reports anything else with a non-zero status', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'failed', code: 5, output: 'The following error occurred: Access is denied. (0x80070005)' });
-		expect((await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', false, false), runner)).outcome).toBe('permission-denied');
-	});
-
-	it('still fails on any other w32tm refusal', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'ok', output: 'The following error occurred: Access is denied. (0x80070005)' });
-		const outcome = await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', false, false), runner);
-		expect(outcome.outcome).toBe('permission-denied');
-	});
-
-	it('sets the single supported server on macOS', () => {
-		expect(buildSetNtpServerCommands('darwin', 'ntp.example.org', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setnetworktimeserver', 'ntp.example.org'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-});
-
-describe('the budget a privileged write gets', () => {
-	/**
-	 * The bug this exists for: every command shared the five-second READ budget, the ones
-	 * that stop and wait for a person included. `timedatectl` and `systemctl` ask polkit,
-	 * which puts an authentication dialog on a desktop session and blocks until it is
-	 * answered - so the write was killed while the user was still reading the prompt. A
-	 * kill arrives as `timeout`, which is a generic error, and the privileged-helper retry
-	 * only follows a PERMISSION refusal, so that did not save it either.
-	 */
-	it('is a human budget, an order of magnitude past the read one', () => {
-		expect(WRITE_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
-		expect(WRITE_TIMEOUT_MS).toBeGreaterThan(EXEC_TIMEOUT_MS * 10);
-	});
-
-	/** A real child, so this tests the budget reaching `execFile` rather than a constant. */
-	const sleeper: [string, string[]] = process.platform === 'win32' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 3']] : ['/bin/sleep', ['3']];
-
-	it('is honoured per call: a short budget kills a child the default would have allowed', async () => {
-		expect((await run(sleeper[0], sleeper[1], 300)).kind).toBe('timeout');
-	}, 20_000);
-
-	it('lets the same child finish on the default read budget', async () => {
-		expect((await run(sleeper[0], sleeper[1])).kind).toBe('ok');
-	}, 20_000);
-
-	it('reports a killed write as a timeout that may have changed the host', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'timeout' });
-		const outcome = await runAll('linux', buildSetNtpEnabledCommands('linux', false), runner);
-		expect(outcome.outcome).toBe('error');
-		expect(outcome.stateMayHaveChanged).toBe(true);
-	});
-});
-
-describe('macOS systemsetup refusal', () => {
-	/**
-	 * The bug this exists for: `systemsetup` refuses every write when it is not root and
-	 * EXITS ZERO anyway. Measured on macOS 15.7.4 - `-settimezone`, `-setnetworktimeserver`,
-	 * `-setusingnetworktime` and `-settime` each printed the administrator-access line, exited
-	 * 0 and changed nothing, and the writers reported `success: true` for all four. The refusal
-	 * has to be read out of the output, so every builder carries the pattern.
-	 */
-	const REFUSAL = 'You need administrator access to run this tool... exiting!\n';
-
-	it('is what every macOS write is checked for', () => {
-		const commands: SystemCommand[] = [...buildSetClockCommands('darwin', AT), ...buildSetTimezoneCommands('darwin', 'Europe/Prague', null), ...buildSetNtpServerCommands('darwin', 'ntp.example.org', true), ...buildSetNtpEnabledCommands('darwin', true), ...buildSetNtpEnabledCommands('darwin', false)];
-		expect(commands.length).toBe(5);
-		for (const command of commands) expect(command.failOnOutput?.test(REFUSAL)).toBe(true);
-	});
-
-	it('turns an exit-zero refusal into permission-denied, not success', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'ok', output: REFUSAL });
-		const outcome = await runAll('darwin', buildSetTimezoneCommands('darwin', 'Europe/London', null), runner);
-		expect(outcome.success).toBe(false);
-		expect(outcome.outcome).toBe('permission-denied');
-		expect(outcome.message).toContain('administrator access');
-	});
-
-	it('still accepts a write that printed nothing', async () => {
-		const runner: CommandRunner = async () => ({ kind: 'ok', output: '' });
-		expect((await runAll('darwin', buildSetNtpEnabledCommands('darwin', false), runner)).success).toBe(true);
-	});
-});
-
-describe('buildSetNtpEnabledCommands', () => {
-	it('is a single switch on linux and macOS', () => {
-		expect(buildSetNtpEnabledCommands('linux', true)).toEqual([{ cmd: 'timedatectl', args: ['set-ntp', 'true'] }]);
-		expect(buildSetNtpEnabledCommands('linux', false)).toEqual([{ cmd: 'timedatectl', args: ['set-ntp', 'false'] }]);
-		expect(buildSetNtpEnabledCommands('darwin', true)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'on'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-		expect(buildSetNtpEnabledCommands('darwin', false)).toEqual([{ cmd: '/usr/sbin/systemsetup', args: ['-setusingnetworktime', 'off'], failOnOutput: MAC_NEEDS_ROOT_RE }]);
-	});
-
-	/**
-	 * The one mode where "switch synchronisation on" has to invent a time source: the
-	 * host has none, so the /config step is what clears Type=NoSync. Without it the
-	 * status read still reports synchronisation as off and the toggle looks like it did
-	 * not stick.
-	 */
-	it('gives a host with no time source one, on windows', () => {
-		expect(buildSetNtpEnabledCommands('win32', true, 'none')).toEqual([
-			{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'delayed-auto'] },
-			{ cmd: 'sc', args: ['start', 'w32time'], benignOutput: SC_ALREADY_RUNNING_RE },
-			{ cmd: 'w32tm', args: ['/config', '/syncfromflags:manual', '/update'], failOnOutput: W32TM_ERROR_RE },
-			{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE },
-		]);
-	});
-
-	/**
-	 * The destructive case. On a domain member Type is NT5DS and the machine takes its
-	 * time from the Active Directory hierarchy; rewriting syncfromflags to manual
-	 * detaches it from the forest's time and eventually breaks Kerberos. Switching
-	 * synchronisation on must start the service and nothing else.
-	 */
-	it('never rewrites a time source it did not create, on windows', () => {
-		for (const mode of ['domain-hierarchy', 'manual', 'all', 'managed', 'unknown'] as const) {
-			const commands = buildSetNtpEnabledCommands('win32', true, mode);
-			expect(commands.map(c => [c.cmd, ...c.args].join(' '))).toEqual(['sc config w32time start= delayed-auto', 'sc start w32time', 'w32tm /resync']);
-			expect(commands.some(c => c.args.some(a => a.startsWith('/syncfromflags')))).toBe(false);
-		}
-	});
-
-	/**
-	 * Switching synchronisation on must not also change WHEN the Windows Time service starts.
-	 *
-	 * Windows ships W32Time as auto-start DELAYED, recorded in its own `DelayedAutostart`
-	 * registry value. Measured on Windows 11: that value is 1 as shipped, `sc config
-	 * w32time start= disabled` - which the OFF branch below runs - leaves it 0, and plain
-	 * `sc config w32time start= auto` leaves it 0 too. So one off-and-on round trip moved the
-	 * service permanently earlier in the boot sequence. `delayed-auto` restores it to 1.
-	 */
-	it('keeps the delayed auto-start windows ships, on windows', () => {
-		for (const mode of ['none', 'domain-hierarchy', 'manual', 'all', 'managed', 'unknown'] as const) {
-			const commands = buildSetNtpEnabledCommands('win32', true, mode);
-			const config = commands.filter(c => c.cmd === 'sc' && c.args[0] === 'config');
-			expect(config.map(c => c.args.join(' '))).toEqual(['config w32time start= delayed-auto']);
-		}
-	});
-
-	/** A caller that could not determine the mode must get the harmless behaviour. */
-	it('rewrites nothing when the mode was not given at all', () => {
-		expect(buildSetNtpEnabledCommands('win32', true).some(c => c.args.includes('/syncfromflags:manual'))).toBe(false);
-	});
-
-	it('stops and disables the service on windows, whatever the source was', () => {
-		for (const mode of ['none', 'manual', 'all'] as const) {
-			expect(buildSetNtpEnabledCommands('win32', false, mode)).toEqual([
-				{ cmd: 'sc', args: ['stop', 'w32time'], benignOutput: SC_NOT_ACTIVE_RE },
-				{ cmd: 'sc', args: ['config', 'w32time', 'start=', 'disabled'] },
-			]);
-		}
-	});
-
-	it('stops the service before disabling it, so the switch takes effect at once', () => {
-		expect(buildSetNtpEnabledCommands('win32', false).map(c => c.args[0])).toEqual(['stop', 'config']);
-	});
-
-	it('marks only the service run-state steps as tolerable, never the ones carrying the change', () => {
-		// A host whose service is already in the requested run state must still get its
-		// sync type and start mode written, so those steps may not sit behind an abort.
-		const tolerated = (enabled: boolean): string[] =>
-			buildSetNtpEnabledCommands('win32', enabled, 'none')
-				.filter(c => c.benignOutput !== undefined && c.cmd === 'sc')
-				.map(c => [c.cmd, ...c.args].join(' '));
-		expect(tolerated(true)).toEqual(['sc start w32time']);
-		expect(tolerated(false)).toEqual(['sc stop w32time']);
-	});
-
-	/**
-	 * The bug this exists for: the allowance was keyed on the EXIT CODE being the Win32
-	 * reason, and `sc.exe` does not work that way. Measured on Windows 11 - `sc start`
-	 * against a running service exits 32 and prints "[SC] StartService FAILED 1056:", and
-	 * `sc stop` against a stopped one exits 38 and prints "[SC] ControlService FAILED 1062:".
-	 * Exit codes 1056 and 1062 therefore never arrived, and switching synchronisation on
-	 * where Windows Time was already up reported a failure for a host already in the
-	 * requested state.
-	 */
-	it('tolerates the state sc actually reports, exit code and all', async () => {
-		const alreadyRunning: CommandRunner = async (cmd, args) => (cmd === 'sc' && args[0] === 'start' ? { kind: 'failed', code: 32, output: '[SC] StartService FAILED 1056:' + CRLF2 + 'An instance of the service is already running.' } : { kind: 'ok', output: '' });
-		expect((await runAll('win32', buildSetNtpEnabledCommands('win32', true, 'none'), alreadyRunning)).success).toBe(true);
-		const alreadyStopped: CommandRunner = async (cmd, args) => (cmd === 'sc' && args[0] === 'stop' ? { kind: 'failed', code: 38, output: '[SC] ControlService FAILED 1062:' + CRLF2 + 'The service has not been started.' } : { kind: 'ok', output: '' });
-		expect((await runAll('win32', buildSetNtpEnabledCommands('win32', false, 'none'), alreadyStopped)).success).toBe(true);
-	});
-
-	it('does not tolerate a different sc failure', async () => {
-		const denied: CommandRunner = async () => ({ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:' + CRLF2 + 'Access is denied.' });
-		expect((await runAll('win32', buildSetNtpEnabledCommands('win32', false, 'none'), denied)).outcome).toBe('permission-denied');
-	});
-});
-
 describe('setSystemNtpEnabled', () => {
 	/** Run `body` with `process.platform` reporting the given host. */
 	async function onPlatform(platform: string, body: () => Promise<void>): Promise<void> {
@@ -724,14 +194,11 @@ describe('setSystemNtpEnabled', () => {
 		return async () => statusFixture({ ntpEnabled: read++ === 0 ? !enabled : enabled });
 	}
 
-	/** A Windows host whose time source this application configured itself. */
-	const ourWindowsHost = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone' });
-
 	it('reports success once every step has succeeded', async () => {
 		await onPlatform('linux', async () => {
 			const { exec, calls } = fakeRunner([]);
 			expect(await setSystemNtpEnabled(true, settlesTo(true), exec)).toEqual({ success: true, outcome: 'ok', message: null });
-			expect(calls).toEqual(['timedatectl set-ntp true']);
+			expect(calls).toEqual(['enabled true']);
 		});
 	});
 
@@ -745,121 +212,16 @@ describe('setSystemNtpEnabled', () => {
 	 * A virtual clock for the settle wait, so a test that deliberately never settles runs
 	 * its whole fifteen-second budget without spending fifteen seconds.
 	 */
-	function instantSettle(): { pause: (ms: number) => Promise<void>; now: () => number } {
-		let elapsed = 0;
-		return {
-			pause: async ms => {
-				elapsed += ms;
-			},
-			now: () => elapsed,
-		};
-	}
 
-	it('does not report success when synchronisation did not actually come up', async () => {
-		await onPlatform('linux', async () => {
-			const { exec, calls } = fakeRunner([]);
-			const stuck = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: false });
-			const clock = instantSettle();
-			const outcome = await setSystemNtpEnabled(true, stuck, exec, undefined, undefined, clock.pause, clock.now);
-			expect(outcome).toMatchObject({ success: false, outcome: 'error' });
-			expect(outcome.message).toContain('still off');
-			expect(calls).toEqual(['timedatectl set-ntp true']);
-		});
-	});
-
-	/** An unreadable state stays unreadable; only a definite opposite is a failure. */
-	it('does not call an unreadable state a failed toggle', async () => {
-		await onPlatform('linux', async () => {
-			const { exec } = fakeRunner([]);
-			const unknown = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: null });
-			const clock = instantSettle();
-			expect(await setSystemNtpEnabled(true, unknown, exec, undefined, undefined, clock.pause, clock.now)).toEqual({ success: true, outcome: 'ok', message: null });
-		});
-	});
-
-	/**
-	 * The masking this used to do. A re-read afterwards saw `ntpEnabled` matching the
-	 * request and rewrote the whole thing to `ok`, so a step that genuinely refused —
-	 * here the one that carries the change — was reported to the user as saved.
-	 */
 	it('does not turn a refused step into a success because the state happens to match', async () => {
 		await onPlatform('linux', async () => {
 			const { exec } = fakeRunner([{ kind: 'failed', code: 1, output: 'Failed to set ntp: something went wrong\n' }]);
 			// The host reads back exactly as requested, which is what used to erase the error.
 			const readsAsEnabled = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: true });
-			const clock = instantSettle();
-			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec, undefined, undefined, clock.pause, clock.now);
+			const r = await setSystemNtpEnabled(true, readsAsEnabled, exec);
 			expect(r.success).toBe(false);
 			expect(r.outcome).toBe('error');
 			expect(r.message).toBe('Failed to set ntp: something went wrong');
-		});
-	});
-
-	/**
-	 * The bug this exists for, measured on arm64 Ubuntu 24.04 with systemd-timesyncd
-	 * running: `timedatectl set-ntp false` returns as soon as timedated ACCEPTS the
-	 * request, and the flag flips a moment later. A single immediate read still answered
-	 * `NTP=yes`, so a write that had worked was reported as "the host accepted the request
-	 * but synchronisation is still on" - and the very next call succeeded. Only real
-	 * hardware shows it: in a container the service can never start, so the flag never
-	 * flips and the same branch is right.
-	 */
-	it('waits for the flag to catch up instead of failing the write that set it', async () => {
-		await onPlatform('linux', async () => {
-			const { exec } = fakeRunner([]);
-			let reads = 0;
-			// Still the old value for the first few polls, exactly as timedated behaves.
-			const lagging = async (): Promise<SystemTimeStatus> => statusFixture({ ntpEnabled: ++reads < 4 });
-			const clock = instantSettle();
-			expect(await setSystemNtpEnabled(false, lagging, exec, undefined, undefined, clock.pause, clock.now)).toEqual({ success: true, outcome: 'ok', message: null });
-			expect(reads).toBe(4);
-		});
-	});
-
-	it('still gives up on a flag that never catches up', async () => {
-		await onPlatform('linux', async () => {
-			const { exec } = fakeRunner([]);
-			let reads = 0;
-			const stuck = async (): Promise<SystemTimeStatus> => {
-				reads++;
-				return statusFixture({ ntpEnabled: true });
-			};
-			const clock = instantSettle();
-			const outcome = await setSystemNtpEnabled(false, stuck, exec, undefined, undefined, clock.pause, clock.now);
-			expect(outcome).toMatchObject({ success: false, outcome: 'error', changed: true });
-			expect(outcome.message).toContain('still on');
-			// Bounded: 15 s of 250 ms polls, not an endless wait.
-			expect(reads).toBeGreaterThan(50);
-			expect(clock.now()).toBe(15000);
-		});
-	});
-
-	it('keeps a failed windows resync visible even though the service did start', async () => {
-		await onPlatform('win32', async () => {
-			// Keyed on the command rather than on a queue: the exact step list depends on
-			// the mode this host's registry reports, and only the resync matters here.
-			const calls: string[] = [];
-			const exec: CommandRunner = async (cmd, args) => {
-				const line = [cmd, ...args].join(' ');
-				calls.push(line);
-				return line === 'w32tm /resync' ? { kind: 'ok', output: 'The computer did not resync because no time data was available. (0x800705B4)\r\n' } : { kind: 'ok', output: '' };
-			};
-			const r = await setSystemNtpEnabled(true, capable, exec, ourWindowsHost, async () => true);
-			expect(r.success).toBe(false);
-			expect(r.outcome).toBe('error');
-			expect(calls).toContain('w32tm /resync');
-			expect(calls[0]).toBe('sc config w32time start= delayed-auto');
-		});
-	});
-
-	/** Still tolerated, but at the source: `sc` exits 1056 when the service is already up. */
-	it('still carries on past a service that was already in the requested state', async () => {
-		await onPlatform('win32', async () => {
-			const { exec } = fakeRunner([
-				{ kind: 'ok', output: '' },
-				{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n' },
-			]);
-			expect((await setSystemNtpEnabled(true, capable, exec, ourWindowsHost, async () => true)).success).toBe(true);
 		});
 	});
 
@@ -936,62 +298,6 @@ describe('setSystemNtpServer', () => {
 
 	const capable = async (): Promise<SystemTimeStatus> => statusFixture();
 
-	it('does not enable synchronization or resync when configuring a running NoSync service', async () => {
-		await onPlatform('win32', async () => {
-			const { exec, calls } = fakeRunner([]);
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'none', start: 'automatic', membership: 'standalone', service: 'running' });
-			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
-		});
-	});
-	it('does not force a resync while synchronisation is configured off', async () => {
-		await onPlatform('win32', async () => {
-			const { exec, calls } = fakeRunner([]);
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' });
-			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
-		});
-	});
-
-	/**
-	 * The regression these four cover: the notification used to be conditional on SEEING
-	 * the service run, and every state that is not a definite `running` - a refused read, a
-	 * service still starting, a service still stopping - was read as "stopped, nothing to
-	 * notify". A service that was in fact running was then never told about the new peer and
-	 * kept using the old one, while the save reported success.
-	 *
-	 * `/update` is now sent whatever the state, and forgiven when there turns out to be no
-	 * service to receive it, so none of these states can decide it wrongly any more.
-	 */
-	it.each(['unreadable', 'changing', 'running', 'stopped'] as const)('notifies the service whatever its state reads as: %s', async service => {
-		await onPlatform('win32', async () => {
-			const { exec, calls } = fakeRunner([]);
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', service });
-			expect((await setSystemNtpServer('ntp.example.org', capable, mode, exec)).success).toBe(true);
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update', 'w32tm /resync']);
-		});
-	});
-	it('reports the refusal w32tm gives an unprivileged caller, not a made-up reason', async () => {
-		await onPlatform('win32', async () => {
-			// What a standard user actually gets: exit 5 and w32tm's own access-denied line.
-			const exec: CommandRunner = async () => ({ kind: 'failed', code: 5, output: 'The following error occurred: Access is denied. (0x80070005)' });
-			const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'on-demand', membership: 'standalone', service: 'unreadable' });
-			const outcome = await setSystemNtpServer('ntp.example.org', capable, mode, exec);
-			expect(outcome.outcome).toBe('permission-denied');
-			expect(outcome.message).toContain('Access is denied');
-		});
-	});
-	it('writes the peer list on a host whose time source is ours', async () => {
-		await onPlatform('win32', async () => {
-			const { exec, calls } = fakeRunner([]);
-			const ours = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' });
-			expect((await setSystemNtpServer('ntp.example.org', capable, ours, exec)).success).toBe(true);
-			// Synchronisation is configured off, so no resync is forced; the notification goes
-			// out anyway and costs nothing when there is no service to receive it.
-			expect(calls).toEqual(['w32tm /config /manualpeerlist:ntp.example.org,0x8 /update']);
-		});
-	});
-
 	/**
 	 * This check did not exist at all: the write went off the capability in the status and
 	 * never looked at the mode, so a domain member could have its peer list and sync flags
@@ -1026,132 +332,6 @@ describe('setSystemNtpServer', () => {
 			expect((await setSystemNtpServer('ntp.example.org', capable, forestRootPdc, exec)).outcome).toBe('unsupported');
 			expect(calls).toEqual([]);
 		});
-	});
-});
-
-describe('runAll', () => {
-	const DISABLE: SystemCommand[] = buildSetNtpEnabledCommands('win32', false);
-
-	it('succeeds only once every command has exited 0', async () => {
-		const { exec, calls } = fakeRunner([
-			{ kind: 'ok', output: '' },
-			{ kind: 'ok', output: '[SC] ChangeServiceConfig SUCCESS\r\n' },
-		]);
-		expect(await runAll('win32', DISABLE, exec)).toEqual({ success: true, outcome: 'ok', message: null });
-		expect(calls).toEqual(['sc stop w32time', 'sc config w32time start= disabled']);
-	});
-
-	it('stops at the first failure and reports it as a denial with its first output line', async () => {
-		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n\r\nAccess is denied.\r\n' }]);
-		expect(await runAll('win32', DISABLE, exec)).toEqual({ success: false, outcome: 'permission-denied', message: '[SC] OpenService FAILED 5:', changed: false, stateMayHaveChanged: true, steps: [{ command: 'sc stop w32time', ok: false }] });
-		expect(calls).toEqual(['sc stop w32time']);
-	});
-
-	it('carries on past a step that only failed because it had nothing to do', async () => {
-		// `sc start` exits 1056 when the service is already up. Aborting there would skip
-		// the /config step that clears a NoSync sync type, and enabling would report a
-		// failure on a host it could have fixed.
-		const { exec, calls } = fakeRunner([
-			{ kind: 'ok', output: '' },
-			{ kind: 'failed', code: 1056, output: '[SC] StartService FAILED 1056:\r\n\r\nAn instance of the service is already running.\r\n' },
-		]);
-		expect(await runAll('win32', buildSetNtpEnabledCommands('win32', true, 'none'), exec)).toEqual({ success: true, outcome: 'ok', message: null });
-		expect(calls).toEqual(['sc config w32time start= delayed-auto', 'sc start w32time', 'w32tm /config /syncfromflags:manual /update', 'w32tm /resync']);
-	});
-
-	/**
-	 * The failure that used to look like "nothing happened": the service is already down
-	 * and its start mode is already changed by the time the next step refuses. A caller
-	 * that shows the old state after this is showing something the host no longer is.
-	 */
-	it('reports what a sequence already applied before it stopped', async () => {
-		const { exec } = fakeRunner([
-			{ kind: 'ok', output: '' },
-			{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' },
-		]);
-		const r = await runAll('win32', DISABLE, exec);
-		expect(r.success).toBe(false);
-		expect(r.changed).toBe(true);
-		expect(r.stateMayHaveChanged).toBe(true);
-		expect(r.steps).toEqual([
-			{ command: 'sc stop w32time', ok: true },
-			{ command: 'sc config w32time start= disabled', ok: false },
-		]);
-	});
-
-	/** A step tolerated by its benign code still counts as run, so it is reported as such. */
-	it('counts a tolerated step among the ones that ran', async () => {
-		const { exec } = fakeRunner([
-			{ kind: 'failed', code: 1062, output: '[SC] ControlService FAILED 1062:\r\n' },
-			{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' },
-		]);
-		const r = await runAll('win32', DISABLE, exec);
-		expect(r.changed).toBe(true);
-		expect(r.steps?.map(step => step.ok)).toEqual([true, false]);
-	});
-
-	it('still reports a real refusal on a step whose benign code did not match', async () => {
-		const { exec, calls } = fakeRunner([{ kind: 'failed', code: 5, output: '[SC] OpenService FAILED 5:\r\n' }]);
-		expect((await runAll('win32', DISABLE, exec)).outcome).toBe('permission-denied');
-		expect(calls).toEqual(['sc stop w32time']);
-	});
-
-	it('reports a missing binary as unsupported, naming it', async () => {
-		const { exec } = fakeRunner([{ kind: 'missing' }]);
-		// A binary that does not exist never ran, so nothing on the host can have moved.
-		expect(await runAll('linux', buildSetNtpEnabledCommands('linux', true), exec)).toEqual({ success: false, outcome: 'unsupported', message: 'timedatectl is not installed', changed: false, stateMayHaveChanged: false, steps: [{ command: 'timedatectl set-ntp true', ok: false }] });
-	});
-
-	it('reports a wedged command as a transient error, never as an absence', async () => {
-		const { exec } = fakeRunner([{ kind: 'timeout' }]);
-		// A killed command DID start, so it may have applied part of its change.
-		expect(await runAll('linux', buildSetNtpEnabledCommands('linux', true), exec)).toEqual({ success: false, outcome: 'error', message: 'timedatectl timed out', changed: false, stateMayHaveChanged: true, steps: [{ command: 'timedatectl set-ntp true', ok: false }] });
-	});
-
-	it('falls back to the exit code when the command said nothing', async () => {
-		const { exec } = fakeRunner([{ kind: 'failed', code: 9009, output: '   \n' }]);
-		expect(await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'] }], exec)).toEqual({ success: false, outcome: 'error', message: 'w32tm exited with 9009', changed: false, stateMayHaveChanged: true, steps: [{ command: 'w32tm /resync', ok: false }] });
-	});
-
-	/**
-	 * The case an exit-code check alone gets wrong. `w32tm` prints the HRESULT of a
-	 * refusal and returns zero anyway, so without reading the output a refused `/resync`
-	 * is reported to the user as a saved setting.
-	 */
-	it('fails a w32tm step that printed an HRESULT and still exited 0', async () => {
-		const { exec, calls } = fakeRunner([
-			{ kind: 'ok', output: '' },
-			{ kind: 'ok', output: 'The computer did not resync because no time data was available.\r\n0x80070005\r\n' },
-		]);
-		const r = await runAll('win32', buildSetNtpServerCommands('win32', 'ntp.example.org', true), exec);
-		expect(r.success).toBe(false);
-		expect(r.outcome).toBe('permission-denied');
-		expect(r.message).toBe('The computer did not resync because no time data was available.');
-		expect(calls).toHaveLength(2);
-	});
-
-	it('reads the HRESULT rather than the localized sentence around it', async () => {
-		const { exec } = fakeRunner([{ kind: 'ok', output: 'Pocitac se nesynchronizoval, protoze nebyla k dispozici zadna data. (0x800705B4)\r\n' }]);
-		const r = await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE }], exec);
-		expect(r.success).toBe(false);
-		expect(r.outcome).toBe('error');
-	});
-
-	it('does not mistake the identifiers a healthy w32tm prints for a failure', async () => {
-		// ReferenceId and the poll interval carry hex and digits but no 0x8 HRESULT.
-		const { exec } = fakeRunner([{ kind: 'ok', output: W32TM_STATUS }]);
-		expect((await runAll('win32', [{ cmd: 'w32tm', args: ['/resync'], failOnOutput: W32TM_ERROR_RE }], exec)).success).toBe(true);
-	});
-
-	it('leaves a command without an output check judged on its exit code alone', async () => {
-		const { exec } = fakeRunner([{ kind: 'ok', output: 'mentions 0x80070005 but is not checked' }]);
-		expect((await runAll('win32', [{ cmd: 'sc', args: ['query', 'w32time'] }], exec)).success).toBe(true);
-	});
-
-	it('runs nothing and reports unsupported when the platform yields no command', async () => {
-		const { exec, calls } = fakeRunner([]);
-		expect(await runAll('win32', buildSetTimezoneCommands('win32', 'Europe/Prague', null), exec)).toEqual({ success: false, outcome: 'unsupported', message: 'no command available for this platform' });
-		expect(calls).toEqual([]);
 	});
 });
 
@@ -1193,7 +373,7 @@ describe('the write lock covers every writer', () => {
 
 	/** The zone is what a clock reading is interpreted against, so it belongs in the same queue. */
 	it('holds a timezone set behind another write', async () => {
-		const refused: CommandRunner = async () => ({ kind: 'failed', code: 1, output: 'refused' });
+		const refused: TimeOperationRunner = async () => ({ success: false, outcome: 'error', message: 'refused' });
 		expect(await waitsForTheLock(() => setSystemTimezone(listSystemTimezones()[0]!, refused))).toBe(true);
 	});
 
@@ -1500,48 +680,10 @@ it('keeps an authoritative fixed OS offset instead of recomputing it from an IAN
 });
 
 describe.if(process.platform === 'win32')('Windows timezone preference preservation', () => {
-	it('keeps disabled daylight saving when selecting a timezone', async () => {
-		const original = process.env['TZ'];
-		try {
-			const { exec, calls } = fakeRunner([]);
-			const result = await setSystemTimezone('Europe/Prague', exec, () => ({ windowsId: 'Central Europe Standard Time', utcOffsetMinutes: 60, daylightDisabled: true }));
-			expect(result.success).toBe(true);
-			expect(calls).toHaveLength(1);
-			expect(calls[0]).toEndWith('_dstoff');
-		} finally {
-			if (original === undefined) delete process.env['TZ'];
-			else process.env['TZ'] = original;
-		}
-	});
 	it('does not change a timezone when its current daylight preference cannot be read', async () => {
 		const { exec, calls } = fakeRunner([]);
 		const result = await setSystemTimezone('Europe/Prague', exec, () => null);
 		expect(result.success).toBe(false);
 		expect(calls).toEqual([]);
-	});
-	/**
-	 * The status no longer supplies a date at all, which is what this used to assert. It was
-	 * the right date for the moment it was READ and the wrong one for the moment the command
-	 * ran: `Set-Date -Date` writes the date too, and a read at 23:59:59 with a write at
-	 * 00:00:01 put the clock a day back. So the requirement is now the opposite - the argv
-	 * must carry the requested time and no date whatsoever, whatever the status says.
-	 */
-	it('sends a manual clock write without any date the status could have staled', async () => {
-		const { exec, calls } = fakeRunner([]);
-		const status = statusFixture({ nowMs: Date.UTC(2026, 6, 1, 22, 30), utcOffsetMinutes: 60, timezoneOffsetMode: 'fixed' });
-		// The write-time state is injected too. Left to the real host, this case now depends on
-		// whether the machine running the tests has synchronisation on - which the refusal
-		// below correctly objects to, and which has nothing to do with what is asserted here.
-		const result = await setSystemClock(
-			12,
-			0,
-			0,
-			async () => status,
-			exec,
-			async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })
-		);
-		expect(result.success).toBe(true);
-		expect(calls[0]).toContain('Get-Date -Hour 12 -Minute 0 -Second 0 -Millisecond 0');
-		expect(calls[0]).not.toMatch(/\d{4}-\d{2}-\d{2}/);
 	});
 });

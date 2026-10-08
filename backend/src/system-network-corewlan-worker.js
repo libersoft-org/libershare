@@ -1,49 +1,16 @@
-// Plain JavaScript: Bun copies file assets into compiled binaries without transpiling imports.
-import { CString, dlopen, linkSymbols, FFIType, ptr, read, toArrayBuffer } from 'bun:ffi';
+import { ptr, read, toArrayBuffer } from 'bun:ffi';
+import { ObjectiveC } from './native/darwin/objc.ts';
 import { isMainThread } from 'node:worker_threads';
+import { coreWlanAssociationMatches, coreWlanDisconnected, coreWlanInterfaceState, coreWlanNamesVisible, coreWlanScanRows, coreWlanSecurityType, selectCoreWlanTarget } from './system-network-corewlan-rows.js';
 
-/** Mixed CoreWLAN enums also match a single constituent; inspect WPA versions individually. */
-export function coreWlanSecurityType(supported) {
-	if ([1, 6, 7, 9, 12, 14, 15].some(type => supported.includes(type))) return -1;
-	if (supported.includes(11)) return supported.includes(4) ? 13 : 11;
-	if (supported.includes(4)) return supported.includes(2) ? 3 : 4;
-	if (supported.includes(2)) return 2;
-	return supported.includes(0) ? 0 : -1;
-}
+export { coreWlanAssociationMatches, coreWlanDisconnected, coreWlanInterfaceState, coreWlanNamesVisible, coreWlanScanRows, coreWlanSecurityType, selectCoreWlanTarget };
 
-/** Reject every ambiguous scan before choosing the strongest access point of the requested network. */
-export function selectCoreWlanTarget(networks, ssidHex, securityType, bssid = null) {
-	const targets = bssid === null ? networks : networks.filter(network => network.bssid?.toLowerCase() === bssid.toLowerCase());
-	if (!targets.length) throw new Error('macOS Wi-Fi network is no longer available');
-	if (bssid !== null && targets.length !== 1) throw new Error('macOS Wi-Fi access point identity is ambiguous');
-	for (const network of targets) {
-		if (network.ssidHex !== ssidHex) throw new Error('macOS cannot identify the requested Wi-Fi network');
-		if (network.securityType !== securityType) throw new Error('macOS Wi-Fi security changed or the network name is ambiguous');
-	}
-	return targets.reduce((best, item) => (item.signal > best.signal ? item : best)).network;
-}
-
-/** CoreWLAN's returned bytes prove access in this bundle; helper CoreLocation status can describe a different identity. */
-export function coreWlanNamesVisible(current, networks = []) {
-	return current.powerOn && (!!current.ssidHex || networks.some(network => !!network.ssidHex));
-}
-
-/** Mixed scan modes permit either secured constituent, never a downgrade to open. */
-export function coreWlanAssociationMatches(actual, ssidHex, bssid, securityType) {
-	const allowed = securityType === 3 ? [2, 3, 4] : securityType === 13 ? [4, 11, 13] : [securityType];
-	return actual.ssidHex === ssidHex && (bssid === null || actual.bssid === bssid) && allowed.includes(actual.securityType);
-}
-
-const SECURITY_LABELS = { 0: '', 2: 'WPA Personal', 3: 'WPA/WPA2 Personal', 4: 'WPA2 Personal', 11: 'WPA3 Personal', 13: 'WPA2/WPA3 Personal' };
+/** Last proven name access per interface; the pooled reader keeps it between reads. */
+const namesVisible = new Map();
 
 /** Shared phase: preparing 0 -> mutating 1 competes atomically with parent cancellation 2. */
 export function beginCoreWlanMutation(phase) {
 	if (Atomics.compareExchange(phase, 0, 0, 1) !== 0) throw new Error('macOS Wi-Fi operation was cancelled before the network change');
-}
-
-/** Hidden SSIDs alone cannot prove disconnection; station mode must also have ended. */
-export function coreWlanDisconnected(current) {
-	return current.interfaceMode === 0 && !current.ssidHex && !current.bssid;
 }
 
 export function disconnectCoreWlanInterface(phase, disconnect, snapshot) {
@@ -59,102 +26,19 @@ export function disconnectCoreWlanInterface(phase, disconnect, snapshot) {
 	throw new Error('macOS did not confirm Wi-Fi disconnection');
 }
 
-function signalQuality(rssi) {
-	return rssi === 0 ? null : Math.max(0, Math.min(100, 2 * (rssi + 100)));
-}
-
-export function coreWlanInterfaceState(snapshot, namesVisible) {
-	return {
-		device: snapshot.device,
-		configurable: namesVisible && snapshot.powerOn,
-		wifi: {
-			ssid: namesVisible && snapshot.powerOn && snapshot.ssidHex ? Buffer.from(snapshot.ssidHex, 'hex').toString('utf8') : null,
-			signal: snapshot.powerOn ? signalQuality(snapshot.signal) : null,
-			radio: snapshot.powerOn ? 'on' : 'off',
-		},
-	};
-}
-
-/** Retain raw identities and never offer a join that the current-SSID guard must reject. */
-export function coreWlanScanRows(networks, current) {
-	return networks
-		.filter(network => network.ssidHex)
-		.map(network => {
-			const ssid = Buffer.from(network.ssidHex, 'hex').toString('utf8');
-			const alreadyJoined = network.ssidHex === current.ssidHex;
-			const active = network.bssid === current.bssid && coreWlanAssociationMatches(current, network.ssidHex, network.bssid, network.securityType);
-			const unsupportedName = ssid.includes('\0');
-			return {
-				ssid,
-				ssidHex: network.ssidHex,
-				bssid: network.bssid,
-				signal: signalQuality(network.signal),
-				secured: network.securityType !== 0,
-				security: SECURITY_LABELS[network.securityType] ?? 'Unsupported',
-				supported: network.securityType >= 0,
-				connectable: !alreadyJoined && !unsupportedName,
-				...(alreadyJoined ? { unavailableReason: 'This interface is already connected to this SSID' } : unsupportedName ? { unavailableReason: 'This SSID contains a NUL character and cannot be selected' } : {}),
-				active,
-			};
-		})
-		.sort((left, right) => (right.signal ?? -1) - (left.signal ?? -1));
-}
-
 function run(request) {
 	if (process.platform !== 'darwin') throw new Error('CoreWLAN is only available on macOS');
-	const objc = dlopen('/usr/lib/libobjc.A.dylib', {
-		objc_getClass: { args: [FFIType.ptr], returns: FFIType.ptr },
-		sel_registerName: { args: [FFIType.ptr], returns: FFIType.ptr },
-		objc_autoreleasePoolPush: { args: [], returns: FFIType.ptr },
-		objc_autoreleasePoolPop: { args: [FFIType.ptr], returns: FFIType.void },
-	});
-	// Tagged NSString pointers use all 64 bits; bun:ffi pointer Numbers would truncate them.
-	// Objective-C objects cross the FFI boundary as u64 BigInts, with method-specific returns.
-	const loader = dlopen('/usr/lib/libSystem.B.dylib', {
-		dlopen: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
-		dlsym: { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.ptr },
-		dlclose: { args: [FFIType.ptr], returns: FFIType.i32 },
-	});
-	const objcPath = Buffer.from('/usr/lib/libobjc.A.dylib\0');
-	const messageName = Buffer.from('objc_msgSend\0');
-	const handle = loader.symbols.dlopen(ptr(objcPath), 2);
-	const message = loader.symbols.dlsym(handle, ptr(messageName));
-	const calls = linkSymbols({
-		object: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.u64 },
-		objectArg: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
-		scan: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.ptr], returns: FFIType.u64 },
-		data: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
-		integer: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.i64_fast },
-		flag: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.bool },
-		supports: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.i64], returns: FFIType.bool },
-		disconnect: { ptr: message, args: [FFIType.u64, FFIType.ptr], returns: FFIType.void },
-		join: { ptr: message, args: [FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.u64, FFIType.ptr], returns: FFIType.bool },
-	});
-	const frameworkPath = Buffer.from('/System/Library/Frameworks/CoreWLAN.framework/CoreWLAN\0');
-	const framework = loader.symbols.dlopen(ptr(frameworkPath), 2);
-	if (!framework) throw new Error('macOS Wi-Fi framework is unavailable');
-	const pool = objc.symbols.objc_autoreleasePoolPush();
-	const buffers = [];
-	const cString = value => {
-		const buffer = Buffer.from(value + '\0', 'utf8');
-		buffers.push(buffer);
-		return ptr(buffer);
-	};
-	const selector = name => objc.symbols.sel_registerName(cString(name));
-	const klass = name => {
-		const result = objc.symbols.objc_getClass(cString(name));
-		if (!result) throw new Error('macOS Wi-Fi framework is unavailable');
-		return result;
-	};
-	const string = value => calls.symbols.objectArg(klass('NSString'), selector('stringWithUTF8String:'), cString(value));
-	const get = (object, name) => calls.symbols.object(object, selector(name));
-	const integer = (object, name) => Number(calls.symbols.integer(object, selector(name)));
-	const flag = (object, name) => calls.symbols.flag(object, selector(name));
-	const text = object => {
-		if (!object) return null;
-		const address = get(object, 'UTF8String');
-		return address ? new CString(Number(address)).toString() : null;
-	};
+	const objc = new ObjectiveC('CoreWLAN');
+	const calls = objc.calls;
+	const buffers = objc.buffers;
+	const selector = name => objc.selector(name);
+	const klass = name => objc.klass(name);
+	const string = value => objc.string(value);
+	const get = (object, name) => objc.get(BigInt(object), name);
+	const integer = (object, name) => objc.integer(BigInt(object), name);
+	const flag = (object, name) => objc.flag(BigInt(object), name);
+	const text = object => objc.text(BigInt(object));
+
 	const errorBuffer = new BigUint64Array(1);
 	const nativeError = operation => {
 		const error = read.ptr(ptr(errorBuffer));
@@ -216,7 +100,10 @@ function run(request) {
 						// A refused scan leaves name access unknown; the radio state is still valid.
 					}
 				}
-				if (current.device) result.push(coreWlanInterfaceState(current, coreWlanNamesVisible(current, networks)));
+				if (!current.device) continue;
+				const visible = coreWlanNamesVisible(current, networks, namesVisible.get(current.device));
+				namesVisible.set(current.device, visible);
+				result.push(coreWlanInterfaceState(current, visible));
 			}
 			return result;
 		}
@@ -251,25 +138,25 @@ function run(request) {
 		const selected = candidates.find(candidate => candidate.network === network);
 		if (!coreWlanAssociationMatches(actual, ssidHex, selected.bssid, securityType)) throw new Error('macOS did not connect to the requested Wi-Fi network with the requested security');
 	} finally {
-		objc.symbols.objc_autoreleasePoolPop(pool);
-		for (const buffer of buffers) buffer.fill(0);
-		calls.close();
-		loader.symbols.dlclose(framework);
 		objc.close();
-		loader.symbols.dlclose(handle);
-		loader.close();
 	}
 }
 
 if (!isMainThread)
 	self.onmessage = event => {
+		if (event.data.operation === 'close') {
+			self.postMessage({ closed: true });
+			return;
+		}
+		let response;
 		try {
-			self.postMessage({ result: run(event.data) });
+			response = { result: run(event.data) };
 		} catch (error) {
 			const password = event.data.password;
 			const message = error instanceof Error ? error.message : 'macOS Wi-Fi operation failed';
-			self.postMessage({ error: password ? message.split(password).join('[redacted]') : message });
+			response = { error: password ? message.split(password).join('[redacted]') : message };
 		} finally {
 			event.data.password = '';
 		}
+		self.postMessage({ ...response, settled: true });
 	};

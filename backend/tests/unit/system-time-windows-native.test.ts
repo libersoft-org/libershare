@@ -3,6 +3,9 @@ import { resolve } from 'node:path';
 import { setTimeout as scheduleTimeout, clearTimeout as cancelTimeout } from 'node:timers';
 import { getSystemTimeStatus, setSystemClock } from '../../src/system-time.ts';
 import { parseWindowsServiceRunning, parseWindowsServiceState, parseWindowsTimeZone, readWindowsTimeServiceRunning, readWindowsTimeZone, readWindowsStatus, windowsClockRefusal, windowsServiceRunning, type WindowsModeState } from '../../src/system-time-windows.ts';
+import type { WindowsTimeSnapshot } from '../../src/native/win32/time-state.ts';
+
+const statusSnapshot = async (): Promise<WindowsTimeSnapshot> => ({ registry: { server: null }, synchronized: null }) as WindowsTimeSnapshot;
 
 function zoneBuffer(disabled = false): Uint8Array {
 	const bytes = new Uint8Array(432);
@@ -57,13 +60,15 @@ describe('SCM read handle lifetime', () => {
 		async mode => {
 			const script = `
 			import {mock} from 'bun:test';
+			Object.defineProperty(process,'platform',{value:'win32'});
 			const ffi=await import('bun:ffi');const calls=[];
 			mock.module('bun:ffi',()=>({...ffi,dlopen:()=>({symbols:{
+				GetSystemDirectoryW:(buffer)=>{const bytes=Buffer.from('C:/Windows/System32\\0','utf16le');new Uint8Array(ffi.toArrayBuffer(buffer,0,bytes.length)).set(bytes);return bytes.length/2-1;},
 				OpenSCManagerW:(_machine,_database,access)=>{calls.push(['manager',access]);return 1n;},
 				OpenServiceW:(_manager,_name,access)=>{calls.push(['service',access]);return ${JSON.stringify(mode)}==='open-failed'?0n:2n;},
 				QueryServiceStatusEx:(_service,level,buffer,size)=>{calls.push(['query',level,size]);new DataView(ffi.toArrayBuffer(buffer,0,size)).setUint32(4,${JSON.stringify(mode)}==='running'?4:1,true);return ${JSON.stringify(mode)}==='query-failed'?0:1;},
 				CloseServiceHandle:handle=>{calls.push(['close',Number(handle)]);return 1;},
-			}})}));
+			},close:()=>{}})}));
 			const {readWindowsTimeServiceRunning}=await import('./src/system-time-windows.ts');
 			console.log(JSON.stringify({running:readWindowsTimeServiceRunning(),calls}));
 		`;
@@ -103,7 +108,8 @@ describe('SCM read handle lifetime', () => {
 it('does not offer clock or timezone writes when the native timezone read failed', async () => {
 	const status = await readWindowsStatus(
 		() => null,
-		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' })
+		async () => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'stopped' }),
+		statusSnapshot
 	);
 	expect(status.capabilities.setClock).toBe(false);
 	expect(status.capabilities.setTimezone).toBe(false);
@@ -116,7 +122,7 @@ it('does not offer clock or timezone writes when the native timezone read failed
 		async () => assembled,
 		async () => {
 			commands++;
-			return { kind: 'ok', output: '' };
+			return { success: true, outcome: 'ok', message: null };
 		}
 	);
 	expect(result.success).toBe(false);
@@ -133,7 +139,8 @@ it('does not offer clock or timezone writes when the native timezone read failed
 it('still offers the clock when the service state could not be read', async () => {
 	const status = await readWindowsStatus(
 		() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }),
-		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'unreadable' })
+		async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'automatic', membership: 'standalone', service: 'unreadable' }),
+		statusSnapshot
 	);
 	expect(status.capabilities.setClock).toBe(true);
 });
@@ -146,7 +153,7 @@ it('still offers the clock when the service state could not be read', async () =
  */
 it('offers the clock facility but refuses the write while a disabled-policy service still runs', async () => {
 	const mode = async (): Promise<WindowsModeState> => ({ mode: 'manual', start: 'disabled', membership: 'standalone', service: 'running' });
-	const status = await readWindowsStatus(() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }), mode);
+	const status = await readWindowsStatus(() => ({ windowsId: 'UTC', utcOffsetMinutes: 0, daylightDisabled: true }), mode, statusSnapshot);
 	expect(status.ntpEnabled).toBe(false);
 	expect(status.capabilities.setClock).toBe(true);
 	expect(windowsClockRefusal(await mode())).toContain('would overwrite a hand-set clock');

@@ -1,6 +1,9 @@
-import { type SystemCommand, processTimezone, listSystemTimezones, tryRead, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
+import { loadSystemLibrary } from './native/library.ts';
+import { processTimezone, listSystemTimezones, type PlatformStatus, windowsSystemLibraryPath } from './system-time-common.ts';
 
-import { dlopen, FFIType, ptr } from 'bun:ffi';
+import { FFIType, ptr } from 'bun:ffi';
+import { readWindowsTimeSnapshotAsync } from './native/win32/time-reader.ts';
+import type { WindowsTimeSnapshot } from './native/win32/time-state.ts';
 
 /**
  * Windows time policy and native readers. ICU, registry, SCM and timezone APIs avoid
@@ -49,7 +52,7 @@ let icu: Icu | null | undefined;
 function getIcu(): Icu | null {
 	if (icu === undefined) {
 		try {
-			const lib = dlopen(windowsSystemLibraryPath('icu.dll'), {
+			const lib = loadSystemLibrary('icu.dll', {
 				ucal_getWindowsTimeZoneID: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
 			});
 			icu = lib.symbols as unknown as Icu;
@@ -135,7 +138,7 @@ let advapi32: Advapi32 | null | undefined;
 function getAdvapi32(): Advapi32 | null {
 	if (advapi32 === undefined) {
 		try {
-			const lib = dlopen(windowsSystemLibraryPath('advapi32.dll'), {
+			const lib = loadSystemLibrary('advapi32.dll', {
 				OpenProcessToken: { args: [FFIType.u64, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				GetTokenInformation: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
 				RegOpenKeyExW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
@@ -279,7 +282,7 @@ let kernel32Handles: Kernel32Handles | null | undefined;
 function getKernel32Handles(): Kernel32Handles | null {
 	if (kernel32Handles === undefined) {
 		try {
-			kernel32Handles = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+			kernel32Handles = loadSystemLibrary('kernel32.dll', {
 				CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
 				GetCurrentProcess: { args: [], returns: FFIType.u64 },
 			}).symbols as unknown as Kernel32Handles;
@@ -337,7 +340,7 @@ let netapi32: Netapi32 | null | undefined;
 function getNetapi32(): Netapi32 | null {
 	if (netapi32 === undefined) {
 		try {
-			const lib = dlopen(windowsSystemLibraryPath('netapi32.dll'), {
+			const lib = loadSystemLibrary('netapi32.dll', {
 				NetGetJoinInformation: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 				NetApiBufferFree: { args: [FFIType.u64], returns: FFIType.i32 },
 			});
@@ -383,12 +386,6 @@ export function probeDomainMembership(): DomainMembership {
 		return 'unknown';
 	}
 }
-
-/** Registry key holding the Windows Time service configuration (NTP peers and sync type). */
-const W32TIME_PARAMS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters';
-
-/** The service key itself, whose `Start` value is the start type (`sc qc` localizes its output). */
-const W32TIME_SERVICE_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time';
 
 /**
  * The NTP client provider's own on/off switch, which Windows keeps SEPARATELY from the
@@ -439,24 +436,6 @@ export const W32TM_ERROR_RE: RegExp = /0x8[0-9A-Fa-f]{7}/;
  * 38. The registry part - the whole persistent change - had succeeded.
  */
 export const W32TM_SERVICE_INACTIVE_RE: RegExp = /0x8007(?:0426|06B5)/i;
-
-/** A `w32tm` step, with the output check that its zero exit code makes necessary. */
-export function w32tm(...args: string[]): SystemCommand {
-	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE };
-}
-
-/**
- * A `w32tm` step whose only job beyond the registry write is to NOTIFY the running
- * service, so "the service is not running" is nothing to report.
- *
- * This is what lets the caller stop asking whether the service is up. The state read
- * cannot answer it reliably anyway - a service that is starting or stopping reads as
- * neither - and guessing "stopped" from an unreadable or transitional state is how a
- * running service was left never told about a new peer.
- */
-export function w32tmNotifying(...args: string[]): SystemCommand {
-	return { cmd: 'w32tm', args, failOnOutput: W32TM_ERROR_RE, benignOutput: W32TM_SERVICE_INACTIVE_RE };
-}
 
 /** ERROR_SERVICE_ALREADY_RUNNING — `sc start` against a service that is already up. */
 export const SC_ALREADY_RUNNING = 1056;
@@ -723,16 +702,7 @@ export type WindowsModeReader = () => Promise<WindowsModeState>;
  * source at all, which is not something it can infer from the requested value.
  */
 export async function readWindowsMode(): Promise<WindowsModeState> {
-	const type = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'Type']);
-	const start = await tryRead('reg', ['query', W32TIME_SERVICE_KEY, '/v', 'Start']);
-	// Its own switch, not derivable from Type or from the service: a host can be Type=NTP
-	// with the service up and still not synchronise because this provider is off.
-	const client = await tryRead('reg', ['query', W32TIME_NTP_CLIENT_KEY, '/v', 'Enabled']);
-	const policyManaged = readWindowsPolicyManaged();
-	// Read here rather than by the caller so a write's safety check gets the join state
-	// from the same read it gets the mode from, inside the same lock.
-	const membership = probeDomainMembership();
-	return { mode: parseWindowsSyncMode(type === null ? null : parseRegValue(type, 'Type'), policyManaged), start: parseWindowsStartMode(start), membership, service: readWindowsTimeServiceState(), ntpClientEnabled: parseWindowsNtpClientEnabled(client) };
+	return (await readWindowsTimeSnapshotAsync()).mode;
 }
 
 /**
@@ -772,13 +742,10 @@ export function windowsClockRefusal(state: WindowsModeState): string | null {
 }
 
 /** Read the Windows (W32Time) part of the status. */
-export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | null = readWindowsTimeZone, readMode: WindowsModeReader = readWindowsMode): Promise<PlatformStatus> {
-	// Registry names establish policy; SCM and timezone APIs supply actual runtime state.
-	const params = await tryRead('reg', ['query', W32TIME_PARAMS_KEY, '/v', 'NtpServer']);
-	const status = await tryRead('w32tm', ['/query', '/status']);
-	const { mode, start, membership, ntpClientEnabled } = await readMode();
-	// Sample the native offset after asynchronous reads, near the final clock sample.
-	const zone = readZone();
+export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | null = readWindowsTimeZone, readMode: WindowsModeReader = readWindowsMode, readSnapshot: () => Promise<WindowsTimeSnapshot> = () => readWindowsTimeSnapshotAsync({ synchronization: true })): Promise<PlatformStatus> {
+	const snapshot = await readSnapshot();
+	const { mode, start, membership, ntpClientEnabled } = readMode === readWindowsMode ? snapshot.mode : await readMode();
+	const zone = readZone === readWindowsTimeZone ? snapshot.zone : readZone();
 	// A time source an administrator owns is read-only here, so the UI disables the
 	// controls instead of offering a change that would detach the host from its domain.
 	const ours = windowsSyncIsOurs(mode, membership);
@@ -786,8 +753,8 @@ export async function readWindowsStatus(readZone: () => WindowsTimeZoneState | n
 		timezone: zone?.windowsId ? windowsToIanaTimezone(zone.windowsId) : null,
 		...(zone ? { utcOffsetMinutes: zone.utcOffsetMinutes, timezoneOffsetMode: 'fixed' as const } : {}),
 		ntpEnabled: windowsSyncEnabled(mode, start, ntpClientEnabled),
-		ntpSynchronized: status === null ? null : parseWindowsSyncStatus(status),
-		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(params === null ? null : parseRegValue(params, 'NtpServer')) : null,
+		ntpSynchronized: snapshot.synchronized,
+		ntpServer: mode === 'manual' || mode === 'none' ? parseWindowsNtpServer(snapshot.registry.server) : null,
 		// The CAPABILITY is only "does this host have the facility", which on Windows is the
 		// timezone API answering at all. Whether the clock may be set RIGHT NOW - the sync
 		// service is up, or in motion - is a refusal with its own reason, decided by
@@ -908,7 +875,7 @@ let timezoneApi: WindowsTimezoneApi | null | undefined;
 export function readWindowsTimeZone(): WindowsTimeZoneState | null {
 	if (timezoneApi === undefined) {
 		try {
-			timezoneApi = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
+			timezoneApi = loadSystemLibrary('kernel32.dll', {
 				GetDynamicTimeZoneInformation: { args: [FFIType.ptr], returns: FFIType.u32 },
 			}).symbols as unknown as WindowsTimezoneApi;
 		} catch {

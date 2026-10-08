@@ -1,23 +1,6 @@
 import { readFileSync, readlinkSync } from 'node:fs';
-import { type PlatformStatus, type SystemCommand, tryRead, HOST_OFFSET_COMMAND, parseUtcOffsetMinutes } from './system-time-common.ts';
-
-/** `systemsetup` is not on a default non-root PATH on macOS, so it is always addressed absolutely. */
-export const MAC_SYSTEMSETUP = '/usr/sbin/systemsetup';
-
-/**
- * `systemsetup` refuses every operation, reads included, when it is not run as root —
- * and still EXITS ZERO. Measured on macOS 15.7.4: each of `-settimezone`,
- * `-setnetworktimeserver`, `-setusingnetworktime` and `-settime` printed
- * "You need administrator access to run this tool... exiting!" on stdout and exited 0,
- * changing nothing. Without matching that text every unprivileged write would be
- * reported as a success, so the message is what decides, not the exit code.
- */
-export const MAC_NEEDS_ROOT_RE: RegExp = /administrator access/i;
-
-/** A `systemsetup` write, failing on the refusal it exits zero for. */
-export function macSystemsetup(args: string[]): SystemCommand {
-	return { cmd: MAC_SYSTEMSETUP, args, failOnOutput: MAC_NEEDS_ROOT_RE };
-}
+import type { PlatformStatus } from './system-time-common.ts';
+import { readDarwinTimeStatusAsync } from './native/darwin/time-reader.ts';
 
 /**
  * Pull the value out of a `systemsetup -get...` line (`Network Time Server: time.apple.com`).
@@ -50,9 +33,7 @@ export function parseSystemsetupOnOff(output: string): boolean | null {
  * this an unprivileged backend showed the server field EMPTY - including right after the
  * user had successfully saved one through the privileged helper.
  *
- * The synchronisation flag has no such source: `/var/db/timed` is `drwxr-x--- _timed` and
- * `/Library/Preferences/com.apple.timed.plist` does not exist, so `ntpEnabled` stays
- * unknown below root and the screen says so.
+ * The synchronization flag is read separately through CoreTime, including below root.
  */
 const MAC_NTP_CONF = '/etc/ntp.conf';
 
@@ -110,30 +91,7 @@ export function readMacLocaltimeZone(path: string = MAC_LOCALTIME): string | nul
 	}
 }
 
-/** Read the macOS (`systemsetup`) part of the status. Every subcommand, reads included, needs root. */
-export async function readMacStatus(readNtpConf: () => string | null = readMacNtpConfServer, readLocaltime: () => string | null = readMacLocaltimeZone): Promise<PlatformStatus> {
-	const zone = await tryRead(MAC_SYSTEMSETUP, ['-gettimezone']);
-	const server = await tryRead(MAC_SYSTEMSETUP, ['-getnetworktimeserver']);
-	const using = await tryRead(MAC_SYSTEMSETUP, ['-getusingnetworktime']);
-	// The host's own offset, for the same reason Linux reads it: `systemsetup -gettimezone`
-	// names the zone and says nothing about the offset in force, so deriving one here would be
-	// this runtime's answer dressed up as the host's. Unlike the rest of this reader it needs
-	// no privileges, so it answers even for an unprivileged process.
-	const offset = parseUtcOffsetMinutes(await tryRead(HOST_OFFSET_COMMAND.darwin, ['+%z']));
-	// An unreadable systemsetup is an unprivileged process, not a missing facility:
-	// the capabilities stay true so the UI keeps offering the controls and the write
-	// reports the permission problem.
-	return {
-		// `systemsetup` first, then the symlink every user may read. Falling through to the
-		// PROCESS zone is what made an elevated change invisible to this backend forever.
-		timezone: (zone === null ? null : parseSystemsetupValue(zone)) ?? readLocaltime(),
-		...(offset === null ? {} : { utcOffsetMinutes: offset }),
-		ntpEnabled: using === null ? null : parseSystemsetupOnOff(using),
-		// macOS exposes no "last sync succeeded" flag.
-		ntpSynchronized: null,
-		// `systemsetup` first, because it is the authority; the file is the fallback that keeps
-		// the field populated for an unprivileged reader (see readMacNtpConfServer).
-		ntpServer: (server === null ? null : parseSystemsetupValue(server)) ?? readNtpConf(),
-		capabilities: { setClock: true, setTimezone: true, setNtpServer: true, setNtpEnabled: true },
-	};
+/** Native reads run outside the main event loop and do not depend on administrator-only tools. */
+export function readMacStatus(reader: () => Promise<PlatformStatus> = readDarwinTimeStatusAsync): Promise<PlatformStatus> {
+	return reader();
 }

@@ -1,4 +1,6 @@
 mod backend_ipc;
+#[cfg(target_os = "macos")]
+mod corewlan;
 
 use backend_ipc::{
 	backend_ack, backend_close, backend_open, backend_send, require_main, BackendBridge,
@@ -131,8 +133,8 @@ fn app_fullscreen(window: tauri::WebviewWindow) -> Result<(), String> {
 /// Since macOS 14 an SSID is withheld from any process without this permission —
 /// `system_profiler` and `ipconfig getsummary` both substitute `<redacted>` — so
 /// without it the network settings screen can list signal strengths but nothing a
-/// user could pick. The grant follows the responsible process, which for the
-/// backend this app spawns is this bundle, so asking once here covers both.
+/// user could pick. The grant belongs to this process alone: the backend it spawns
+/// is a separate program to macOS, so it sends its Wi-Fi work here (see `corewlan`).
 ///
 /// Nothing is done with the location itself. The answer arrives through a delegate
 /// this app does not install, because the permission is read back from whether the

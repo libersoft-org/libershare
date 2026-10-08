@@ -25,7 +25,10 @@ RUN set -eu; \
 		*) echo "Unsupported Docker target architecture: $TARGETARCH" >&2; exit 1 ;; \
 	esac; \
 	cd backend; \
-	bun build --compile --target "$BUN_TARGET" src/app.ts --outfile build/lish-backend
+	bun build --compile --target "$BUN_TARGET" src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js \
+		--define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' \
+		--define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"' \
+		--outfile build/lish-backend
 
 FROM debian:trixie-slim AS runtime
 

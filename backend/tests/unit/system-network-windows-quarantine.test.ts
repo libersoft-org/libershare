@@ -20,15 +20,15 @@ function attempt(operation: 'apply' | 'scan' | 'join' | 'disconnect', busy: bool
 		const helper = await import('./src/network-helper-client.ts');
 		const windowsHost = { ...(await import('./src/network-helper-windows.ts')) };
 		mock.module('./src/network-helper-windows.ts',()=>({...windowsHost,windowsPowerShellPath:()=> 'powershell.exe',windowsSystemEnvironment:()=> ({})}));
-		const childProcess = await import('node:child_process');
+		const nativeWrite = await import('./src/native/win32/network-mutation.ts');
+		const { withNativeMutationContext } = await import('./src/native/mutation-context.ts');
 		const calls = {guard:0,apply:0,helper:0,scan:0,join:0,disconnect:0};
 		const iface = {id:'{11111111-2222-3333-4444-555555555555}',name:'Wi-Fi',medium:'wireless',link:'up',defaultRoute:true,mac:null,addresses:[{family:'ipv4',address:'192.0.2.10',prefixLength:24}],ipv4Mode:'static',ipv4Configurable:true,wifiConfigurable:true,gateway:'192.0.2.1',dns:[],wifi:{ssid:null,signal:null,radio:'on'}};
-		const execFile = (_file,args,options,callback) => {
-			const done = typeof options === 'function' ? options : callback;
-			if (args[args.length-1] === windows.WINDOWS_STATE_COMMAND) { done(null,{stdout:'{}',stderr:''}); return; }
-			calls.apply++; done(new Error('direct IPv4 write reached'));
-		};
-		mock.module('node:child_process',()=>({...childProcess,execFile}));
+		const workers = await import('./src/native/worker-host.ts');
+		mock.module('./src/native/worker-host.ts',()=>({...workers,NativeWorkerChannel:class { async call(request){if(request.method!=='win32.network.snapshot')throw new Error('Unexpected native read');return [iface];} }}));
+		mock.module('./src/native/win32/network-mutation.ts',()=>({...nativeWrite,applyNativeWindowsIPv4:async()=>{
+			calls.apply++; throw new Error('direct IPv4 write reached');
+		}}));
 		mock.module('./src/system-network-windows.ts',()=>({
 			...windows,
 			assertWindowsWifiMutationIdle:()=>{calls.guard++;if(${busy})throw new Error('Windows Wi-Fi outcome unknown; operation still finishing');},
@@ -44,7 +44,7 @@ function attempt(operation: 'apply' | 'scan' | 'join' | 'disconnect', busy: bool
 		await network.readCachedCapabilities(async()=>({ipv4:true,wifi:true,ipv4Elevation:${elevation},staticGatewayRequired:false}));
 		let failure;
 		try{
-			if(${JSON.stringify(operation)}==='apply')await network.applyIPv4Unlocked(iface.id,{mode:'static',address:'192.0.2.20',prefixLength:24,gateway:'192.0.2.1'},'',true,ipv4BaselineOf(iface));
+			if(${JSON.stringify(operation)}==='apply')await withNativeMutationContext({},()=>network.applyIPv4Unlocked(iface.id,{mode:'static',address:'192.0.2.20',prefixLength:24,gateway:'192.0.2.1'},'',true,ipv4BaselineOf(iface)));
 			if(${JSON.stringify(operation)}==='scan')await network.scanWifi(iface.id);
 			if(${JSON.stringify(operation)}==='join')await network.connectWifiUnlocked(iface.id,'Example','example-password','',null,'WPA2','4578616D706C65');
 			if(${JSON.stringify(operation)}==='disconnect')await network.disconnectWifiUnlocked(iface.id);

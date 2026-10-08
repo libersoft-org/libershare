@@ -1,12 +1,12 @@
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
-import { createInterface } from 'node:readline';
+import { NativeWorkerChannel } from './native/worker-host.ts';
 import { readWindowsVolume, writeWindowsVolume } from './system-volume-windows.ts';
 
-const execFileAsync = promisify(execFile);
-
-/** Hard cap on how long any volume child process may run before we give up. */
+/** Read deadline for the native volume worker. */
 const EXEC_TIMEOUT_MS = 5000;
+const linuxVolumeReader = new NativeWorkerChannel('read');
+const macVolumeReader = new NativeWorkerChannel('read');
+const macVolumeWriter = new NativeWorkerChannel('mutation');
+const linuxVolumeWriter = new NativeWorkerChannel('mutation');
 
 /**
  * Outcome of talking to the OS mixer.
@@ -55,51 +55,50 @@ export function classifyMixerReadings(outputs: Array<string | null>): MixerResul
 	return { kind: 'no-device' };
 }
 
-/** Run a binary with args, returning trimmed stdout. Throws on missing binary or non-zero exit. */
-async function run(cmd: string, args: string[]): Promise<string> {
-	// SIGKILL: the promise settles only after the child actually exits, so a wedged
-	// helper ignoring the default SIGTERM would hang the poll loop forever.
-	const { stdout } = await execFileAsync(cmd, args, { timeout: EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true });
-	return stdout.toString();
+/**
+ * Everything one operating system contributes to volume control. The shared layer maps results,
+ * serializes writes and polls; a new platform is one implementation plus one registry entry.
+ */
+export interface VolumePlatform {
+	read(): Promise<MixerResult>;
+	write(percent: number): Promise<MixerResult>;
+	/** A push source for OS-side changes, or none when the platform relies on polling alone. */
+	startMonitor?(emit: (status: VolumeStatus) => void, requestRefresh: () => void, onExit: () => void): VolumeMonitor;
 }
 
-/**
- * Run a binary, returning its stdout, or null when the binary is missing or
- * exits non-zero — both definitive "this mixer path yields nothing" answers
- * (e.g. pactl's `Failure: No such entity` on a sink-less host). A TIMEOUT kill
- * is different: the helper exists and may just be wedged, so it is rethrown and
- * the caller's catch classifies it as a transient `error` (indeterminate), never
- * as `no-device` — see the getSystemVolumeStatus contract.
- */
-async function tryRun(cmd: string, args: string[]): Promise<string | null> {
-	try {
-		return await run(cmd, args);
-	} catch (err) {
-		const e = err as { killed?: boolean; signal?: string | null };
-		if (e?.killed || e?.signal) throw err;
-		return null;
-	}
+const windowsVolume: VolumePlatform = {
+	read: async () => readWindowsVolume(),
+	write: async percent => writeWindowsVolume(percent),
+	startMonitor: (emit, _requestRefresh, onExit) => startWindowsMonitor(emit, onExit),
+};
+
+const linuxVolume: VolumePlatform = {
+	read: () => linuxVolumeReader.call<MixerResult>({ method: 'linux.volume.read', args: { timeoutMs: EXEC_TIMEOUT_MS - 100 } }, EXEC_TIMEOUT_MS),
+	write: percent => linuxVolumeWriter.call<MixerResult>({ method: 'linux.volume.write', args: { percent, timeoutMs: EXEC_TIMEOUT_MS } }),
+	startMonitor: (_emit, requestRefresh, onExit) => startLinuxMonitor(requestRefresh, onExit),
+};
+
+const macVolume: VolumePlatform = {
+	read: () => macVolumeReader.call<MixerResult>({ method: 'darwin.volume.read' }, EXEC_TIMEOUT_MS),
+	write: percent => macVolumeWriter.call<MixerResult>({ method: 'darwin.volume.write', args: { percent } }),
+};
+
+/** Platforms without a mixer implementation report a failed read rather than guessing at a device. */
+const genericVolume: VolumePlatform = {
+	read: async () => ({ kind: 'error' }),
+	write: async () => ({ kind: 'error' }),
+};
+
+const VOLUME_PLATFORMS: Partial<Record<NodeJS.Platform, VolumePlatform>> = { win32: windowsVolume, linux: linuxVolume, darwin: macVolume };
+
+/** The volume implementation for this host; a new platform adds one entry to {@link VOLUME_PLATFORMS}. */
+export function volumePlatform(platform: NodeJS.Platform = process.platform): VolumePlatform {
+	return VOLUME_PLATFORMS[platform] ?? genericVolume;
 }
 
 async function readMixer(): Promise<MixerResult> {
 	try {
-		if (process.platform === 'win32') return readWindowsVolume();
-		if (process.platform === 'darwin') {
-			// macOS has no clean "no device" signal — treat a failing osascript as
-			// unavailable (documented on getSystemVolumeStatus). A timeout is
-			// rethrown by tryRun and lands in the transient-error catch below.
-			const out = await tryRun('osascript', ['-e', 'output volume of (get volume settings)']);
-			if (out === null) return { kind: 'no-device' };
-			const v = parseMacVolume(out);
-			return v === null ? { kind: 'no-device' } : { kind: 'ok', volume: v };
-		}
-		// Linux: prefer PulseAudio/PipeWire's default sink — that is the mixer the
-		// tray, media keys and our pactl monitor act on. Raw ALSA `Master` can be a
-		// different (decoupled) control on such systems, so amixer is only the
-		// fallback for pure-ALSA setups without a sound server.
-		const pactl = await tryRun('pactl', ['get-sink-volume', '@DEFAULT_SINK@']);
-		const amixer = pactl !== null && parseAlsaVolume(pactl) !== null ? null : await tryRun('amixer', ['get', 'Master']);
-		return classifyMixerReadings([pactl, amixer]);
+		return await volumePlatform().read();
 	} catch {
 		return { kind: 'error' };
 	}
@@ -107,15 +106,7 @@ async function readMixer(): Promise<MixerResult> {
 
 async function writeMixer(pct: number): Promise<MixerResult> {
 	try {
-		if (process.platform === 'win32') return writeWindowsVolume(pct);
-		if (process.platform === 'darwin') {
-			return (await tryRun('osascript', ['-e', `set volume output volume ${pct}`])) === null ? { kind: 'no-device' } : { kind: 'ok', volume: null };
-		}
-		// Linux: write where we read — the Pulse/PipeWire default sink first,
-		// raw ALSA `Master` only as the pure-ALSA fallback.
-		if ((await tryRun('pactl', ['set-sink-volume', '@DEFAULT_SINK@', `${pct}%`])) !== null) return { kind: 'ok', volume: null };
-		if ((await tryRun('amixer', ['set', 'Master', `${pct}%`])) !== null) return { kind: 'ok', volume: null };
-		return { kind: 'no-device' };
+		return await volumePlatform().write(pct);
 	} catch {
 		return { kind: 'error' };
 	}
@@ -127,7 +118,7 @@ async function writeMixer(pct: number): Promise<MixerResult> {
  * - `{ available: false, volume: null }` — the OS confirms there is NO
  *   controllable device (verified absence): a headless box, no ALSA/PulseAudio
  *   mixer, a Windows host whose `GetDefaultAudioEndpoint` returns
- *   ELEMENT_NOT_FOUND, or a macOS `osascript` read that fails.
+ *   ELEMENT_NOT_FOUND, or no default macOS audio output.
  * - `null` — a transient failure (a CLI helper timing out, a passing CoreAudio
  *   error): availability is INDETERMINATE, the device likely still exists.
  *   Callers MUST keep their last known availability instead of treating this as
@@ -161,7 +152,7 @@ export interface VolumeResult {
 }
 
 function mapWrite(r: MixerResult, pct: number): VolumeResult {
-	if (r.kind === 'ok') return { success: true, available: true, volume: pct };
+	if (r.kind === 'ok') return { success: true, available: true, volume: r.volume ?? pct };
 	if (r.kind === 'no-device') return { success: false, available: false, volume: null };
 	return { success: false, available: true, volume: null };
 }
@@ -252,8 +243,7 @@ export function isMixerWriteBusy(): boolean {
 
 /**
  * Set the OS master output volume. `percent` is clamped to 0–100. Applied via
- * built-in OS facilities only (no shipped native addons): Windows CoreAudio COM
- * in-process via FFI, macOS `osascript`, Linux `pactl` with an `amixer` fallback.
+ * Windows CoreAudio COM, macOS AudioToolbox, or Linux PulseAudio/ALSA.
  *
  * A single node process owns the OS mixer, so writes are serialized latest-wins
  * (see {@link createSerializedWriter}): concurrent calls never overlap and the
@@ -346,7 +336,7 @@ export function createVolumeWatcher(deps: { getStatus: () => Promise<VolumeStatu
 	};
 }
 
-/** Handle to a running instant-volume monitor process. */
+/** Handle to a running instant-volume monitor. */
 export interface VolumeMonitor {
 	stop: () => void;
 }
@@ -395,31 +385,41 @@ export function isSinkEvent(line: string): boolean {
 }
 
 function startLinuxMonitor(requestRefresh: () => void, onExit: () => void): VolumeMonitor {
-	// pactl streams events; a sink change means the default sink volume may have
-	// moved. The monitor does NOT read the mixer itself — a private read would race
-	// the watcher's 5s fallback poll (two concurrent reads can resolve out of order
-	// and re-apply a stale level). It only signals the watcher, whose poll
-	// serializes reads and coalesces event bursts into one trailing re-read.
-	const proc = spawn('pactl', ['subscribe'], { stdio: ['ignore', 'pipe', 'ignore'] });
-	const rl = createInterface({ input: proc.stdout! });
-	rl.on('line', line => {
-		if (isSinkEvent(line)) requestRefresh();
-	});
 	let stopped = false;
+	let exited = false;
 	const exit = (): void => {
-		if (stopped) return;
-		// Latch: a child can emit both 'error' and 'exit' — onExit must run once,
-		// or the second call would tear down a replacement monitor already started.
-		stopped = true;
-		onExit();
+		if (!stopped && !exited) {
+			exited = true;
+			void started
+				.then(() => channel.call({ method: 'linux.volume.monitor.stop' }))
+				.catch(() => {})
+				.finally(() => {
+					channel.close();
+				});
+			onExit();
+		}
 	};
-	proc.on('exit', exit);
-	proc.on('error', exit);
+	const channel = new NativeWorkerChannel('mutation', undefined, {
+		onEvent: event => {
+			if (stopped || exited) return;
+			if (event.event === 'linux.volume.changed') requestRefresh();
+			if (event.event === 'linux.volume.exited') exit();
+		},
+		onExit: exit,
+	});
+	const started = channel.call({ method: 'linux.volume.monitor.start' }).catch(() => {
+		exit();
+	});
 	return {
 		stop: () => {
+			if (stopped) return;
 			stopped = true;
-			rl.close();
-			proc.kill();
+			void started
+				.then(() => channel.call({ method: 'linux.volume.monitor.stop' }))
+				.catch(() => {})
+				.finally(() => {
+					channel.close();
+				});
 		},
 	};
 }
@@ -430,13 +430,13 @@ function startLinuxMonitor(requestRefresh: () => void, onExit: () => void): Volu
  * interleave with an async poll read) and calls `emit` with the fresh status;
  * Linux only signals `requestRefresh` so the watcher's serialized poll performs
  * the actual mixer read. Returns a `stop()` handle. On platforms without a push
- * source (macOS, or Linux without pactl) returns a no-op monitor — the caller
+ * source (macOS, or Linux without PulseAudio) returns a no-op monitor — the caller
  * then relies on the 5s poll fallback alone.
  */
 export function startVolumeMonitor(emit: (status: VolumeStatus) => void, requestRefresh: () => void, onExit: () => void): VolumeMonitor {
 	try {
-		if (process.platform === 'win32') return startWindowsMonitor(emit, onExit);
-		if (process.platform === 'linux') return startLinuxMonitor(requestRefresh, onExit);
+		const monitor = volumePlatform().startMonitor?.(emit, requestRefresh, onExit);
+		if (monitor) return monitor;
 	} catch (err) {
 		console.warn('[system-volume] Failed to start volume monitor:', (err as Error).message);
 	}

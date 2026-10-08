@@ -43,7 +43,7 @@ function scenario(mode: string, ignoreTerminate = false): LifecycleResult {
 		const timer = globalThis.setTimeout;
 		const shortenFirstDeadline = !['success', 'error', 'empty-close', 'post-error', 'disconnect-success'].includes(${JSON.stringify(mode)});
 		globalThis.setTimeout = (callback, delay, ...args) => timer(callback, created === 1 && shortenFirstDeadline && (delay === 20000 || delay === 45000) ? 120 : delay, ...args);
-		const { readCoreWlanWifi, associateMacWifi, disconnectCoreWlanWifi, assertMacWifiMutationIdle } = await import(${JSON.stringify(module)});
+		const { readCoreWlanWifi, associateMacWifi, disconnectCoreWlanWifi, assertMacWifiMutationIdle, closeCoreWlanReads } = await import(${JSON.stringify(module)});
 		const associate = ${JSON.stringify(mode)} === 'in-flight' || ${JSON.stringify(mode)} === 'late-associate';
 		const started = performance.now();
 		let error = null, operationResult;
@@ -59,8 +59,10 @@ function scenario(mode: string, ignoreTerminate = false): LifecycleResult {
 		let nextError = null;
 		try { await readCoreWlanWifi(); } catch (failure) { nextError = failure.message; }
 		const createdAfterNext = created;
+		if (!nextError) await closeCoreWlanReads();
 		await firstClosed;
 		const recovered = await readCoreWlanWifi();
+		await closeCoreWlanReads();
 		let mutationRecovered = true;
 		try { assertMacWifiMutationIdle(); } catch { mutationRecovered = false; }
 		console.log('RESULT:' + JSON.stringify({ error, elapsed, mutationBlocked, createdAtTimeout, createdAfterNext, nextError, recovered, mutationRecovered, entered: marker[0], lateAssociation: marker[1], resultWasUndefined: operationResult === undefined }));
@@ -145,7 +147,61 @@ describe('CoreWLAN worker deadlines and native lifetime', () => {
 		const result = scenario(mode);
 		expect(result.error).toEqual(mode === 'success' ? null : expect.any(String));
 		expect(result.nextError).toBeNull();
-		expect(result.createdAfterNext).toBe(2);
+		expect(result.createdAfterNext).toBe(mode === 'success' ? 1 : 2);
 		expect(result.recovered).toEqual([]);
+	});
+});
+
+it('reuses state and scan workers, and closes an active read only after native cleanup', () => {
+	const fixture = pathToFileURL(resolve(import.meta.dir, '../helpers/corewlan-lifecycle-worker.js')).href;
+	const module = pathToFileURL(resolve(import.meta.dir, '../../src/system-network-corewlan.ts')).href;
+	const script = `
+  const NativeWorker=Worker, marker=new Int32Array(new SharedArrayBuffer(8));
+  let created=0,terminatedBeforeCleanup=false;
+  globalThis.Worker=class extends NativeWorker {
+   constructor(){super(${JSON.stringify(fixture)});created++;}
+   postMessage(request){super.postMessage({...request,marker,mode:request.operation==='scan'?'settled-after-block':'success'});}
+   terminate(){if(marker[0]&&!marker[1])terminatedBeforeCleanup=true;super.terminate();}
+  };
+  const {readCoreWlanWifi,scanCoreWlanWifi,closeCoreWlanReads}=await import(${JSON.stringify(module)});
+  await readCoreWlanWifi();await readCoreWlanWifi();
+  const pending=scanCoreWlanWifi('en0');
+  while(!marker[0])await Bun.sleep(5);
+  const closing=closeCoreWlanReads();
+  let rejected=false;try{await readCoreWlanWifi();}catch{rejected=true;}
+  const rows=await pending;await closing;
+  console.log(JSON.stringify({created,terminatedBeforeCleanup,rejected,rows,cleaned:marker[1]}));
+ `;
+	const child = Bun.spawnSync([process.execPath, '--eval', script], { timeout: 5000 });
+	if (child.exitCode !== 0) throw new Error(child.stderr.toString());
+	const result = JSON.parse(child.stdout.toString());
+	expect(result).toEqual({ created: 1, terminatedBeforeCleanup: false, rejected: true, rows: [], cleaned: 1 });
+});
+
+it('keeps the read worker separate from a mutation and reuses it afterwards', () => {
+	const fixture = pathToFileURL(resolve(import.meta.dir, '../helpers/corewlan-lifecycle-worker.js')).href;
+	const module = pathToFileURL(resolve(import.meta.dir, '../../src/system-network-corewlan.ts')).href;
+	const script = `
+  const NativeWorker=Worker, requests=[];let created=0;
+  globalThis.Worker=class extends NativeWorker {
+   constructor(){super(${JSON.stringify(fixture)});this.index=++created;}
+   postMessage(request){if(request.operation!=='close')requests.push([this.index,request.operation]);super.postMessage({...request,mode:request.operation==='disconnect'?'disconnect-success':'success'});}
+  };
+  const {readCoreWlanWifi,disconnectCoreWlanWifi,closeCoreWlanReads}=await import(${JSON.stringify(module)});
+  await readCoreWlanWifi();
+  const disconnected=await disconnectCoreWlanWifi('en0');
+  await readCoreWlanWifi();await closeCoreWlanReads();
+  console.log(JSON.stringify({created,requests,disconnected:disconnected===undefined}));
+ `;
+	const child = Bun.spawnSync([process.execPath, '--eval', script], { timeout: 5000 });
+	if (child.exitCode !== 0) throw new Error(child.stderr.toString());
+	expect(JSON.parse(child.stdout.toString())).toEqual({
+		created: 2,
+		requests: [
+			[1, 'state'],
+			[2, 'disconnect'],
+			[1, 'state'],
+		],
+		disconnected: true,
 	});
 });

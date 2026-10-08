@@ -10,11 +10,19 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 			const cp = { ...(await import('node:child_process')) };
 			const ffi = { ...(await import('bun:ffi')) };
 			const { PassThrough } = await import('node:stream');
+			const os = await import('node:os');
+			mock.module('node:os', () => ({ ...os, uptime: () => 1000 }));
 			const { join } = await import('node:path');
 			const { createHash } = await import('node:crypto');
 			const scenario = ${JSON.stringify(scenario)};
 			let timeout = scenario !== 'win32-warm';
 			let hashes = 0, signatures = 0, launchers = 0, prompts = 0, writes = 0;
+			const { NativeWorkerChannel } = await import('./src/native/worker-host.ts');
+			const workerCall = NativeWorkerChannel.prototype.call;
+			NativeWorkerChannel.prototype.call = function(request, timeoutMs) {
+				if(request.method === 'win32.signatures.match') { signatures++; return Promise.resolve(true); }
+				return workerCall.call(this, request, timeoutMs);
+			};
 			const { HelperVerificationTimeoutError } = await import('./src/network-helper-integrity.ts');
 			globalThis.LISH_NETWORK_HELPER_SHA256 = createHash('sha256').update('test-helper').digest('hex');
 			mock.module('node:fs', () => ({ ...fs, existsSync: () => true,
@@ -38,21 +46,35 @@ for (const scenario of ['linux', 'win32', 'win32-warm']) {
 				return { ...handle, symbols };
 			} }));
 			mock.module('node:child_process', () => ({ ...cp,
-				spawn: () => { prompts++; throw new Error('unexpected helper spawn'); },
-				execFile: (file, args, options, callback) => {
-					const done = typeof options === 'function' ? options : callback;
-					if (file.toLowerCase().endsWith('powershell.exe')) { signatures++; done(null, { stdout: '', stderr: '' }); return; }
-					if (!file.endsWith('lish-network-launcher.exe')) { done(new Error('unexpected executable')); return; }
+				spawn: (file, args) => {
+					const child = new (require('node:events').EventEmitter)();
+					child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
 					launchers++;
 					const argv = process.argv, executable = process.execPath;
 					process.argv = [file, 'launcher', ...args]; process.execPath = file;
-					import('./src/network-helper-windows-launcher.ts').then(() => {
+					queueMicrotask(() => import('./src/network-helper-windows-launcher.ts').then(() => {
 						const code = Number(process.exitCode ?? 0);
 						process.argv = argv; process.execPath = executable; process.exitCode = 0;
-						done(code ? Object.assign(new Error('launcher exit'), { code }) : null, { stdout: '', stderr: '' });
-					}, done);
+						child.stdout.end(); child.stderr.end(); child.emit('close', code);
+					}, error => {
+						child.stdout.end(); child.stderr.end(); child.emit('error', error);
+					}));
+					return child;
 				},
 			}));
+			const ownership = await import('./src/native/mutation-context.ts');
+			const records = await import('./src/native/helper-results-store.ts');
+			const context = {
+				operationId: '00000000-0000-4000-8000-000000000001', dataDirectory: process.cwd(), remainingMs: () => 10000,
+				recordExecution: async () => {},
+				call: async (_rule, invoke) => {
+					const result = await invoke();
+					if (!result.known) throw new Error('unknown helper outcome');
+					return result.value;
+				},
+			};
+			mock.module('./src/native/mutation-context.ts', () => ({ ...ownership, requireNativeMutationContext: () => context }));
+			mock.module('./src/native/helper-results-store.ts', () => ({ ...records, HelperResultStore: class { async read() { return null; } }, createHelperCancellation: async () => {} }));
 			if (scenario !== 'linux') {
 				const { windowsProgramFilesPath } = await import('./src/network-helper-windows.ts');
 				process.execPath = join(windowsProgramFilesPath(), 'Example', 'lish-backend.exe');

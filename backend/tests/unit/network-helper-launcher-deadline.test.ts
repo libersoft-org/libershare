@@ -36,7 +36,7 @@ for (const scenario of ['expired', 'verification', 'request-file', 'valid', 'leg
 				},
 			}));
 			const { encodeNetworkHelperRequest } = await import('./src/network-helper-protocol.ts');
-			const request = { version: 1, operation: 'applySystemTime', changes: { ntpEnabled: false },
+			const request = { version: 2, operationId: '00000000-0000-4000-8000-000000000001', cancelPath: process.cwd() + '/helper-test.cancel', operation: 'applySystemTime', changes: { ntpEnabled: false },
 				...(scenario === 'legacy' ? {} : { deadlineUptime: scenario === 'expired' ? 99 : 101 }) };
 			process.argv = [process.execPath, 'launcher', '--request', encodeNetworkHelperRequest(request)];
 			await import('./src/network-helper-windows-launcher.ts');

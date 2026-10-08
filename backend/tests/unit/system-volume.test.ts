@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseAlsaVolume, parseMacVolume, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, isSinkEvent, type VolumeStatus } from '../../src/system-volume.ts';
+import { parseAlsaVolume, parseMacVolume, classifyMixerReadings, createSerializedWriter, createVolumeWatcher, isSinkEvent, volumePlatform, type VolumeStatus } from '../../src/system-volume.ts';
 import { classifyHresult, readWindowsVolume, writeWindowsVolume } from '../../src/system-volume-windows.ts';
 
 /** Resolve pending microtasks + timers so the serializer can advance. */
@@ -380,5 +380,15 @@ describe('createVolumeWatcher', () => {
 			{ volume: 30, available: true },
 			{ volume: 55, available: true },
 		]);
+	});
+});
+
+describe('volume platform registry', () => {
+	it('reports an unsupported platform as a failed read instead of reaching another mixer', async () => {
+		const generic = volumePlatform('aix');
+		expect(await generic.read()).toEqual({ kind: 'error' });
+		expect(await generic.write(50)).toEqual({ kind: 'error' });
+		expect(generic.startMonitor).toBeUndefined();
+		for (const platform of ['win32', 'linux', 'darwin'] as const) expect(volumePlatform(platform)).not.toBe(generic);
 	});
 });

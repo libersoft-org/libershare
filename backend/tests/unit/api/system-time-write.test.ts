@@ -102,6 +102,41 @@ describe('runTimeWrite', () => {
 		expect((events[0]?.data as SystemTimeStatus).timezone).toBe('Europe/Prague');
 	});
 
+	/**
+	 * The operation record is open while the write runs and closed once it returns. A second
+	 * window learns about the save only from this announcement, so the announcement must come
+	 * after the close, whatever the outcome - or that window keeps its form locked.
+	 */
+	it('announces the state after the operation record closes, for every outcome', async () => {
+		for (const outcome of ['ok', 'denied', 'thrown'] as const) {
+			let inFlight = false;
+			let ranInside = false;
+			const announced: Array<boolean> = [];
+			const journal = async (write: () => Promise<SystemTimeResult>): Promise<SystemTimeResult> => {
+				inFlight = true;
+				try {
+					return await write();
+				} finally {
+					inFlight = false;
+				}
+			};
+			const work = runTimeWrite(
+				async () => {
+					ranInside = inFlight;
+					if (outcome === 'thrown') throw new Error('native operation lost');
+					return outcome === 'ok' ? ok : denied;
+				},
+				async () => ({ ...statusFixture(), ...(inFlight ? { mutation: { state: 'pending', operation: 'applySystemTime', since: 1 } } : {}) }) as SystemTimeStatus,
+				(_event, data) => announced.push('mutation' in (data as object)),
+				() => 0,
+				journal
+			);
+			if (outcome === 'thrown') await expect(work).rejects.toThrow('native operation lost');
+			else await work;
+			expect({ outcome, ranInside, announced }).toEqual({ outcome, ranInside: true, announced: [false] });
+		}
+	});
+
 	it('announces nothing when the write changed nothing', async () => {
 		const events: string[] = [];
 		const res = await runTimeWrite(

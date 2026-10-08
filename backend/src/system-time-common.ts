@@ -1,12 +1,9 @@
+import { requireNativeMutationContext, withDispatchDeadline } from './native/mutation-context.ts';
+import { NativeMutationStopped } from './native/mutation-host.ts';
+import type { NativeEndRule } from './native/mutation-proof.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
-import { win32, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
-import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { SYSTEM_TIME_READ_TIMEOUT_MS, type SystemTimeOutcome, type SystemTimezoneSource, type SystemTimeResult, type SystemTimeStep, type SystemTimeCapabilities, type SystemTimeStatus } from '@shared';
-
-const execFileAsync = promisify(execFile);
 
 /** Hard cap on how long a time-related READ may run before we give up. */
 export const EXEC_TIMEOUT_MS = 5000;
@@ -108,7 +105,7 @@ export function withReadBudget<T>(fn: () => Promise<T>, now: () => number = elap
  *
  * - the ROLLBACK, which is what happens when the work fails. Putting the original file back is
  *   only half of it; the daemon has to be put back onto that file for the restore to mean
- *   anything. Inheriting the exhausted budget gave the second half zero time, so `runAll`
+ *   anything. Inheriting the exhausted budget gave the second half zero time, so `runOperations`
  *   refused the restart before starting it and a host was left with the original configuration
  *   on disk and the service stopped - reported, but never even attempted.
  * - the READ-BACK that tells every open window what the host looks like now. Once child limits
@@ -147,23 +144,6 @@ export function remainingSaveBudget(): number | null {
 }
 
 /**
- * Where each platform's `date` lives, for the one question its own timezone rules have to
- * answer: what offset from UTC is this host using right now.
- *
- * Neither `timedatectl show` nor `systemsetup -gettimezone` carries an offset - they name the
- * zone and stop there - so the shared status used to derive one from THIS runtime's timezone
- * database. Where that database and the host's disagree, which two tzdata versions on one
- * machine are enough to produce, the screen labelled a time the host does not have as the
- * host's own; an edit of the minutes then moved the clock by the whole disagreement. Measured
- * on `America/Asuncion` under 2024a and 2025b rules: one hour apart.
- *
- * macOS has no `/usr/bin/date`, which is why this is a map rather than one name. Read through
- * {@link run}, which strips `TZ` from the child's environment, so the answer is the host's
- * setting and not a formatting override this process happens to carry.
- */
-export const HOST_OFFSET_COMMAND = { linux: 'date', darwin: '/bin/date' } as const;
-
-/**
  * `date +%z` as minutes east of UTC, or null for anything unexpected.
  *
  * No answer means no claim: the status then leaves the field out and falls back to its
@@ -177,167 +157,10 @@ export function parseUtcOffsetMinutes(value: string | null): number | null {
 	return match[1] === '-' ? -minutes : minutes;
 }
 
-const LINUX_EXECUTABLES: Readonly<Record<string, string>> = {
-	date: '/usr/bin/date',
-	timedatectl: '/usr/bin/timedatectl',
-	systemctl: '/usr/bin/systemctl',
-	'systemd-analyze': '/usr/bin/systemd-analyze',
-};
-
-/** Resolve a privileged helper without consulting PATH. Unknown relative names fail closed. */
-export function resolveSystemExecutable(platform: string, command: string, systemRoot: string | undefined = process.env['SystemRoot']): string | null {
-	if (platform === 'win32') {
-		if (win32.isAbsolute(command)) return command;
-		const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
-		const system32 = win32.join(root, 'System32');
-		const executables: Readonly<Record<string, string>> = {
-			powershell: win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-			tzutil: win32.join(system32, 'tzutil.exe'),
-			w32tm: win32.join(system32, 'w32tm.exe'),
-			sc: win32.join(system32, 'sc.exe'),
-			reg: win32.join(system32, 'reg.exe'),
-		};
-		return executables[command] ?? null;
-	}
-	if (isAbsolute(command)) return command;
-	return platform === 'linux' ? (LINUX_EXECUTABLES[command] ?? null) : null;
-}
-
-/** Address a Windows system DLL directly so an elevated process never searches for it. */
-export function windowsSystemLibraryPath(name: string, systemRoot: string | undefined = process.env['SystemRoot']): string {
-	const root = systemRoot && win32.isAbsolute(systemRoot) ? systemRoot : 'C:\\Windows';
-	return win32.join(root, 'System32', name);
-}
-
-interface ConsoleTextApi {
-	GetConsoleOutputCP: () => number;
-	GetOEMCP: () => number;
-	MultiByteToWideChar: (codePage: number, flags: number, input: number, inputLength: number, output: number, outputLength: number) => number;
-}
-
-// null means "tried and unavailable" — the probe runs at most once either way.
-let consoleText: ConsoleTextApi | null | undefined;
-
-function getConsoleText(): ConsoleTextApi | null {
-	if (consoleText === undefined) {
-		try {
-			consoleText = dlopen(windowsSystemLibraryPath('kernel32.dll'), {
-				GetConsoleOutputCP: { args: [], returns: FFIType.u32 },
-				GetOEMCP: { args: [], returns: FFIType.u32 },
-				MultiByteToWideChar: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-			}).symbols as unknown as ConsoleTextApi;
-		} catch {
-			consoleText = null;
-		}
-	}
-	return consoleText;
-}
-
-/**
- * Turn the raw bytes a child process wrote into text.
- *
- * UTF-8 everywhere but Windows, where the console tools this module runs —
- * `w32tm`, `sc`, `tzutil` — emit their LOCALIZED messages in the console's OEM code
- * page, not in UTF-8. Read as UTF-8 those bytes are not valid sequences at all, so
- * every accented character became U+FFFD: a Czech host reported "P<?><?>stup byl
- * odep<?>en" where the OS had said "Přístup byl odepřen". Nothing decides anything on
- * that text — {@link classifyFailure} matches exit codes and the ASCII HRESULT — but it
- * is the only concrete detail a refused write gives the operator, and it arrived
- * unreadable on every host whose Windows is not English.
- *
- * The code page is asked of Windows rather than assumed: it is cp852 on this author's
- * Czech host, cp866 on a Russian one, cp437 on a US one. `GetOEMCP` is the one to ask,
- * NOT `GetConsoleOutputCP`: the child's output here is a PIPE, and the console code page
- * describes a terminal this process may not even have. Measured on the Czech host —
- * `GetConsoleOutputCP` answered 65001 while `w32tm` was in fact emitting cp852, which is
- * exactly what `GetOEMCP` answers. Conversion goes through Windows' own
- * `MultiByteToWideChar`, so no code-page table is carried here.
- *
- * Falls back to UTF-8 whenever the call cannot be made or does not answer, which is
- * also every non-Windows host: those already run with `LC_ALL=C` and speak UTF-8.
- *
- * NOT for our own PowerShell script, which is why {@link run} exempts it. PowerShell has
- * no fixed output encoding: it writes through `[Console]::OutputEncoding`, which follows
- * the console it inherited. Measured both ways on the same host - started from a UTF-8
- * terminal it emitted UTF-8, started with no console it emitted cp852 - so an OEM
- * conversion is right for one of them and mangles the other. The script pins the encoding
- * instead and is read as what it pinned.
- *
- * `readCodePage` is injectable so the conversion can be exercised for a code page other
- * than the one the test host happens to have.
- */
-export function decodeCommandOutput(bytes: Uint8Array, platform: string = process.platform, readCodePage?: () => number): string {
-	if (platform !== 'win32' || bytes.byteLength === 0) return Buffer.from(bytes).toString('utf8');
-	const api = readCodePage ? null : getConsoleText();
-	if (!readCodePage && !api) return Buffer.from(bytes).toString('utf8');
-	try {
-		const codePage = readCodePage ? readCodePage() : api!.GetOEMCP() || api!.GetConsoleOutputCP();
-		// 65001 is UTF-8 itself; nothing to convert, and the fast path is also the one a
-		// host whose OEM code page is already UTF-8 takes.
-		if (!codePage || codePage === 65001) return Buffer.from(bytes).toString('utf8');
-		const source = new Uint8Array(bytes);
-		const convert = api ?? getConsoleText();
-		if (!convert) return Buffer.from(bytes).toString('utf8');
-		const needed = convert.MultiByteToWideChar(codePage, 0, ptr(source), source.length, 0 as unknown as number, 0);
-		if (needed <= 0) return Buffer.from(bytes).toString('utf8');
-		const wide = new Uint16Array(needed);
-		if (convert.MultiByteToWideChar(codePage, 0, ptr(source), source.length, ptr(wide), wide.length) !== needed) return Buffer.from(bytes).toString('utf8');
-		// Chunked: spreading a long message into String.fromCharCode blows the argument limit.
-		let text = '';
-		for (let index = 0; index < wide.length; index += 8192) text += String.fromCharCode(...wide.subarray(index, index + 8192));
-		return text;
-	} catch {
-		return Buffer.from(bytes).toString('utf8');
-	}
-}
+export { windowsSystemLibraryPath } from './native/library.ts';
 
 /** Platforms with an implemented time backend. Anything else is reported as unsupported. */
 export type SystemPlatform = 'win32' | 'linux' | 'darwin';
-
-/** A single child process to run: an argv array, never a shell string. */
-export interface SystemCommand {
-	cmd: string;
-	args: string[];
-	/**
-	 * Exit codes that mean "this step had nothing left to do" — the desired state was
-	 * already in place. They are treated as success so the steps behind them still run,
-	 * which a plain abort would skip (see {@link buildSetNtpEnabledCommands}).
-	 */
-	benignCodes?: number[];
-	/**
-	 * Output that means the step failed even though it exited 0. `w32tm` routinely
-	 * refuses a request, prints the reason and still returns a zero exit code, so an
-	 * exit status alone would report a refused `/resync` or `/config` as saved.
-	 */
-	failOnOutput?: RegExp;
-	/**
-	 * Output that means the step had nothing to do. Treated as success whatever the exit
-	 * code, and checked before {@link SystemCommand.failOnOutput}.
-	 *
-	 * The case it exists for: `w32tm /config ... /update` writes the peer list into the
-	 * registry and then NOTIFIES the Windows Time service. Measured on Windows 11 against a
-	 * stopped service - the registry WAS written, and the command printed
-	 * "The following error occurred: The service has not been started. (0x80070426)" and
-	 * exited 38. So the exit code cannot carry this: it is the HRESULT in the output that
-	 * identifies "there was no service to notify", which is why this is matched on the text
-	 * and applies to a non-zero exit as much as to a zero one.
-	 *
-	 * With it the notification is best-effort, and the caller no longer has to know whether
-	 * the service is up in order to decide whether to send it - a state it cannot read
-	 * reliably anyway.
-	 */
-	benignOutput?: RegExp;
-}
-
-/** Local wall-clock date and time broken into parts. `month` is 1-12. */
-export interface LocalDateTime {
-	year: number;
-	month: number;
-	day: number;
-	hours: number;
-	minutes: number;
-	seconds: number;
-}
 
 /** True when the given `process.platform` value has an implemented time backend. */
 export function isSupportedPlatform(platform: string): platform is SystemPlatform {
@@ -576,61 +399,50 @@ export function timezoneOffsetMinutes(zone: string, at: Date = new Date()): numb
 // Child process layer (impure)
 // ---------------------------------------------------------------------------
 
-/**
- * Outcome of running one command.
- * - `ok`: exit 0, with stdout.
- * - `missing`: the binary does not exist — a definitive "this facility is absent".
- * - `failed`: it ran and refused; `code` and `output` feed {@link classifyFailure}.
- * - `timeout`: the child was killed after its budget ran out; the facility exists
- *   but is wedged, which is a transient error and never an absence.
- */
-export type RunOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | { kind: 'failed'; code: number | null; output: string } | { kind: 'timeout' };
+/** Native results distinguish a proven refusal from work that may still be running. */
+export type OperationOutcome = { kind: 'ok'; output: string } | { kind: 'missing' } | { kind: 'timeout' } | { kind: 'denied'; output: string; stateMayHaveChanged?: boolean; changed?: boolean } | { kind: 'unknown'; output: string; endRule: NativeEndRule } | { kind: 'failed'; code: number | null; output: string; outcome?: SystemTimeOutcome; stateMayHaveChanged?: boolean; changed?: boolean };
 
-/**
- * Run a binary with an argv array — never a shell string, so no input can be
- * interpreted as a command. `LC_ALL=C` pins the child's messages to English, which
- * is what {@link classifyFailure} matches on for Linux and macOS.
- */
-/**
- * Read one command's output. Every Windows console tool goes through the OEM conversion
- * except our own PowerShell script, which pins its output encoding to UTF-8 itself (see
- * buildSetClockCommands) and would be corrupted by converting it as anything else.
- */
-function decode(cmd: string, bytes: Uint8Array): string {
-	return cmd === 'powershell' ? Buffer.from(bytes).toString('utf8') : decodeCommandOutput(bytes);
+export interface SystemOperation {
+	readonly describe: string;
+	run(signal: AbortSignal): Promise<OperationOutcome>;
 }
 
-export async function run(cmd: string, args: string[], timeoutMs: number = EXEC_TIMEOUT_MS): Promise<RunOutcome> {
-	try {
-		const executable = resolveSystemExecutable(process.platform, cmd);
-		if (!executable) return { kind: 'missing' };
-		// Before anything is spawned: a child that cannot finish inside what the save has left
-		// must not be started, and one that can is held to the remainder.
-		const limit = childLimit(timeoutMs);
-		if (limit === null) return { kind: 'timeout' };
-		// System tools must use the host timezone, not a process-local formatting override.
-		const environment = { ...process.env, LC_ALL: 'C' };
-		delete environment['TZ'];
-		// SIGKILL: the promise settles only after the child actually exits, so a
-		// wedged helper ignoring the default SIGTERM would hang the caller forever.
-		// `encoding: 'buffer'` because the bytes are not UTF-8 on a localized Windows
-		// console — see decodeCommandOutput.
-		const { stdout } = await execFileAsync(executable, args, { timeout: limit, killSignal: 'SIGKILL', windowsHide: true, env: environment, encoding: 'buffer' });
-		return { kind: 'ok', output: decode(cmd, stdout) };
-	} catch (err) {
-		const e = err as { code?: number | string; killed?: boolean; signal?: string | null; stdout?: Uint8Array; stderr?: Uint8Array; message?: string };
-		if (e.killed || e.signal) return { kind: 'timeout' };
-		if (e.code === 'ENOENT') return { kind: 'missing' };
-		// w32tm prints its errors to stdout, timedatectl to stderr — read both.
-		const output = `${e.stdout ? decode(cmd, e.stdout) : ''}\n${e.stderr ? decode(cmd, e.stderr) : ''}`.trim() || (e.message ?? '');
-		return { kind: 'failed', code: typeof e.code === 'number' ? e.code : null, output };
+/** A budget stops new operations; it never aborts a dispatched native mutation. */
+export async function runOperations(platform: SystemPlatform, operations: readonly SystemOperation[], now: () => number = elapsedClock): Promise<SystemTimeResult> {
+	if (!operations.length) return result('unsupported', 'no operation available for this platform');
+	const steps: SystemTimeStep[] = [];
+	const deadline = now() + Math.min(SEQUENCE_BUDGET_MS, remainingSaveBudget() ?? SEQUENCE_BUDGET_MS);
+	const signal = new AbortController().signal;
+	const stop = (operation: SystemOperation, outcome: SystemTimeOutcome, message: string, mayHaveChanged: boolean, partial = false): SystemTimeResult => {
+		steps.push({ command: operation.describe, ok: false });
+		const changed = partial || steps.some(step => step.ok);
+		return { ...result(outcome, message), changed, stateMayHaveChanged: changed || mayHaveChanged, steps };
+	};
+	for (const operation of operations) {
+		if (now() >= deadline) return stop(operation, 'error', 'the time configuration budget expired before the next operation', false);
+		let value: OperationOutcome;
+		try {
+			// The request's own deadline, not the mutation host's longer one, decides whether a write may still start.
+			value = await withDispatchDeadline(
+				() => now() >= deadline,
+				() => operation.run(signal)
+			);
+		} catch (error) {
+			if (error instanceof NativeMutationStopped) return stop(operation, 'error', 'the time configuration budget expired before the write was sent', false);
+			throw error;
+		}
+		if (value.kind === 'unknown') return requireNativeMutationContext().pending(value.endRule);
+		if (value.kind === 'ok') {
+			steps.push({ command: operation.describe, ok: true });
+			continue;
+		}
+		if (value.kind === 'missing') return stop(operation, 'unsupported', `${operation.describe} is unavailable`, false);
+		if (value.kind === 'timeout') return stop(operation, 'error', `${operation.describe} did not start within its budget`, false);
+		if (value.kind === 'denied') return stop(operation, 'permission-denied', value.output, value.stateMayHaveChanged === true, value.changed);
+		const outcome = 'outcome' in value && value.outcome ? value.outcome : classifyFailure(platform, value.code, value.output);
+		return stop(operation, outcome, firstLine(value.output) ?? `${operation.describe} failed`, 'stateMayHaveChanged' in value ? value.stateMayHaveChanged !== false : true, 'changed' in value && value.changed === true);
 	}
-}
-
-/** Run a command and return its stdout, or null when it was missing or refused. Used for reads, where any failure just means "no value". */
-export async function tryRead(cmd: string, args: string[]): Promise<string | null> {
-	const r = await run(cmd, args);
-	return r.kind === 'ok' ? r.output : null;
+	return result('ok');
 }
 
 /** Build a result object. `success` is derived so a non-`ok` outcome can never be reported as a success. */
@@ -638,132 +450,8 @@ export function result(outcome: SystemTimeOutcome, message: string | null = null
 	return { success: outcome === 'ok', outcome, message };
 }
 
-/**
- * Run one command as a WRITE: with the budget of something that may wait for an
- * authorization prompt rather than the short one a status read gets.
- */
-export const runWrite: CommandRunner = (cmd, args, timeoutMs = WRITE_TIMEOUT_MS) => run(cmd, args, timeoutMs);
-
-/** Runs a single command and reports how it went. */
-export type CommandRunner = (cmd: string, args: string[], timeoutMs?: number) => Promise<RunOutcome>;
-
-/**
- * The clock a sequence measures its own deadline against.
- *
- * Monotonic, because the commands being timed are the ones that SET the wall clock: with
- * `Date.now()` a clock moved forward makes the sequence look expired on its next step, and
- * one moved back makes the deadline unreachable. The same reasoning as `elevationClock`,
- * where a hand-set clock 1 h 47 min ahead terminated a helper that had in fact succeeded.
- */
+/** Monotonic time keeps deadlines independent of clock corrections. */
 export const elapsedClock = (): number => performance.now();
-
-/**
- * Run commands in order, stopping at the first one that does not succeed. Returns
- * `ok` only when every command exited 0 or failed with one of its own
- * {@link SystemCommand.benignCodes}.
- *
- * A failure carries what already happened. Stopping at the first bad step does not undo
- * the steps before it — `sc config w32time start= auto` succeeding and `sc start` failing
- * leaves the start mode changed, and `sc stop` succeeding before `sc config ... disabled`
- * fails leaves the service down — so the result reports `changed`, `stateMayHaveChanged`
- * and the per-step outcomes instead of a bare "it failed". A successful result implies
- * all of it and carries none of the extra fields.
- *
- * `exec` is injectable so the sequencing and the outcome mapping can be exercised
- * without spawning anything.
- */
-/**
- * The limit for ONE child process, never longer than what the save has left.
- *
- * Null means "do not spawn it at all": the save's time is gone, and starting a process only to
- * kill it a millisecond later is not a limit, it is a waste.
- *
- * Every child goes through here, READS included, and that is the point. The writes consulted
- * the budget and the reads did not - each read took its own 5 s however late the save already
- * was - so a save could spend its whole allowance before reaching the write that checks it.
- * On Windows that is not merely slow: the elevated helper is held to less than the launcher's
- * wait precisely so it can report where it got to, and reads running past that had it
- * terminated instead. Traced with reads answering in 4.8 s each, inside their own limit: the
- * status read, the timezone change, the second status read and the service-state read reach
- * 62.6 s against a 60 s wait, with the timezone already changed.
- */
-function childLimit(limit: number): number | null {
-	const remaining = remainingSaveBudget();
-	if (remaining === null) return Math.max(1, Math.floor(limit));
-	if (remaining <= 0) return null;
-	return Math.max(1, Math.floor(Math.min(limit, remaining)));
-}
-
-/**
- * The limit for ONE command, given what the sequence has left.
- *
- * Whole milliseconds, and at least one. `performance.now()` is fractional, so a remainder that
- * came out below the write limit reached the spawn call as a float and Bun refused it outright:
- * measured live as `The value of "timeout" is out of range. It must be an unsigned integer.
- * Received 44817.258400000006`, which surfaced as a failed `w32tm` step and a save reporting
- * that the host may have been half-changed. Invisible while the budget was large, because then
- * `Math.min` returned the integer constant instead.
- *
- * Never zero: to a spawn call zero means NO limit, so flooring a sub-millisecond remainder to
- * it would lift the bound at exactly the moment the sequence has run out of time.
- */
-function commandTimeout(remaining: number): number {
-	return Math.max(1, Math.floor(Math.min(WRITE_TIMEOUT_MS, remaining)));
-}
-
-export async function runAll(platform: SystemPlatform, commands: SystemCommand[], exec: CommandRunner = runWrite, now: () => number = elapsedClock): Promise<SystemTimeResult> {
-	if (commands.length === 0) return result('unsupported', 'no command available for this platform');
-	const steps: SystemTimeStep[] = [];
-	// Monotonic on purpose: these commands are the ones that MOVE the wall clock, and a
-	// deadline measured against it would end a sequence early or never (see elevationClock).
-	// The SAVE's deadline wins when there is one: this sequence may be the third of four in it,
-	// and starting a fresh 150 s here is what let a combined save outlast the screen's wait.
-	const remainingSave = remainingSaveBudget();
-	const deadline = now() + Math.min(SEQUENCE_BUDGET_MS, remainingSave ?? SEQUENCE_BUDGET_MS);
-	/** A stopped sequence: the failing step is recorded, and everything before it already ran. */
-	const stopped = (command: SystemCommand, outcome: SystemTimeOutcome, message: string, ran = true): SystemTimeResult => {
-		steps.push({ command: [command.cmd, ...command.args].join(' '), ok: false });
-		// `ran` is false only for a binary that does not exist, which cannot have touched
-		// anything. Every other failure was a process that started and refused part-way —
-		// as capable of leaving a change behind as one that exited 0.
-		return { ...result(outcome, message), changed: steps.some(step => step.ok), stateMayHaveChanged: ran || steps.some(step => step.ok), steps };
-	};
-	for (const command of commands) {
-		// The budget is the sequence's, so a command starting with no time left is refused
-		// rather than given a fresh 90 seconds of its own.
-		const remaining = deadline - now();
-		if (remaining <= 0) return stopped(command, 'error', `the time configuration did not finish within ${Math.round(SEQUENCE_BUDGET_MS / 1000)} s`, false);
-		const r = await exec(command.cmd, command.args, commandTimeout(remaining));
-		const done = (): void => void steps.push({ command: [command.cmd, ...command.args].join(' '), ok: true });
-		// Before anything else, including the exit code: a step that reports having had
-		// nothing to do succeeded, and `w32tm` says so with a non-zero status (38 measured).
-		if ((r.kind === 'ok' || r.kind === 'failed') && command.benignOutput?.test(r.output)) {
-			done();
-			continue;
-		}
-		if (r.kind === 'ok') {
-			// Exit 0 is not the whole story for w32tm: it prints the HRESULT of a refusal
-			// and returns zero anyway, so the output has to be read before believing it.
-			if (!command.failOnOutput?.test(r.output)) {
-				done();
-				continue;
-			}
-			return stopped(command, classifyFailure(platform, 0, r.output), firstLine(r.output) ?? `${command.cmd} reported a failure`);
-		}
-		if (r.kind === 'failed' && r.code !== null && command.benignCodes?.includes(r.code)) {
-			done();
-			continue;
-		}
-		if (r.kind === 'missing') return stopped(command, 'unsupported', `${command.cmd} is not installed`, false);
-		if (r.kind === 'timeout') return stopped(command, 'error', `${command.cmd} timed out`);
-		return stopped(command, classifyFailure(platform, r.code, r.output), firstLine(r.output) ?? `${command.cmd} exited with ${r.code}`);
-	}
-	return result('ok');
-}
-
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
 
 /** All capabilities off — the shape returned for a platform with no time backend. */
 const NO_CAPABILITIES: SystemTimeCapabilities = { setClock: false, setTimezone: false, setNtpServer: false, setNtpEnabled: false };
