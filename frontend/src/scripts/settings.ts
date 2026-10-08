@@ -43,6 +43,8 @@ export const maxDownloadSpeed = writable(0);
 export const maxUploadSpeed = writable(0);
 export const maxChunkSize = writable(0);
 export const maxMessageSize = writable(0);
+export const chunkWindowBytes = writable(0);
+export const chunkInflightBudgetBytes = writable(0);
 export const allowRelay = writable(false);
 export const maxRelayReservations = writable(DEFAULT_MAX_RELAY_RESERVATIONS);
 export const useRelayClients = writable(true);
@@ -140,6 +142,8 @@ export async function loadSettings(options: { throwOnError?: boolean } = {}): Pr
 		maxUploadSpeed.set(settings.network.maxUploadSpeed);
 		maxChunkSize.set(settings.network.maxChunkSize);
 		maxMessageSize.set(settings.network.maxMessageSize);
+		chunkWindowBytes.set(settings.network.chunkWindowBytes);
+		chunkInflightBudgetBytes.set(settings.network.chunkInflightBudgetBytes);
 		allowRelay.set(settings.network.allowRelay);
 		maxRelayReservations.set(settings.network.maxRelayReservations);
 		useRelayClients.set(settings.network.useRelayClients ?? true);
@@ -267,6 +271,34 @@ export function setMaxMessageSize(value: number): void {
 	const floor = minMessageSizeFor(get(maxChunkSize));
 	const clampedValue = Math.max(floor, value || 1);
 	updateSetting(maxMessageSize, 'network.maxMessageSize', clampedValue);
+}
+
+/**
+ * Why a per-peer chunk window and the budget shared by every download cannot be saved together,
+ * as a translation key, or null when they can. The backend refuses the same pairs.
+ */
+export function chunkWindowLimitsError(windowBytes: number, budgetBytes: number): string | null {
+	if (!Number.isSafeInteger(windowBytes) || windowBytes <= 0 || !Number.isSafeInteger(budgetBytes) || budgetBytes <= 0) return 'settings.download.errorChunkWindowInvalid';
+	if (windowBytes > budgetBytes) return 'settings.download.errorChunkWindowExceedsBudget';
+	return null;
+}
+
+/** Save the chunk window and budget; both apply to running downloads. */
+export async function setChunkWindowLimits(windowBytes: number, budgetBytes: number): Promise<void> {
+	const error = chunkWindowLimitsError(windowBytes, budgetBytes);
+	if (error) {
+		addNotification(tt(error), 'error');
+		return;
+	}
+	// Write in the order that never leaves the saved window above the saved budget: the backend
+	// refuses each write on its own.
+	if (windowBytes > get(chunkInflightBudgetBytes)) {
+		await updateSetting(chunkInflightBudgetBytes, 'network.chunkInflightBudgetBytes', budgetBytes);
+		await updateSetting(chunkWindowBytes, 'network.chunkWindowBytes', windowBytes);
+	} else {
+		await updateSetting(chunkWindowBytes, 'network.chunkWindowBytes', windowBytes);
+		await updateSetting(chunkInflightBudgetBytes, 'network.chunkInflightBudgetBytes', budgetBytes);
+	}
 }
 
 export function setAllowRelay(enabled: boolean): void {
