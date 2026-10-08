@@ -24,6 +24,9 @@ const errorCodes = [
 	'LISH_UNSUPPORTED_CHECKSUM',
 	'LISH_UNEXPECTED_ARRAY',
 	'LISH_CREATE_CANCELLED',
+	'LISH_INVALID_SIGNATURE',
+	'LISH_PUBLISHER_MISMATCH',
+	'LISH_SIGNING_UNSUPPORTED_KEY',
 	'PATH_ACCESS_DENIED',
 	'INVALID_FILE_INDEX',
 	// Longer than every responder will accept, so it is refused where the user can be told

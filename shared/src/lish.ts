@@ -2,6 +2,7 @@ import { CodedError, ErrorCodes } from './errors.ts';
 import { formatUntrustedValue } from './untrusted-value.ts';
 import { MAX_MANIFEST_DESCRIPTION_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, checkChecksum, checkEntryPath, checkEntryTree, checkTextField } from './manifest-limits.ts';
 import { formatBytes } from './utils.ts';
+import { isSignedLISH, validateSignedLISHShape } from './lish-signature.ts';
 export type LISHid = string;
 export type ChunkID = string;
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
@@ -120,6 +121,9 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 		}
 	}
 	checkEntryTree(lish.directories ?? [], [...(lish.files ?? []), ...(lish.links ?? [])]);
+	// Unsigned manifests keep today's lenient metadata rules; a signature additionally needs a
+	// closed, round-trip-stable shape or it would stop verifying after storage.
+	if (isSignedLISH(lish)) validateSignedLISHShape(lish);
 }
 
 /**
@@ -147,6 +151,10 @@ export interface ILISH {
 	directories?: IDirectoryEntry[];
 	files?: IFileEntry[];
 	links?: ILinkEntry[];
+	/** Peer ID of the node that signed the manifest; present only together with `signature`. */
+	publisher?: string;
+	/** Ed25519 signature (base64url) over {@link signedManifestBytes}. */
+	signature?: string;
 }
 // Extended interface for LISHs stored locally in the app (lishs.json)
 export interface IStoredLISH extends ILISH {
@@ -194,6 +202,8 @@ export interface ILISHSummary {
 	totalDownloadedBytes: number;
 	errorCode?: string | undefined;
 	errorDetail?: string | undefined;
+	/** Verified publisher of a signed manifest. */
+	publisher?: string | undefined;
 }
 // Detail for the download detail view (files without checksums, no chunks)
 export interface ILISHDetailFile {
@@ -223,6 +233,8 @@ export interface ILISHDetail {
 	totalChunks: number;
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
+	/** Verified publisher of a signed manifest. */
+	publisher?: string | undefined;
 }
 
 // Result of `lishs.list`: the summaries plus the transient per-LISH activity sets.

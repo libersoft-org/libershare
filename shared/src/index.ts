@@ -85,6 +85,7 @@ export function isCompressed(filePath: string): boolean {
 
 // LISH types
 export * from './lish.ts';
+export * from './lish-signature.ts';
 
 // API client
 export { API, type IRpcClient, type IWsClient } from './api.ts';

@@ -40,7 +40,8 @@ function formatTimestamp(date: Date): string {
 }
 
 // Helper to extract permission bits from mode and format as octal string (remove file type bits)
-function getPermissions(mode: number): string {
+/** Octal permission bits of a file mode, without leading zeros (`0o044` gives `"44"`). */
+export function getPermissions(mode: number): string {
 	const perms = mode & 0o777; // Keep only the last 9 bits (rwxrwxrwx)
 	return perms.toString(8); // Convert to octal string
 }
