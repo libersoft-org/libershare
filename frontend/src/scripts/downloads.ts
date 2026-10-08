@@ -42,6 +42,8 @@ export interface DownloadData {
 	id: string;
 	name: string;
 	description?: string | undefined;
+	/** Peer ID whose manifest signature the backend verified; absent for an unsigned item. */
+	publisher?: string | undefined;
 	directory?: string | undefined;
 	progress: number;
 	size: string;
@@ -107,6 +109,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		id: detail.id,
 		name: detail.name ?? '-',
 		description: detail.description,
+		publisher: detail.publisher,
 		directory: detail.directory,
 		progress,
 		size: formatSize(detail.totalSize),

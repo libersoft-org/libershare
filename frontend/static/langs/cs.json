@@ -267,6 +267,8 @@
 			"dataPathNotFound": "Zadaná cesta k datům neexistuje.",
 			"showAdvanced": "Zobrazit pokročilá nastavení",
 			"hideAdvanced": "Skrýt pokročilá nastavení",
+			"sign": "Podepsat mou identitou",
+			"signHint": "Podpis veřejně spojí tuto položku s ID vašeho uzlu.",
 			"progress": {
 				"title": "Vytváření",
 				"creating": "Vytváření LISHe ...",
@@ -314,7 +316,16 @@
 		"errorDiskSpaceUnavailable": "Nelze zjistit volné místo na disku. Zkontrolujte přístup k pracovní a cílové složce a zkuste to znovu.",
 		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
-		"errorDownload": "Stahování selhalo: {detail}"
+		"errorDownload": "Stahování selhalo: {detail}",
+		"signature": "Podpis",
+		"signedBy": "Podepsal",
+		"unsigned": "Nepodepsáno",
+		"reportedPublisher": "Uváděný vydavatel",
+		"publishersDiffer": "Pod stejným ID nabízejí různí vydavatelé",
+		"otherPublisherOnPeer": "Tento uzel nabízí pod stejným ID jiného vydavatele",
+		"errorInvalidSignature": "Neplatný podpis manifestu: {detail}",
+		"errorPublisherMismatch": "Manifest je od jiného vydavatele, než se očekávalo: {detail}",
+		"errorSigningUnsupportedKey": "Identita tohoto uzlu neumí podepisovat (je potřeba klíč Ed25519)"
 	},
 	"import": {
 		"uploadFromLocal": "Nahrát z lokálního počítače",

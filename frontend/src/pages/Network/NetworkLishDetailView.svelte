@@ -189,6 +189,14 @@
 			<div class="info-row"><span class="label">{$t('common.name')}:</span> <span class="value">{detail.name}</span></div>
 		{/if}
 		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
+		<!-- The backend verified this signature over the whole manifest, so "signed by" is earned here. -->
+		<div class="info-row">
+			{#if detail.publisher}
+				<span class="label">{$t('lish.signedBy')}:</span> <span class="value mono">{detail.publisher}</span>
+			{:else}
+				<span class="label">{$t('lish.unsigned')}</span>
+			{/if}
+		</div>
 		{#if detail.description}
 			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
 		{/if}

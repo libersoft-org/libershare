@@ -2,8 +2,8 @@
 	import { onDestroy } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import { type LishSearchResult } from '@shared';
-	import { formatSize } from '../../scripts/utils.ts';
-	import { type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
+	import { formatSize, shortenPeerID } from '../../scripts/utils.ts';
+	import { searchResultKey, type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
 	import { networkSummary } from '../../scripts/networks.ts';
 	import { searchTimeout } from '../../scripts/settings.ts';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -61,6 +61,9 @@
 		void search.cancel();
 	}
 
+	// Two rows with one ID means peers report different publishers for it: at most one is genuine.
+	let publishersDiffer = $derived(new Set(search.results.map(r => r.id)).size < search.results.length);
+
 	function makeOpenHandler(row: LishSearchResult): () => void {
 		return () => onOpenLishPeers(row);
 	}
@@ -77,6 +80,15 @@
 	.lish-id {
 		font-family: var(--font-mono);
 		font-size: 1.4vh;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.lish-publisher {
+		font-size: 1.3vh;
+		color: var(--secondary-foreground);
 		display: block;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -156,6 +168,9 @@
 	{#if !search.searching && search.refusedPeers > 0}
 		<Alert type="info" message={$t('network.somePeersRefusedListing')} />
 	{/if}
+	{#if publishersDiffer}
+		<Alert type="warning" message={$t('lish.publishersDiffer')} />
+	{/if}
 	{#if search.results.length > 0}
 		<Table columns="auto 2fr 1fr 12vh 10vh" columnsMobile="1fr auto">
 			<TableHeader>
@@ -165,10 +180,15 @@
 				<TableCell align="center">{$t('network.totalSize')}</TableCell>
 				<TableCell align="center">{$t('common.peers')}</TableCell>
 			</TableHeader>
-			{#each search.results as row, i (row.id)}
+			{#each search.results as row, i (searchResultKey(row))}
 				<TableRow position={[0, baseY + 1 + i]} onConfirm={makeOpenHandler(row)}>
 					<TableCell desktopOnly>{i + 1}</TableCell>
-					<TableCell><span class="lish-id">{row.id}</span></TableCell>
+					<TableCell>
+						<span class="lish-id">{row.id}</span>
+						{#if row.publisher}
+							<span class="lish-publisher">{$t('lish.reportedPublisher')}: {shortenPeerID(row.publisher)}</span>
+						{/if}
+					</TableCell>
 					<TableCell><span class="lish-name">{row.name ?? $t('network.unnamed')}</span></TableCell>
 					<TableCell align="center">{row.totalSize !== undefined ? formatSize(row.totalSize) : '—'}</TableCell>
 					<TableCell align="center">{row.peers.length}</TableCell>

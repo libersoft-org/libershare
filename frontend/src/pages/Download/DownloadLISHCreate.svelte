@@ -126,6 +126,8 @@
 	let compress = $state($defaultCompress);
 	let compressionAlgorithm = $state<CompressionAlgorithm>($defaultCompressionAlgorithm);
 	let showAdvanced = $state(false);
+	// Off by default: a signature publicly links the item to this node's Peer ID.
+	let sign = $state(false);
 	// Prefill the LISH name from the shared file/directory basename (if any).
 	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
 	let nameManuallyEdited = $state(false); // Stop auto-filling the name from the data path once the user types one
@@ -217,6 +219,7 @@
 			};
 			if (name) params['name'] = name;
 			if (description) params['description'] = description;
+			if (sign) params['sign'] = true;
 			if (saveToFile && lishFile) params['lishFile'] = lishFile;
 			if (saveToFile) {
 				params['minifyJSON'] = minifyJSON;
@@ -382,35 +385,40 @@
 					<Button icon="/img/directory.svg" position={[1, 4]} onConfirm={openOutputPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
 			{/if}
+			<!-- Publisher signature -->
+			<SwitchRow label={$t('lish.create.sign') + ':'} checked={sign} position={[0, 5]} onConfirm={() => (sign = !sign)} />
+			{#if sign}
+				<Alert type="info" message={$t('lish.create.signHint')} />
+			{/if}
 			<!-- Advanced Settings Toggle -->
-			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 5]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+			<Button icon={showAdvanced ? '/img/up.svg' : '/img/down.svg'} label={$t(showAdvanced ? 'lish.create.hideAdvanced' : 'lish.create.showAdvanced')} position={[0, 6]} onConfirm={() => (showAdvanced = !showAdvanced)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 			{#if showAdvanced}
 				{#if saveToFile}
 					<!-- Minify JSON Switch -->
-					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 6]} onConfirm={() => (minifyJSON = !minifyJSON)} />
+					<SwitchRow label={$t('settings.lishNetwork.minifyJSON') + ':'} checked={minifyJSON} position={[0, 7]} onConfirm={() => (minifyJSON = !minifyJSON)} />
 					<!-- Compress Switch -->
-					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 7]} onConfirm={handleCompressToggle} />
+					<SwitchRow label={$t('settings.lishNetwork.compress') + ':'} checked={compress} position={[0, 8]} onConfirm={handleCompressToggle} />
 					{#if compress}
-						<CompressionAlgorithmRow label={$t('settings.lishNetwork.compressionAlgorithm')} value={compressionAlgorithm} row={8} onSelect={handleAlgorithmSelect} />
+						<CompressionAlgorithmRow label={$t('settings.lishNetwork.compressionAlgorithm')} value={compressionAlgorithm} row={9} onSelect={handleAlgorithmSelect} />
 					{/if}
 				{/if}
 				<!-- Chunk Size -->
-				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 9]} />
+				<Input bind:value={chunkSize} label={$t('lish.create.chunkSize')} position={[0, 10]} />
 				<!-- Hash Algorithm -->
 				<div>
 					<div class="label">{$t('lish.create.algorithm')}:</div>
 					<div class="algo-selector">
 						{#each SUPPORTED_ALGOS as algo, i}
-							<Button label={algo} position={[i, 10]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+							<Button label={algo} position={[i, 11]} active={algorithm === algo} onConfirm={() => (algorithm = algo)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
 					</div>
 				</div>
 				<!-- Threads -->
-				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
+				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 12]} />
 			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 12]}>
+		<ButtonBar justify="center" basePosition={[0, 13]}>
 			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>

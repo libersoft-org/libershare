@@ -267,6 +267,8 @@
 			"dataPathNotFound": "The specified data path does not exist.",
 			"showAdvanced": "Show advanced settings",
 			"hideAdvanced": "Hide advanced settings",
+			"sign": "Sign with my identity",
+			"signHint": "The signature publicly links this item to your node ID.",
 			"progress": {
 				"title": "Creating",
 				"creating": "Creating LISH ...",
@@ -314,7 +316,16 @@
 		"errorDiskSpaceUnavailable": "Cannot check available disk space. Check access to the download and destination folders, then try again.",
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
-		"errorDownload": "Download failed: {detail}"
+		"errorDownload": "Download failed: {detail}",
+		"signature": "Signature",
+		"signedBy": "Signed by",
+		"unsigned": "Unsigned",
+		"reportedPublisher": "Reported publisher",
+		"publishersDiffer": "Different publishers offer items under the same ID",
+		"otherPublisherOnPeer": "This node offers a different publisher under the same ID",
+		"errorInvalidSignature": "Invalid manifest signature: {detail}",
+		"errorPublisherMismatch": "The manifest is from a different publisher than expected: {detail}",
+		"errorSigningUnsupportedKey": "This node identity cannot sign (an Ed25519 key is required)"
 	},
 	"import": {
 		"uploadFromLocal": "Upload from local computer",

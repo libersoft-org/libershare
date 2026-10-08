@@ -17,11 +17,13 @@
 		areaID: string;
 		position?: Position | undefined;
 		lish: PeerLishEntry;
+		/** Publisher the manifest must carry: a Peer ID, or `null` for an unsigned item. */
+		expectedPublisher: string | null;
 		peerID: string;
 		networkID: string;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, lish, peerID, networkID, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, lish, expectedPublisher, peerID, networkID, onBack }: Props = $props();
 	let detail = $state<IPeerLishDetail | null>(null);
 	let loading = $state(true);
 	let error = $state('');
@@ -31,7 +33,7 @@
 		loading = true;
 		error = '';
 		try {
-			detail = await api.lishnets.getPeerLish(lish.id, peerID, networkID);
+			detail = await api.lishnets.getPeerLish(lish.id, peerID, networkID, expectedPublisher);
 		} catch (e: any) {
 			error = translateError(e);
 			detail = null;
@@ -42,7 +44,7 @@
 	async function addToDownloads(): Promise<void> {
 		adding = true;
 		try {
-			await api.lishnets.addPeerLish(lish.id, peerID, networkID);
+			await api.lishnets.addPeerLish(lish.id, peerID, networkID, expectedPublisher);
 			addNotification($t('network.lishAdded', { name: lish.name || lish.id }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');

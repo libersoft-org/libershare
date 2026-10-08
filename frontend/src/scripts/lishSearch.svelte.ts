@@ -31,6 +31,11 @@ export interface LishSearchSession {
 	dispose(): void;
 }
 
+/** Identity of a search row: the LISH ID together with the publisher peers report for it. */
+export function searchResultKey(row: Pick<LishSearchResult, 'id' | 'publisher'>): string {
+	return `${row.id}|${row.publisher ?? ''}`;
+}
+
 export function createLishSearch(): LishSearchSession {
 	let query = $state('');
 	let searching = $state(false);
@@ -49,10 +54,12 @@ export function createLishSearch(): LishSearchSession {
 		// fresh row when the LISH was not seen before. Without this, replacing the row
 		// object orphaned the detail page's reference and `peers` updates stopped
 		// propagating into the open detail view.
-		const byID = new Map(results.map(r => [r.id, r] as const));
+		// Keyed by (id, publisher), as in the backend: another publisher under the same ID is a
+		// separate offer and must never merge into the original publisher's row.
+		const byID = new Map(results.map(r => [searchResultKey(r), r] as const));
 		let inserted = false;
 		for (const incoming of d.lishs) {
-			const existing = byID.get(incoming.id);
+			const existing = byID.get(searchResultKey(incoming));
 			if (existing) {
 				// Merge: in-place replace fields the backend may have refined (name, totalSize)
 				// and union the peers list by peerID.
@@ -61,7 +68,7 @@ export function createLishSearch(): LishSearchSession {
 				const known = new Set(existing.peers.map(p => p.peerID));
 				for (const p of incoming.peers) if (!known.has(p.peerID)) existing.peers.push(p);
 			} else {
-				byID.set(incoming.id, incoming);
+				byID.set(searchResultKey(incoming), incoming);
 				inserted = true;
 			}
 		}
