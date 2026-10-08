@@ -6,7 +6,8 @@ Version: ${PRODUCT_VERSION}
 Architecture: ${PKG_DEB_ARCH}
 Maintainer: LiberSoft <info@libersoft.org>
 Installed-Size: ${PKG_INSTALLED_SIZE}
-Depends: libwebkit2gtk-4.1-0, libgtk-3-0, pkexec
+Depends: libwebkit2gtk-4.1-0, libgtk-3-0, pkexec, libsystemd0, libasound2t64 | libasound2, libglib2.0-0t64 | libglib2.0-0
+Recommends: libpulse0
 Section: net
 Priority: optional
 Homepage: ${PRODUCT_WEBSITE}
@@ -32,7 +33,8 @@ Summary: ${PRODUCT_NAME} - peer-to-peer file sharing
 License: MIT
 URL: ${PRODUCT_WEBSITE}
 AutoReqProv: no
-Requires: webkit2gtk4.1, gtk3, polkit
+Requires: webkit2gtk4.1, gtk3, polkit, systemd-libs, alsa-lib, glib2
+Recommends: pulseaudio-libs
 
 # Nothing may rewrite a binary on its way into the package. The helper's SHA-256
 # is pinned inside the backend, so a stripped or compressed copy would fail its
@@ -87,13 +89,17 @@ license = MIT
 depend = webkit2gtk-4.1
 depend = gtk3
 depend = polkit
+depend = systemd-libs
+depend = alsa-lib
+depend = glib2
+optdepend = libpulse: PulseAudio or PipeWire volume control
 PKGINFO_EOF
 	cd "$PKG_STAGING"
 	bsdtar -czf "$WORK/.MTREE" \
 		--format=mtree \
 		--options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
 		.
-	bsdtar --uid 0 --gid 0 -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" . |
+	bsdtar --uid 0 --gid 0 -cf - -C "$WORK" .PKGINFO .MTREE -C "$PKG_STAGING" usr |
 		xz $XZ_FLAGS >"$FINAL_DIR/${PRODUCT_NAME_LOWER}-${PRODUCT_VERSION}-1-${PKG_PACMAN_ARCH}.pkg.tar.xz"
 }
 

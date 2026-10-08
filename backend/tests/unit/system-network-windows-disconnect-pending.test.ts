@@ -38,8 +38,8 @@ function scenario(outcome: Outcome): any {
 		const windows = await import('./src/system-network-windows.ts');
 		const helper = await import('./src/network-helper-client.ts');
 		const environment = await import('./src/network-helper-windows.ts');
-		const childProcess = await import('node:child_process');
-		const { promisify } = await import('node:util');
+		const nativeWrite = await import('./src/native/win32/network-mutation.ts');
+		const { withNativeMutationContext } = await import('./src/native/mutation-context.ts');
 		const { ipv4BaselineOf } = await import('@shared');
 		let elevatedMode = false, directWrites = 0, elevatedWrites = 0;
 		const iface = {
@@ -48,13 +48,15 @@ function scenario(outcome: Outcome): any {
 			ipv4Mode: 'static', ipv4Configurable: true, wifiConfigurable: true,
 			gateway: '192.0.2.1', dns: ['192.0.2.53']
 		};
-		const execFile = () => {};
-		execFile[promisify.custom] = async (_file, args) => {
-			if (args.includes(windows.WINDOWS_ELEVATION_COMMAND)) return { stdout: String(!elevatedMode) };
-			if (args.includes(windows.WINDOWS_STATE_COMMAND)) return { stdout: 'state fixture' };
+		const workers = await import('./src/native/worker-host.ts');
+		mock.module('./src/native/worker-host.ts',()=>({...workers,NativeWorkerChannel:class { async call(request){
+			if(request.method==='win32.network.snapshot')return [iface];
+			if(request.method==='win32.network.capabilities')return {elevated:!elevatedMode,wifi:true};
+			throw new Error('Unexpected native read');
+		} }}));
+		mock.module('./src/native/win32/network-mutation.ts',()=>({...nativeWrite,applyNativeWindowsIPv4:async()=>{
 			directWrites++; throw new Error('direct IPv4 reached');
-		};
-		mock.module('node:child_process', () => ({ ...childProcess, execFile }));
+		}}));
 		mock.module('./src/system-network-windows.ts', () => ({ ...windows,
 			parseWindowsNetworkState: () => [iface], readWindowsWifi: () => new Map(), isWindowsWifiConfigurable: () => true,
 		}));
@@ -70,7 +72,7 @@ function scenario(outcome: Outcome): any {
 		async function ipv4(elevated) {
 			elevatedMode = elevated;
 			common.resetNetworkCapabilitiesCache();
-			return common.applyIPv4Unlocked(guid, { mode: 'static', address: '192.0.2.20', prefixLength: 24, gateway: '192.0.2.1' }, '', true, ipv4BaselineOf(iface));
+			return withNativeMutationContext({},()=>common.applyIPv4Unlocked(guid, { mode: 'static', address: '192.0.2.20', prefixLength: 24, gateway: '192.0.2.1' }, '', true, ipv4BaselineOf(iface)));
 		}
 		const before = { disconnects, scans, lookups, profileWrites };
 		const conflicts = [];

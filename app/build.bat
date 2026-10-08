@@ -736,13 +736,15 @@ set "_be_start=0"
 call :get_timestamp _be_start
 echo === Building backend ^(target: !BUN_TGT!^) ===
 cd /d "!ROOT_DIR!\backend"
+call bun scripts\check-native-runtime.ts "!BUN_TGT!"
+if errorlevel 1 ( endlocal & exit /b 1 )
 if exist build rmdir /s /q build
 call bun i --frozen-lockfile
 if errorlevel 1 ( endlocal & exit /b 1 )
 mkdir build
 set "SIGN_POWERSHELL=powershell.exe"
 where pwsh.exe >nul 2>&1 && set "SIGN_POWERSHELL=pwsh.exe"
-call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target !BUN_TGT! src/network-helper.ts --outfile build\lish-network-helper.exe
+call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig --target !BUN_TGT! src/network-helper.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define LISH_NATIVE_WORKER_ENTRY=\"./native/worker-runtime.ts\" --define LISH_COREWLAN_WORKER_ENTRY=\"./system-network-corewlan-worker.js\" --outfile build\lish-network-helper.exe
 if errorlevel 1 ( endlocal & exit /b 1 )
 call bun scripts\set-windows-gui-subsystem.ts build\lish-network-helper.exe
 if errorlevel 1 ( endlocal & exit /b 1 )
@@ -760,7 +762,7 @@ if defined WINDOWS_CERTIFICATE_THUMBPRINT (
     "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-network-launcher.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
     if errorlevel 1 ( endlocal & exit /b 1 )
 )
-call bun build --compile --target !BUN_TGT! src/app.ts --outfile build\lish-backend.exe --define LISH_NETWORK_HELPER_SHA256=\"!HELPER_HASH!\"
+call bun build --compile --target !BUN_TGT! src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define LISH_NATIVE_WORKER_ENTRY=\"./native/worker-runtime.ts\" --define LISH_COREWLAN_WORKER_ENTRY=\"./system-network-corewlan-worker.js\" --outfile build\lish-backend.exe --define LISH_NETWORK_HELPER_SHA256=\"!HELPER_HASH!\"
 if errorlevel 1 ( endlocal & exit /b 1 )
 call bun scripts\set-windows-gui-subsystem.ts build\lish-backend.exe
 if errorlevel 1 ( endlocal & exit /b 1 )

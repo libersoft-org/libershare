@@ -9,7 +9,7 @@ it('stops relay polling before waiting for accepted API requests', async () => {
 		import assert from 'node:assert/strict';
 		import { mock } from 'bun:test';
 		mock.module('./src/api/system.ts', () => ({
-			initSystemHandlers: () => ({ startPolling() {}, stopPolling() {} }),
+			initSystemHandlers: () => ({ startPolling() {}, stopPolling() {}, async close() {} }),
 			restrictNetworkCapabilities: state => state,
 		}));
 		const timers = new Map();

@@ -1,4 +1,6 @@
 @echo off
+call bun scripts\check-native-runtime.ts
+if errorlevel 1 exit /b 1
 if exist build rmdir /s /q build
 call bun i --frozen-lockfile
 if errorlevel 1 exit /b 1
@@ -12,7 +14,7 @@ if not defined PRODUCT_VERSION exit /b 1
 rem The version resource is what the UAC prompt shows as the program name, so every
 rem binary a user may be asked to approve carries a readable one instead of its file name.
 set WINDOWS_RESOURCE=--windows-title "%PRODUCT_NAME%" --windows-publisher "LiberSoft" --windows-version "%PRODUCT_VERSION%.0"
-call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig %WINDOWS_RESOURCE% --windows-description "%PRODUCT_NAME% network settings helper" src/network-helper.ts --outfile build\lish-network-helper.exe
+call bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --no-compile-autoload-package-json --no-compile-autoload-tsconfig %WINDOWS_RESOURCE% --windows-description "%PRODUCT_NAME% network settings helper" src/network-helper.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define LISH_NATIVE_WORKER_ENTRY=\"./native/worker-runtime.ts\" --outfile build\lish-network-helper.exe --define LISH_COREWLAN_WORKER_ENTRY=\"./system-network-corewlan-worker.js\"
 if errorlevel 1 exit /b 1
 call bun scripts\set-windows-gui-subsystem.ts build\lish-network-helper.exe
 if errorlevel 1 exit /b 1
@@ -30,7 +32,7 @@ if defined WINDOWS_CERTIFICATE_THUMBPRINT (
     "%SIGN_POWERSHELL%" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-network-launcher.exe -Thumbprint "%WINDOWS_CERTIFICATE_THUMBPRINT%"
     if errorlevel 1 exit /b 1
 )
-call bun build --compile %WINDOWS_RESOURCE% --windows-description "%PRODUCT_NAME% backend" src/app.ts --outfile build\lish-backend.exe --define LISH_NETWORK_HELPER_SHA256=\"%HELPER_HASH%\"
+call bun build --compile %WINDOWS_RESOURCE% --windows-description "%PRODUCT_NAME% backend" src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define LISH_NATIVE_WORKER_ENTRY=\"./native/worker-runtime.ts\" --outfile build\lish-backend.exe --define LISH_NETWORK_HELPER_SHA256=\"%HELPER_HASH%\" --define LISH_COREWLAN_WORKER_ENTRY=\"./system-network-corewlan-worker.js\"
 if errorlevel 1 exit /b 1
 call bun scripts\set-windows-gui-subsystem.ts build\lish-backend.exe
 if errorlevel 1 exit /b 1

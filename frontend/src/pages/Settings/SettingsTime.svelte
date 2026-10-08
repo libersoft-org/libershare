@@ -47,6 +47,7 @@
 	let timezones = $state<string[]>([]);
 	let errorMessage = $state('');
 	let busy = $state(false);
+	let acknowledging = $state(false);
 	let loading = $state(true);
 	let liveUpdates = $state(false);
 	let stale = $state(false);
@@ -197,20 +198,34 @@
 	}
 
 	function selectServer(server: string): void {
-		if (busy || loading || stale || !liveUpdates || !status?.capabilities.setNtpServer) return;
+		if (formDisabled || !status?.capabilities.setNtpServer) return;
 		ntpServer = server;
 		clearFeedback();
 	}
 
 	async function reloadForm(): Promise<void> {
-		if (busy || loading) return;
+		if (loading || (busy && !status?.mutation)) return;
 		clearFeedback();
 		await refresh();
 	}
 
+	async function acknowledgeMutation(): Promise<void> {
+		const operationId = status?.mutation?.operationId;
+		if (status?.mutation?.state !== 'interrupted' || !operationId || status.stale || busy || loading || acknowledging) return;
+		acknowledging = true;
+		clearFeedback();
+		try {
+			applyStatus(await api.call<SystemTimeStatus>('system.time.acknowledgeInterrupted', { operationId }, SYSTEM_TIME_READ_TIMEOUT_MS));
+		} catch (error) {
+			errorMessage = translateError(error);
+		} finally {
+			acknowledging = false;
+		}
+	}
+
 	onMount(() => {
 		const ticker = setInterval(() => {
-			if (!status) return;
+			if (!status || status.stale) return;
 			const nowMs = status.nowMs + performance.now() - readAt;
 			const clock = formatHostClock(nowMs, status.timezone, status.utcOffsetMinutes, offsetMode);
 			displayClock = `${clock.hours}:${clock.minutes}:${clock.seconds}`;
@@ -218,7 +233,18 @@
 			if (!busy && !stale && !clockEdited) resyncClockFields();
 		}, 1000);
 		offTimeChanged = api.on('system:timeChanged', (next: SystemTimeStatus) => {
-			if (busy || destroyed) return;
+			if (destroyed) return;
+			if (busy) {
+				if (status) {
+					const current = { ...status };
+					delete current.mutation;
+					delete current.stale;
+					if (next.mutation) current.mutation = next.mutation;
+					if (next.stale !== undefined) current.stale = next.stale;
+					status = current;
+				}
+				return;
+			}
 			// A fresh event can fulfill a requested reload, but must not discard later edits.
 			if (foregroundRead?.()) {
 				foregroundRead = null;
@@ -286,7 +312,7 @@
 	}
 
 	function toggleAutoSync(): void {
-		if (busy || loading || stale || !liveUpdates || !status?.capabilities.setNtpEnabled) return;
+		if (formDisabled || !status?.capabilities.setNtpEnabled) return;
 		clearFeedback();
 		// A hand-set clock cannot survive automatic synchronisation, so switching it on
 		// gives up the edit. Do that visibly — put the live time back and say so — rather
@@ -310,6 +336,7 @@
 	 * request (see syncSwitchIsDirty).
 	 */
 	function assertSyncOff(): void {
+		if (formDisabled) return;
 		clearFeedback();
 		autoSync = false;
 		autoSyncTouched = true;
@@ -378,7 +405,7 @@
 	}
 
 	async function saveSettings(): Promise<void> {
-		if (!status?.supported || busy || loading || stale || !liveUpdates || !hasChanges) return;
+		if (!status || formDisabled || !hasChanges) return;
 		clearFeedback();
 		// A hand-set clock only survives with synchronisation off, so a save that leaves
 		// it on discards the edit instead of writing a value the daemon overwrites
@@ -426,7 +453,7 @@
 	// the two messages together are a dead end — nothing on this screen can resolve the
 	// state, so say where it can be resolved instead of asking for the impossible.
 	let syncUnknownLocked = $derived(syncUnknown && !status?.capabilities.setNtpEnabled);
-	let formDisabled = $derived(busy || loading || stale || !liveUpdates || !status?.supported);
+	let formDisabled = $derived(busy || acknowledging || loading || stale || !liveUpdates || !status?.supported || !!status.mutation || status.stale === true);
 	// An unknown sync state locks the clock only where nothing can resolve it. Where the
 	// host will let this application switch synchronisation, the save is decided against a
 	// state read WITH the privileges the write needs — on macOS that is the only way the
@@ -680,13 +707,15 @@
 		{#if errorMessage}<div class="error-message" role="alert"><Alert type="error" message={errorMessage} /></div>{/if}
 		{#if successMessage}<div class="success-message" role="status"><Alert type="info" message={successMessage} /></div>{/if}
 		{#if stale}<Alert type="warning" message={$t('settings.time.changedOutside')} />{/if}
+		{#if status?.mutation}<div role="status" aria-live="polite"><Alert type="warning" message={$t('settings.systemMutation.' + status.mutation.state)} /></div>{/if}
+		{#if status?.stale}<div role="status"><Alert type="warning" message={$t('settings.systemMutation.stale')} /></div>{/if}
 		{#if status && !liveUpdates}<Alert type="warning" message={$t('settings.time.updatesUnavailable')} />{/if}
 		{#if status && !status.supported}<Alert type="warning" message={$t('settings.time.unsupported')} />{/if}
 		{#if syncUnknown}<Alert type="warning" message={syncUnknownLocked ? $t('settings.time.syncUnknownLocked') : $t('settings.time.syncUnknown')} />{/if}
 		{#if status}
 			<section class="snapshot" aria-label={$t('settings.time.currentTime')}>
 				<div>
-					<div class="hint">{$t(stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div>
+					<div class="hint">{$t(stale || status.stale || !liveUpdates ? 'settings.time.lastKnownTime' : 'settings.time.currentTime')}</div>
 					<div class="host-clock">{displayClock}</div>
 					<div class="host-date">{displayDate}</div>
 					<div class="zone">{status.timezone}</div>
@@ -750,7 +779,10 @@
 	</div>
 	<ButtonBar justify="center" basePosition={[0, 5]} gap="1vh">
 		<Button icon="/img/save.svg" label={busy ? $t('settings.time.saving') : $t('common.save')} position={[0, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" disabled={formDisabled || !status || !hasChanges} onConfirm={saveSettings} />
-		<Button icon="/img/time.svg" label={$t('settings.time.reload')} position={[1, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" disabled={busy || loading} onConfirm={reloadForm} />
+		<Button icon="/img/time.svg" label={$t('settings.time.reload')} position={[1, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" disabled={loading || (busy && !status?.mutation)} onConfirm={reloadForm} />
 		<Button icon="/img/back.svg" label={$t('common.back')} position={[2, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" onConfirm={onBack} />
+		{#if status?.mutation?.state === 'interrupted'}
+			<Button icon="/img/check.svg" label={$t('settings.systemMutation.acknowledge')} position={[3, 5]} width="auto" fontSize="clamp(14px, 1.8vh, 18px)" padding="1vh 1.5vh" disabled={busy || loading || acknowledging || status.stale === true} onConfirm={acknowledgeMutation} />
+		{/if}
 	</ButtonBar>
 </div>

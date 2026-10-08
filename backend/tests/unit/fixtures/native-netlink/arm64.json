@@ -1,0 +1,248 @@
+{
+	"provenance": "Captured on Linux ARM64 with rtnetlink and ip -j. Address bytes and interface labels anonymized with equal-length replacements; headers, lengths, flags, lifetimes, ordering and nexthops retained. Not synthetic.",
+	"sequence": 99,
+	"ifnames": {
+		"1": "lo",
+		"2": "eth000000",
+		"3": "wlan00000"
+	},
+	"getaddr": {
+		"raw": ["TAAAABQAAgBjAAAA/6kYAAIIgP4BAAAACAABAH8AAAEIAAIAfwAAAQcAAwBsbwAACAAIAIAAAAAUAAYA//////////9bAwAAWwMAAFwAAAAUAAIAYwAAAP+pGAACFwAAAgAAAAgAAQDAAAIBCAACAMAAAgEIAAQAwAACAg4AAwBldGgwMDAwMDAAAAAIAAgAAAIAABQABgDbBAAA2wQAAKAHAAAGyVYCXAAAABQAAgBjAAAA/6kYAAIXAAADAAAACAABAMAAAgMIAAIAwAACAwgABADAAAICDgADAHdsYW4wMDAwMAAAAAgACAAAAgAAFAAGAGkGAABpBgAAYWRXAmFkVwI=", "SAAAABQAAgBjAAAA/6kYAAqAgP4BAAAAFAABAAAAAAAAAAAAAAAAAAAAAAEUAAYA//////////9bAwAAWwMAAAgACACAAgAASAAAABQAAgBjAAAA/6kYAApAAQACAAAAFAABACABDbgAAAAAAAAAAAAAAAQUAAYAFI4AACl5CABUHAwCF3pXAggACAABAAAASAAAABQAAgBjAAAA/6kYAApAIQACAAAAFAABACABDbgAAAAAAAAAAAAAAAUUAAYAAAAAAMApBwAzF4kBF3pXAggACAAhAAAASAAAABQAAgBjAAAA/6kYAApAIQACAAAAFAABACABDbgAAAAAAAAAAAAAAAYUAAYAAAAAAFbaBQDfEQYBF3pXAggACAAhAAAASAAAABQAAgBjAAAA/6kYAApAIQACAAAAFAABACABDbgAAAAAAAAAAAAAAAcUAAYAAAAAAO2KBACFDIMAF3pXAggACAAhAAAASAAAABQAAgBjAAAA/6kYAApAIQACAAAAFAABACABDbgAAAAAAAAAAAAAAAgUAAYAAAAAAII7AwAUBwAAF3pXAggACAAhAAAASAAAABQAAgBjAAAA/6kYAApAAAACAAAAFAABACABDbgAAAAAAAAAAAAAAAkUAAYAGToJAJmMJwAUBwAAF3pXAggACAAAAwAASAAAABQAAgBjAAAA/6kYAApAgP0CAAAAFAABACABDbgAAAAAAAAAAAAAAAoUAAYA///////////BBQAAwQUAAAgACACAAgAASAAAABQAAgBjAAAA/6kYAApAAQADAAAAFAABACABDbgAAAAAAAAAAAAAAAsUAAYAQlABAOM5CQDPZFcCI3pXAggACAABAAAASAAAABQAAgBjAAAA/6kYAApAAAADAAAAFAABACABDbgAAAAAAAAAAAAAAAwUAAYAGToJAJmMJwDPZFcCI3pXAggACAAAAwAASAAAABQAAgBjAAAA/6kYAApAgP0DAAAAFAABACABDbgAAAAAAAAAAAAAAA0UAAYA//////////9NZFcCTWRXAggACACAAgAA", "FAAAAAMAAgBjAAAA/6kYAAAAAAA="],
+		"truth": [
+			{
+				"ifindex": 1,
+				"ifname": "lo",
+				"addr_info": [
+					{
+						"family": "inet",
+						"local": "127.0.0.1",
+						"prefixlen": 8,
+						"scope": "host",
+						"label": "lo",
+						"valid_life_time": 4294967295,
+						"preferred_life_time": 4294967295
+					},
+					{
+						"family": "inet6",
+						"local": "::1",
+						"prefixlen": 128,
+						"scope": "host",
+						"noprefixroute": true,
+						"valid_life_time": 4294967295,
+						"preferred_life_time": 4294967295
+					}
+				]
+			},
+			{
+				"ifindex": 2,
+				"ifname": "eth000000",
+				"addr_info": [
+					{
+						"family": "inet",
+						"local": "192.0.2.1",
+						"prefixlen": 23,
+						"broadcast": "192.0.2.2",
+						"scope": "global",
+						"dynamic": true,
+						"noprefixroute": true,
+						"label": "eth000000",
+						"valid_life_time": 1243,
+						"preferred_life_time": 1243
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::4",
+						"prefixlen": 64,
+						"scope": "global",
+						"temporary": true,
+						"dynamic": true,
+						"valid_life_time": 555305,
+						"preferred_life_time": 36372
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::5",
+						"prefixlen": 64,
+						"scope": "global",
+						"temporary": true,
+						"deprecated": true,
+						"dynamic": true,
+						"valid_life_time": 469440,
+						"preferred_life_time": 0
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::6",
+						"prefixlen": 64,
+						"scope": "global",
+						"temporary": true,
+						"deprecated": true,
+						"dynamic": true,
+						"valid_life_time": 383574,
+						"preferred_life_time": 0
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::7",
+						"prefixlen": 64,
+						"scope": "global",
+						"temporary": true,
+						"deprecated": true,
+						"dynamic": true,
+						"valid_life_time": 297709,
+						"preferred_life_time": 0
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::8",
+						"prefixlen": 64,
+						"scope": "global",
+						"temporary": true,
+						"deprecated": true,
+						"dynamic": true,
+						"valid_life_time": 211842,
+						"preferred_life_time": 0
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::9",
+						"prefixlen": 64,
+						"scope": "global",
+						"dynamic": true,
+						"mngtmpaddr": true,
+						"noprefixroute": true,
+						"valid_life_time": 2591897,
+						"preferred_life_time": 604697
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::a",
+						"prefixlen": 64,
+						"scope": "link",
+						"noprefixroute": true,
+						"valid_life_time": 4294967295,
+						"preferred_life_time": 4294967295
+					}
+				]
+			},
+			{
+				"ifindex": 3,
+				"ifname": "wlan00000",
+				"addr_info": [
+					{
+						"family": "inet",
+						"local": "192.0.2.3",
+						"prefixlen": 23,
+						"broadcast": "192.0.2.2",
+						"scope": "global",
+						"dynamic": true,
+						"noprefixroute": true,
+						"label": "wlan00000",
+						"valid_life_time": 1641,
+						"preferred_life_time": 1641
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::b",
+						"prefixlen": 64,
+						"scope": "global",
+						"temporary": true,
+						"dynamic": true,
+						"valid_life_time": 604643,
+						"preferred_life_time": 86082
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::c",
+						"prefixlen": 64,
+						"scope": "global",
+						"dynamic": true,
+						"mngtmpaddr": true,
+						"noprefixroute": true,
+						"valid_life_time": 2591897,
+						"preferred_life_time": 604697
+					},
+					{
+						"family": "inet6",
+						"local": "2001:db8::d",
+						"prefixlen": 64,
+						"scope": "link",
+						"noprefixroute": true,
+						"valid_life_time": 4294967295,
+						"preferred_life_time": 4294967295
+					}
+				]
+			}
+		]
+	},
+	"getroute4": {
+		"raw": ["RAAAABgAAgBjAAAA/6kYAAIAAAD+EAABAAAAAAgADwD+AAAACAAGAGQAAAAIAAcAwAACAQgABQDAAAIOCAAEAAIAAABEAAAAGAACAGMAAAD/qRgAAgAAAP4QAAEAAAAACAAPAP4AAAAIAAYAWAIAAAgABwDAAAIDCAAFAMAAAg4IAAQAAwAAAEQAAAAYAAIAYwAAAP+pGAACFwAA/gL9AQAAAAAIAA8A/gAAAAgAAQDAAAIPCAAGAGQAAAAIAAcAwAACAQgABAACAAAARAAAABgAAgBjAAAA/6kYAAIXAAD+Av0BAAAAAAgADwD+AAAACAABAMAAAg8IAAYAWAIAAAgABwDAAAIDCAAEAAMAAAA8AAAAGAACAGMAAAD/qRgAAggAAP8C/gIAAAAACAAPAP8AAAAIAAEAwAACEAgABwB/AAABCAAEAAEAAAA8AAAAGAACAGMAAAD/qRgAAiAAAP8C/gIAAAAACAAPAP8AAAAIAAEAfwAAAQgABwB/AAABCAAEAAEAAAA8AAAAGAACAGMAAAD/qRgAAiAAAP8C/QMAAAAACAAPAP8AAAAIAAEAwAACEQgABwB/AAABCAAEAAEAAAA8AAAAGAACAGMAAAD/qRgAAiAAAP8C/gIAAAAACAAPAP8AAAAIAAEAwAACAQgABwDAAAIBCAAEAAIAAAA8AAAAGAACAGMAAAD/qRgAAiAAAP8C/gIAAAAACAAPAP8AAAAIAAEAwAACAwgABwDAAAIDCAAEAAMAAAA8AAAAGAACAGMAAAD/qRgAAiAAAP8C/QMAAAAACAAPAP8AAAAIAAEAwAACAggABwDAAAIBCAAEAAIAAAA8AAAAGAACAGMAAAD/qRgAAiAAAP8C/QMAAAAACAAPAP8AAAAIAAEAwAACAggABwDAAAIDCAAEAAMAAAA=", "FAAAAAMAAgBjAAAA/6kYAAAAAAA="],
+		"truth": [
+			{
+				"dst": "default",
+				"gateway": "192.0.2.14",
+				"dev": "eth000000",
+				"protocol": "dhcp",
+				"prefsrc": "192.0.2.1",
+				"metric": 100,
+				"flags": []
+			},
+			{
+				"dst": "default",
+				"gateway": "192.0.2.14",
+				"dev": "wlan00000",
+				"protocol": "dhcp",
+				"prefsrc": "192.0.2.3",
+				"metric": 600,
+				"flags": []
+			}
+		]
+	},
+	"getroute6": {
+		"raw": ["dAAAABgAAgBjAAAA/6kYAApAAAD+CQABAAAAAAgADwD+AAAAFAABACABDbgAAAAAAAAAAAAAABIIAAYAZAAAAAgABAACAAAAJAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAUAAAAAAB0AAAAGAACAGMAAAD/qRgACkAAAP4JAAEAAAAACAAPAP4AAAAUAAEAIAENuAAAAAAAAAAAAAAAEggABgBYAgAACAAEAAMAAAAkAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFABQAAAAAAHQAAAAYAAIAYwAAAP+pGAAKQAAA/gIAAQAAAAAIAA8A/gAAABQAAQAgAQ24AAAAAAAAAAAAAAATCAAGAAAEAAAIAAQAAgAAACQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAAdAAAABgAAgBjAAAA/6kYAApAAAD+AgABAAAAAAgADwD+AAAAFAABACABDbgAAAAAAAAAAAAAABMIAAYAAAQAAAgABAADAAAAJAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAUAAAAAACUAAAAGAACAGMAAAD/qRgACgAAAP4JAAEAAAAACAAPAP4AAAAIAAYAhE4AADwACQAcAAAAAgAAABQABQAgAQ24AAAAAAAAAAAAAAAUHAAAAAIAAAAUAAUAIAENuAAAAAAAAAAAAAAAFSQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAAlAAAABgAAgBjAAAA/6kYAAoAAAD+CQABAAAAAAgADwD+AAAACAAGAHhQAAA8AAkAHAAAAAMAAAAUAAUAIAENuAAAAAAAAAAAAAAAFBwAAAADAAAAFAAFACABDbgAAAAAAAAAAAAAABUkAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFABQAAAAAAHQAAAAYAAIAYwAAAP+pGAAKgAAA/wIAAgAAAAAIAA8A/wAAABQAAQAAAAAAAAAAAAAAAAAAAAABCAAGAAAAAAAIAAQAAQAAACQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAAdAAAABgAAgBjAAAA/6kYAAqAAAD/AgACAAAAAAgADwD/AAAAFAABACABDbgAAAAAAAAAAAAAAAgIAAYAAAAAAAgABAACAAAAJAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAUAAAAAAB0AAAAGAACAGMAAAD/qRgACoAAAP8CAAIAAAAACAAPAP8AAAAUAAEAIAENuAAAAAAAAAAAAAAADAgABgAAAAAACAAEAAMAAAAkAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFABQAAAAAAHQAAAAYAAIAYwAAAP+pGAAKgAAA/wIAAgAAAAAIAA8A/wAAABQAAQAgAQ24AAAAAAAAAAAAAAAHCAAGAAAAAAAIAAQAAgAAACQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAAdAAAABgAAgBjAAAA/6kYAAqAAAD/AgACAAAAAAgADwD/AAAAFAABACABDbgAAAAAAAAAAAAAAAsIAAYAAAAAAAgABAADAAAAJAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAUAAAAAAB0AAAAGAACAGMAAAD/qRgACoAAAP8CAAIAAAAACAAPAP8AAAAUAAEAIAENuAAAAAAAAAAAAAAABggABgAAAAAACAAEAAIAAAAkAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFABQAAAAAAHQAAAAYAAIAYwAAAP+pGAAKgAAA/wIAAgAAAAAIAA8A/wAAABQAAQAgAQ24AAAAAAAAAAAAAAAJCAAGAAAAAAAIAAQAAgAAACQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAAdAAAABgAAgBjAAAA/6kYAAqAAAD/AgACAAAAAAgADwD/AAAAFAABACABDbgAAAAAAAAAAAAAAAQIAAYAAAAAAAgABAACAAAAJAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAUAAAAAAB0AAAAGAACAGMAAAD/qRgACoAAAP8CAAIAAAAACAAPAP8AAAAUAAEAIAENuAAAAAAAAAAAAAAABQgABgAAAAAACAAEAAIAAAAkAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFABQAAAAAAHQAAAAYAAIAYwAAAP+pGAAKgAAA/wIAAgAAAAAIAA8A/wAAABQAAQAgAQ24AAAAAAAAAAAAAAAKCAAGAAAAAAAIAAQAAgAAACQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAAdAAAABgAAgBjAAAA/6kYAAqAAAD/AgACAAAAAAgADwD/AAAAFAABACABDbgAAAAAAAAAAAAAAA0IAAYAAAAAAAgABAADAAAAJAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQAUAAAAAAB0AAAAGAACAGMAAAD/qRgACggAAP8CAAUAAAAACAAPAP8AAAAUAAEAIAENuAAAAAAAAAAAAAAAFggABgAAAQAACAAEAAIAAAAkAAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFABQAAAAAAHQAAAAYAAIAYwAAAP+pGAAKCAAA/wIABQAAAAAIAA8A/wAAABQAAQAgAQ24AAAAAAAAAAAAAAAWCAAGAAABAAAIAAQAAwAAACQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAUAFAAAAAAA", "FAAAAAMAAgBjAAAA/6kYAAAAAAA="],
+		"truth": [
+			{
+				"dst": "default",
+				"protocol": "ra",
+				"metric": 20100,
+				"flags": [],
+				"pref": "medium",
+				"nexthops": [
+					{
+						"gateway": "2001:db8::14",
+						"dev": "eth000000",
+						"weight": 1,
+						"flags": []
+					},
+					{
+						"gateway": "2001:db8::15",
+						"dev": "eth000000",
+						"weight": 1,
+						"flags": []
+					}
+				]
+			},
+			{
+				"dst": "default",
+				"protocol": "ra",
+				"metric": 20600,
+				"flags": [],
+				"pref": "medium",
+				"nexthops": [
+					{
+						"gateway": "2001:db8::14",
+						"dev": "wlan00000",
+						"weight": 1,
+						"flags": []
+					},
+					{
+						"gateway": "2001:db8::15",
+						"dev": "wlan00000",
+						"weight": 1,
+						"flags": []
+					}
+				]
+			}
+		]
+	}
+}

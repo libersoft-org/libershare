@@ -12,15 +12,21 @@ function blockNative() {
 }
 
 self.onmessage = ({ data }) => {
+	if (data.operation === 'close') return self.postMessage({ closed: true });
 	if (data.mode === 'error') throw new Error('worker failure');
 	if (data.mode === 'empty-close') return process.exit(0);
 	if (data.mode === 'silent') return;
-	if (data.mode === 'disconnect-success') return self.postMessage({ result: undefined });
-	if (data.mode === 'success') return self.postMessage({ result: [] });
+	if (data.mode === 'disconnect-success') return self.postMessage({ result: undefined, settled: true });
+	if (data.mode === 'success') return self.postMessage({ result: [], settled: true });
 	if (data.mode === 'in-flight' || data.mode === 'disconnect-in-flight') beginCoreWlanMutation(data.phase);
 	if (data.mode === 'message-before-close') self.postMessage({ result: [] });
 	Atomics.store(data.marker, 0, 1);
 	blockNative();
+	if (data.mode === 'settled-after-block') {
+		Atomics.store(data.marker, 1, 1);
+		self.postMessage({ result: [], settled: true });
+		return;
+	}
 	if (data.mode === 'late-associate' || data.mode === 'late-disconnect') {
 		try {
 			beginCoreWlanMutation(data.phase);

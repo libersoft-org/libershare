@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { classifyFailure, decodeCommandOutput, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, resolveSystemExecutable, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
+import { classifyFailure, firstLine, getSystemTimeStatus, getTimezoneSource, isSupportedPlatform, isValidNtpServer, listHostTimezones, listSystemTimezones, parseSystemsetupOnOff, parseSystemsetupValue, parseTimedatectlShow, type PlatformStatusReader, resetHostTimezones, timezoneOffsetMinutes, parseYesNo, validateClockParts } from '../../src/system-time.ts';
 import { ianaToWindowsTimezoneId, readWindowsTimeZone, windowsSystemLibraryPath } from '../../src/system-time-windows.ts';
 
 // ---------------------------------------------------------------------------
@@ -31,22 +31,17 @@ describe('isSupportedPlatform', () => {
 });
 
 describe('trusted system executables', () => {
-	it('maps every privileged helper to an absolute operating-system path', () => {
-		expect(resolveSystemExecutable('linux', 'timedatectl')).toBe('/usr/bin/timedatectl');
-		expect(resolveSystemExecutable('linux', 'systemctl')).toBe('/usr/bin/systemctl');
-		expect(resolveSystemExecutable('darwin', '/usr/sbin/systemsetup')).toBe('/usr/sbin/systemsetup');
-		expect(resolveSystemExecutable('win32', 'w32tm', 'D:\\Windows')).toBe('D:\\Windows\\System32\\w32tm.exe');
-		expect(resolveSystemExecutable('win32', 'powershell', 'D:\\Windows')).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-	});
-
-	it('fails closed for a relative executable outside the allow-list', () => {
-		expect(resolveSystemExecutable('linux', 'sh')).toBeNull();
-		expect(resolveSystemExecutable('win32', 'cmd', 'C:\\Windows')).toBeNull();
-	});
-
-	it('loads Windows DLLs from System32 rather than the DLL search path', () => {
-		expect(windowsSystemLibraryPath('icu.dll', 'D:\\Windows')).toBe('D:\\Windows\\System32\\icu.dll');
-		expect(windowsSystemLibraryPath('advapi32.dll', 'D:\\Windows')).toBe('D:\\Windows\\System32\\advapi32.dll');
+	it.skipIf(process.platform !== 'win32')('ignores SystemRoot when locating Windows DLLs', () => {
+		const expected = windowsSystemLibraryPath('icu.dll');
+		const old = process.env['SystemRoot'];
+		try {
+			process.env['SystemRoot'] = 'Z:\\untrusted-windows';
+			expect(windowsSystemLibraryPath('icu.dll')).toBe(expected);
+			expect(windowsSystemLibraryPath('advapi32.dll')).not.toStartWith('Z:');
+		} finally {
+			if (old === undefined) delete process.env['SystemRoot'];
+			else process.env['SystemRoot'] = old;
+		}
 	});
 });
 
@@ -122,47 +117,6 @@ describe('parseSystemsetupOnOff', () => {
 		expect(parseSystemsetupOnOff('Network Time: dunno\n')).toBeNull();
 		expect(parseSystemsetupOnOff(SYSTEMSETUP_DENIED)).toBeNull();
 		expect(parseSystemsetupOnOff('')).toBeNull();
-	});
-});
-
-describe('decodeCommandOutput', () => {
-	/**
-	 * `w32tm /config` refusing an unelevated caller on a Czech host, captured byte for
-	 * byte. 0xFD is `ř` and 0xA1 is `í` in cp852 — neither is a valid UTF-8 sequence on
-	 * its own, so reading these bytes as UTF-8 turns both into U+FFFD.
-	 */
-	const CP852_DENIAL = Uint8Array.from(Buffer.from('54686520666f6c6c6f77696e67206572726f72206f636375727265643a2050fda1737475702062796c206f646570fd656e2e20283078383030373030303529', 'hex'));
-
-	it('reads UTF-8 off Windows, where the child already speaks it', () => {
-		expect(decodeCommandOutput(Buffer.from('Přístup byl odepřen.', 'utf8'), 'linux')).toBe('Přístup byl odepřen.');
-	});
-
-	it('leaves an empty output empty', () => {
-		expect(decodeCommandOutput(new Uint8Array(0), 'win32')).toBe('');
-	});
-
-	it('keeps plain ASCII identical whichever code page the host has', () => {
-		expect(decodeCommandOutput(Buffer.from('[SC] OpenService FAILED 5:', 'utf8'), 'win32')).toBe('[SC] OpenService FAILED 5:');
-	});
-
-	// The code page is PINNED, not read off the host. Reading it made the assertion depend
-	// on where the test ran: these bytes are cp852, and a host whose OEM code page is 65001
-	// takes the UTF-8 path and produces exactly the replacement characters being asserted
-	// against. The conversion itself is Windows-only, so the case still needs a Windows host.
-	it.skipIf(process.platform !== 'win32')('decodes cp852 rather than mangling it into replacement characters', () => {
-		const decoded = decodeCommandOutput(CP852_DENIAL, 'win32', () => 852);
-		expect(decoded).toBe('The following error occurred: Přístup byl odepřen. (0x80070005)');
-		expect(decoded).not.toContain('�');
-		// The HRESULT classifyFailure matches on survives the conversion either way.
-		expect(classifyFailure('win32', 1, decoded)).toBe('permission-denied');
-	});
-
-	it('takes the UTF-8 path when the host code page already is UTF-8', () => {
-		expect(decodeCommandOutput(Buffer.from('Přístup byl odepřen.', 'utf8'), 'win32', () => 65001)).toBe('Přístup byl odepřen.');
-	});
-
-	it('would have produced replacement characters without the code-page conversion', () => {
-		expect(Buffer.from(CP852_DENIAL).toString('utf8')).toContain('�');
 	});
 });
 
@@ -448,7 +402,7 @@ describe('listSystemTimezones', () => {
 			const result = JSON.parse(stdout);
 			expect(result).toMatchObject({ canonicalIncludesUtc: false, utcResolves: true, utcAvailable: true, result: { success: true, outcome: 'ok' } });
 			expect(result.calls).toHaveLength(1);
-			expect(result.calls[0].args).toContain('UTC');
+			expect(result.calls[0]).toEqual({ kind: 'timezone', timezone: 'UTC' });
 		} finally {
 			clearTimeout(deadline);
 			if (child.exitCode === null) {
