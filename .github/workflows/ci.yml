@@ -81,7 +81,7 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
       - name: Native dataset regressions
-        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-windows.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts
+        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-windows.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts tests/unit/lish/data-server-chunk-reader.test.ts tests/unit/api/lishs-chunk-reader-release.test.ts
       - name: Compile and run native file operations
         run: |
           bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke.exe"
@@ -111,7 +111,7 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
       - name: Native dataset regressions
-        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-posix.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts
+        run: bun test tests/unit/lish/safe-dataset-files.test.ts tests/unit/lish/safe-dataset-files-posix.test.ts tests/unit/lish/dataset-transfer.test.ts tests/unit/lish/dataset-transfer-cleanup.test.ts tests/unit/lish/dataset-source-changes.test.ts tests/unit/lish/dataset-linked-move.test.ts tests/unit/lish/dataset-retained-path.test.ts tests/unit/lish/data-server-chunk-reader.test.ts tests/unit/api/lishs-chunk-reader-release.test.ts
       - name: Compile and run native file operations
         run: |
           bun build --compile tests/helpers/dataset-native-smoke.ts --outfile "$RUNNER_TEMP/dataset-native-smoke"

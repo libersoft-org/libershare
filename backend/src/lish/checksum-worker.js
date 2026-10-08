@@ -27,8 +27,27 @@
  * @property {string} [error]
  */
 
+/**
+ * @typedef {Object} BytesRequest
+ * @property {ArrayBuffer} bytes - bytes to hash, transferred to this worker
+ * @property {string} algo
+ * @property {number} index
+ */
+
 // Listen for messages from main thread
-self.onmessage = async function (/** @type {MessageEvent<WorkerRequest>} */ event) {
+self.onmessage = async function (/** @type {MessageEvent<WorkerRequest | BytesRequest>} */ event) {
+	if (event.data.bytes) {
+		// Bytes already in memory (a downloaded chunk): hash them here, off the main thread.
+		const { bytes, algo, index } = event.data;
+		try {
+			const hasher = new Bun.CryptoHasher(algo);
+			hasher.update(bytes);
+			self.postMessage({ index, checksum: hasher.digest('hex') });
+		} catch (error) {
+			self.postMessage({ index, error: String(error) });
+		}
+		return;
+	}
 	const { filePath, offset, chunkSize, algo, index } = event.data;
 	try {
 		const file = Bun.file(filePath);

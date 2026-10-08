@@ -26,6 +26,8 @@ import { CodedError, ErrorCodes } from '@shared';
  */
 export class PauseController {
 	private enableResolvers: (() => void)[] = [];
+	// Aborted when the owner stops; replaced by a fresh one once it runs again. See stopSignal.
+	private stopController = new AbortController();
 	private writeResolvers: (() => void)[] = [];
 	/**
 	 * Number of holders of the write pause, not a flag. Two independent paths pause
@@ -78,7 +80,23 @@ export class PauseController {
 	 */
 	notifyStateChange(): void {
 		this.drainEnableResolvers();
-		if (this.isDisabled() || this.isDestroyed()) this.drainWriteResolvers();
+		if (this.isDisabled() || this.isDestroyed()) {
+			this.stopController.abort(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
+			this.drainWriteResolvers();
+		}
+	}
+
+	/**
+	 * A signal that aborts once the owner is disabled or destroyed, for waits that take an
+	 * AbortSignal (byte budget, rate limiter). The Downloader's own abort signal fires only on
+	 * destroy, so without this a disabled download would keep waiting on capacity held by
+	 * another download. After the owner runs again the next call returns a fresh signal.
+	 */
+	stopSignal(): AbortSignal {
+		const stopped = this.isDisabled() || this.isDestroyed();
+		if (stopped) this.stopController.abort(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
+		else if (this.stopController.signal.aborted) this.stopController = new AbortController();
+		return this.stopController.signal;
 	}
 
 	/**

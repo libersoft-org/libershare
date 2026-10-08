@@ -3,7 +3,8 @@
  * Extracted from Network.start() for clarity and testability.
  */
 import { tcp } from '@libp2p/tcp';
-import { noise, pureJsCrypto } from '@chainsafe/libp2p-noise';
+import { noise } from '@chainsafe/libp2p-noise';
+import { noiseCrypto } from './noise-crypto.ts';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { gossipsub } from '@libp2p/gossipsub';
 import { identify, identifyPush } from '@libp2p/identify';
@@ -187,7 +188,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		// downsampled, and the relay widget refreshes far less often than 1 Hz.
 		metrics: simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }),
 		transports,
-		connectionEncrypters: [noise({ crypto: pureJsCrypto })],
+		connectionEncrypters: [noise({ crypto: noiseCrypto })],
 		streamMuxers: [yamux()],
 		connectionManager: {
 			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=8 / Dhi=12)

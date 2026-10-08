@@ -90,3 +90,11 @@ export const MAX_LIST_RESPONSE_SIZE: number = 4 * 1024 * 1024;
 
 /** Longest acknowledgement of a notification (or error reply to one). */
 export const MAX_ACK_RESPONSE_SIZE: number = 4 * 1024;
+
+/**
+ * Upper bound on chunk requests pipelined to one peer, whatever `network.chunkWindowBytes` allows:
+ * small chunks would otherwise mean hundreds of requests queued on one stream.
+ * ponytail: fixed window and cap; an adaptive window driven by measured RTT and rate is the
+ * upgrade path if a fixed one proves too small on slow or long links.
+ */
+export const CHUNK_WINDOW_MAX_REQUESTS = 32;

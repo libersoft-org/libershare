@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { t } from '../../scripts/language.ts';
+	import { t, tt } from '../../scripts/language.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
-	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, upnpEnabled, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, setUpnpEnabled, settingsDefaults } from '../../scripts/settings.ts';
+	import { storagePath, storageTempPath, storageLISHPath, storageLISHnetPath, storageBackupPath, setStoragePath, setStorageTempPath, setStorageLISHPath, setStorageLISHnetPath, setStorageBackupPath, incomingPort, maxDownloadPeersPerLISH, maxUploadPeersPerLISH, maxDownloadSpeed, maxUploadSpeed, maxChunkSize, maxMessageSize, chunkWindowBytes, chunkInflightBudgetBytes, allowRelay, maxRelayReservations, useRelayClients, maxRelayClients, autoStartSharing, autoStartDownloading, autoErrorRecovery, autoConnectNewNetworks, mdnsEnabled, mdnsInterval, upnpEnabled, setIncomingPort, setMaxDownloadPeersPerLISH, setMaxUploadPeersPerLISH, setMaxDownloadSpeed, setMaxUploadSpeed, setMaxChunkSize, setMaxMessageSize, setChunkWindowLimits, chunkWindowLimitsError, setAllowRelay, setMaxRelayReservations, setUseRelayClients, setMaxRelayClients, setAutoStartSharing, setAutoStartDownloading, setAutoErrorRecovery, setAutoConnectNewNetworks, setMdnsEnabled, setMdnsInterval, setUpnpEnabled, settingsDefaults } from '../../scripts/settings.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
 	import { parseBytes, formatBytes, parseRelayReservationLimit, DEFAULT_MAX_RELAY_RESERVATIONS } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
@@ -33,6 +34,8 @@
 	let uploadSpeed = $state($maxUploadSpeed.toString());
 	let chunkSizeLimit = $state(formatBytes($maxChunkSize));
 	let messageSizeLimit = $state(formatBytes($maxMessageSize));
+	let chunkWindow = $state(formatBytes($chunkWindowBytes));
+	let chunkBudget = $state(formatBytes($chunkInflightBudgetBytes));
 	let relay = $state($allowRelay);
 	let relayReservations = $state($maxRelayReservations.toString());
 	let useRelayClientsState = $state($useRelayClients);
@@ -115,6 +118,21 @@
 		messageSizeLimit = formatBytes($maxMessageSize);
 	}
 
+	function parseSizeOrZero(value: string): number {
+		try {
+			return parseBytes(value);
+		} catch {
+			return 0;
+		}
+	}
+
+	function saveChunkWindows(): void {
+		void setChunkWindowLimits(parseSizeOrZero(chunkWindow), parseSizeOrZero(chunkBudget)).then(() => {
+			chunkWindow = formatBytes($chunkWindowBytes);
+			chunkBudget = formatBytes($chunkInflightBudgetBytes);
+		});
+	}
+
 	function saveRelayReservations(): void {
 		// An invalid entry keeps the last valid value and sends nothing.
 		const limit = parseRelayReservationLimit(relayReservations);
@@ -143,11 +161,18 @@
 		saveUploadSpeed();
 		saveChunkSizeLimit();
 		saveMessageSizeLimit();
+		saveChunkWindows();
 		saveRelayReservations();
 		saveMdnsInterval();
 	}
 
 	function handleSave(): void {
+		// Stay on the page so the pair can be corrected rather than half saved.
+		const windowError = chunkWindowLimitsError(parseSizeOrZero(chunkWindow), parseSizeOrZero(chunkBudget));
+		if (windowError) {
+			addNotification(tt(windowError), 'error');
+			return;
+		}
 		saveAll();
 		onBack?.();
 	}
@@ -239,6 +264,14 @@
 
 	function resetMessageSizeLimit(): void {
 		messageSizeLimit = formatBytes(settingsDefaults?.network?.maxMessageSize ?? 0);
+	}
+
+	function resetChunkWindow(): void {
+		chunkWindow = formatBytes(settingsDefaults?.network?.chunkWindowBytes ?? 0);
+	}
+
+	function resetChunkBudget(): void {
+		chunkBudget = formatBytes(settingsDefaults?.network?.chunkInflightBudgetBytes ?? 0);
 	}
 
 	function resetRelayReservations(): void {
@@ -349,44 +382,52 @@
 				<Input bind:value={messageSizeLimit} label={$t('settings.download.maxMessageSize')} position={[0, 11]} flex />
 				<Button icon="/img/restart.svg" position={[1, 11]} onConfirm={resetMessageSizeLimit} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 12]} onToggle={toggleAllowRelay} />
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={chunkWindow} label={$t('settings.download.chunkWindowBytes')} position={[0, 12]} flex />
+				<Button icon="/img/restart.svg" position={[1, 12]} onConfirm={resetChunkWindow} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 13]} flex />
-				<Button icon="/img/restart.svg" position={[1, 13]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={chunkBudget} label={$t('settings.download.chunkInflightBudgetBytes')} position={[0, 13]} flex />
+				<Button icon="/img/restart.svg" position={[1, 13]} onConfirm={resetChunkBudget} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.useRelayClients') + ':'} checked={useRelayClientsState} position={[0, 14]} onToggle={toggleUseRelayClients} />
+				<SwitchRow label={$t('settings.download.allowRelay') + ':'} checked={relay} position={[0, 14]} onToggle={toggleAllowRelay} />
 			</div>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={relayClients} label={$t('settings.download.maxRelayClients')} type="number" position={[0, 15]} flex />
-				<Button icon="/img/restart.svg" position={[1, 15]} onConfirm={resetRelayClients} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={relayReservations} label={$t('settings.download.maxRelayReservations')} type="number" position={[0, 15]} flex />
+				<Button icon="/img/restart.svg" position={[1, 15]} onConfirm={resetRelayReservations} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 16]} onToggle={toggleAutoStart} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 17]} onToggle={toggleAutoStartDl} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 18]} onToggle={toggleAutoRecovery} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.autoConnectNewNetworks') + ':'} checked={autoConnectNetworks} position={[0, 19]} onToggle={toggleAutoConnectNetworks} />
-			</div>
-			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 20]} onToggle={toggleMdns} />
+				<SwitchRow label={$t('settings.download.useRelayClients') + ':'} checked={useRelayClientsState} position={[0, 16]} onToggle={toggleUseRelayClients} />
 			</div>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
-				<Input bind:value={mdnsIntervalSec} label={$t('settings.download.mdnsInterval')} type="number" min={1} position={[0, 21]} flex />
-				<Button icon="/img/restart.svg" position={[1, 21]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+				<Input bind:value={relayClients} label={$t('settings.download.maxRelayClients')} type="number" position={[0, 17]} flex />
+				<Button icon="/img/restart.svg" position={[1, 17]} onConfirm={resetRelayClients} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
 			<div role="group" data-mouse-activate-area={areaID}>
-				<SwitchRow label={$t('settings.download.upnpEnabled') + ':'} checked={upnp} position={[0, 22]} onToggle={toggleUpnp} />
+				<SwitchRow label={$t('settings.download.autoStartSharingDefault') + ':'} checked={autoStart} position={[0, 18]} onToggle={toggleAutoStart} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoStartDownloadingDefault') + ':'} checked={autoStartDl} position={[0, 19]} onToggle={toggleAutoStartDl} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoErrorRecovery') + ':'} checked={autoRecovery} position={[0, 20]} onToggle={toggleAutoRecovery} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.autoConnectNewNetworks') + ':'} checked={autoConnectNetworks} position={[0, 21]} onToggle={toggleAutoConnectNetworks} />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.mdnsEnabled') + ':'} checked={mdns} position={[0, 22]} onToggle={toggleMdns} />
+			</div>
+			<div class="row" role="group" data-mouse-activate-area={areaID}>
+				<Input bind:value={mdnsIntervalSec} label={$t('settings.download.mdnsInterval')} type="number" min={1} position={[0, 23]} flex />
+				<Button icon="/img/restart.svg" position={[1, 23]} onConfirm={resetMdnsInterval} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
+			</div>
+			<div role="group" data-mouse-activate-area={areaID}>
+				<SwitchRow label={$t('settings.download.upnpEnabled') + ':'} checked={upnp} position={[0, 24]} onToggle={toggleUpnp} />
 			</div>
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 23]}>
+		<ButtonBar justify="center" basePosition={[0, 25]}>
 			<Button icon="/img/save.svg" label={$t('common.save')} onConfirm={handleSave} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 		</ButtonBar>

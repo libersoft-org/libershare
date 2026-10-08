@@ -11,6 +11,14 @@ export function openDatabase(dataDir: string): Database {
 	const opened = new Database(dbPath);
 	try {
 		opened.run('PRAGMA journal_mode = WAL');
+		// WAL with NORMAL syncs at checkpoints instead of on every commit. A download commits
+		// per chunk (have flag, byte counters), and a seeder per served chunk, so FULL put an
+		// fsync on every chunk on both sides. The setting covers the whole database: the file
+		// stays consistent and an application crash loses nothing, but a power cut or OS crash
+		// can roll back the last commits of any table — downloaded-chunk flags (those chunks
+		// download again and are re-verified) and equally a share or network change made just
+		// before it, which the user then has to repeat. Accepted for the per-chunk write cost.
+		opened.run('PRAGMA synchronous = NORMAL');
 		opened.run('PRAGMA foreign_keys = ON');
 		console.log(`[DB] ${dbPath}`);
 		initLISHsTables(opened);
