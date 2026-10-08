@@ -1,13 +1,16 @@
 import { access, constants } from 'fs/promises';
 import { dirname } from 'path';
-import { type IStoredLISH, type LISHid, CodedError, ErrorCodes } from '@shared';
+import { type IStoredLISH, type LISHid, CodedError, ErrorCodes, validateLISHStructure } from '@shared';
+import { validateImportedLISH } from '../lish/lish.ts';
+import { verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { withLISHOwnership } from '../lish/lish-ownership.ts';
 import { type Network } from './network.ts';
 import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { Circuit } from '@multiformats/multiaddr-matcher';
-import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler } from './lish-protocol.ts';
+import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, getMaxChunkSize, registerHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { withLISHClient } from './lish-client-session.ts';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
@@ -89,6 +92,8 @@ export class Downloader {
 	private peerDisconnectDisposer: (() => void) | undefined;
 	private haveAnnouncementDisposer: (() => boolean) | undefined;
 	private needsManifest = false;
+	/** Publisher of the local `.lish` this download started from (`null` = unsigned). */
+	private localPublisher: string | null = null;
 	private disabled = false;
 	private destroyed = false;
 	private lastExhaustedTime = 0;
@@ -409,12 +414,65 @@ export class Downloader {
 		this.fileAllocator = new FileAllocator(this.datasetRoot, () => this.dataServer.getDatasetLinkBindings(this.lishID));
 	}
 
+	/**
+	 * Publisher every manifest for this download must carry: the one already stored (or `null`
+	 * for a stored unsigned item), or unknown before anything is stored.
+	 */
+	private expectedPublisher(): ExpectedPublisher {
+		return this.lish ? (this.lish.publisher ?? null) : undefined;
+	}
+
+	/**
+	 * Persist a verified peer manifest as the owner of this LISH ID. The wait for ownership ends
+	 * when this downloader is destroyed, so an import that owns the ID and is destroying us never
+	 * waits on us in turn. The database refuses a publisher different from the stored one.
+	 */
+	private async storeManifest(manifest: IStoredLISH): Promise<boolean> {
+		try {
+			return await withLISHOwnership(
+				this.lishID,
+				() => {
+					if (this.destroyed) return false;
+					// The manifest is sanitized (no peer-supplied local paths). Keep our own
+					// local state: the download directory, and any post-download move target
+					// the LISH was created with — the incoming manifest never carries it.
+					const lish: IStoredLISH = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
+					this.dataServer.add(lish);
+					this.lish = lish;
+					return true;
+				},
+				this.abortController.signal
+			);
+		} catch (error) {
+			if (this.destroyed) return false;
+			if (error instanceof CodedError && error.code === ErrorCodes.LISH_PUBLISHER_MISMATCH) {
+				console.warn(`[DL] ${this.lishID.slice(0, 8)}: manifest refused, ${error.detail}`);
+				return false;
+			}
+			throw error;
+		}
+	}
+
+	/**
+	 * A local `.lish` file never overrides who published an item this node already stores. The
+	 * caller repeats this under the LISH ownership lock right before activating the download.
+	 */
+	assertStoredPublisher(): void {
+		const stored = this.dataServer.get(this.lishID);
+		if (stored && (stored.publisher ?? null) !== this.localPublisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored.publisher ?? 'unsigned'}, file ${this.localPublisher ?? 'unsigned'}`);
+	}
+
 	async init(lishPath: string): Promise<void> {
 		this.transitionTo('initializing', 'init() start');
 		// Read and parse LISH
 		const content = await Bun.file(lishPath).text();
-		this.lish = Utils.safeJSONParse(content, `LISH file: ${lishPath}`);
+		const lish = validateImportedLISH(Utils.safeJSONParse(content, `LISH file: ${lishPath}`));
+		validateLISHStructure(lish, getMaxChunkSize());
+		const signature = await verifyManifestSignature(lish);
+		this.lish = lish;
 		this.lishID = this.lish.id as LISHid;
+		this.localPublisher = signature.signed ? signature.publisher : null;
+		this.assertStoredPublisher();
 		this.peerManager.setLishID(this.lishID);
 		this.chunkDownloader = this.createChunkDownloader();
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
@@ -543,7 +601,7 @@ export class Downloader {
 				for (const [peerID, client] of this.peerManager.entries()) {
 					let manifest: import('@shared').IStoredLISH | null = null;
 					try {
-						manifest = await client.requestManifest(this.lishID);
+						manifest = await client.requestManifest(this.lishID, undefined, this.expectedPublisher());
 					} catch (error: any) {
 						if (this.destroyed) return;
 						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
@@ -568,11 +626,7 @@ export class Downloader {
 					}
 					if (this.destroyed) return;
 					if (manifest && manifest.files && manifest.files.length > 0) {
-						// The manifest is sanitized (no peer-supplied local paths). Keep our own
-						// local state: the download directory, and any post-download move target
-						// the LISH was created with — the incoming manifest never carries it.
-						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
-						this.dataServer.add(this.lish);
+						if (!(await this.storeManifest(manifest))) return;
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
@@ -762,7 +816,7 @@ export class Downloader {
 				trace(`[DL] probing ${peerID.slice(0, 12)}`);
 				let manifest: import('@shared').IStoredLISH | null = null;
 				try {
-					manifest = await withLISHClient(this.network, peerID, this.abortController.signal, client => client.requestManifest(this.lishID));
+					manifest = await withLISHClient(this.network, peerID, this.abortController.signal, client => client.requestManifest(this.lishID, undefined, this.expectedPublisher()));
 				} catch (error: any) {
 					// Any manifest error (unreachable, malformed) → drop this peer and let another
 					// serve it, except over-limit which is terminal for the whole LISH — but only
@@ -791,11 +845,7 @@ export class Downloader {
 					// Protect manifest import with workMutex to prevent race with doWork()
 					await this.workMutex.runExclusive(async () => {
 						if (this.destroyed || !this.needsManifest) return; // double-check after acquiring lock
-						// The manifest is sanitized (no peer-supplied local paths). Keep our own
-						// local state: the download directory, and any post-download move target
-						// the LISH was created with — the incoming manifest never carries it.
-						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
-						this.dataServer.add(this.lish);
+						if (!(await this.storeManifest(manifest))) return;
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
