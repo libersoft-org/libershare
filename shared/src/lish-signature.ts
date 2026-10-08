@@ -81,6 +81,9 @@ export function validateSignedLISHShape(lish: ILISH): void {
 	if (typeof lish.publisher !== 'string' || !PEER_ID_SHAPE.test(lish.publisher)) reject(`invalid publisher ${formatUntrustedValue(lish.publisher)}`);
 	if (typeof lish.signature !== 'string' || !SIGNATURE_SHAPE.test(lish.signature)) reject('invalid signature encoding');
 	if (typeof lish.created !== 'string' || !TIMESTAMP.test(lish.created)) reject(`invalid created ${formatUntrustedValue(lish.created)}`);
+	// Normalization drops any falsy name/description, so a non-string one would ride along unsigned.
+	checkOptionalText('manifest', 'name', lish.name);
+	checkOptionalText('manifest', 'description', lish.description);
 	checkSafeCount('manifest', 'chunkSize', lish.chunkSize);
 	for (const [key, list, allowed] of [
 		['directory', lish.directories, DIRECTORY_FIELDS],

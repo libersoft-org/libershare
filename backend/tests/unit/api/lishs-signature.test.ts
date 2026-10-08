@@ -142,6 +142,59 @@ describe('create with sign', () => {
 		await expect(handlers().create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
 		expect(dataServer.list()).toHaveLength(0);
 	});
+
+	it('a preview refuses a signed manifest carrying non-text fields the signature does not cover', async () => {
+		const lishs = handlers();
+		const { name: _name, ...nameless } = manifest();
+		const signed = await sign(nameless as ILISH, keyA);
+		for (const extra of [{ name: false }, { description: 0 }]) {
+			await expect(lishs.parseFromJSON({ json: JSON.stringify({ ...signed, ...extra }) })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+		}
+		// Validly signed, structurally broken (wrong checksum count): only the full structure check sees it.
+		const broken = await sign(manifest({ files: [{ path: 'a.bin', size: 1024, checksums: ['b'.repeat(64), 'c'.repeat(64)] }] }), keyA);
+		await expect(lishs.parseFromJSON({ json: JSON.stringify(broken) })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+	});
+});
+
+describe('export and import keep the signed bytes', () => {
+	it('single and bulk export, plain and compressed, import on another store with a valid signature', async () => {
+		const original = await sign(manifest({ directories: [], links: [{ path: 'l', target: 'a.bin' }] }), keyA);
+		await handlers().importManifest(original, downloadDir);
+		const out = await tempDir('lish-sig-out-');
+		const exports = handlers();
+		const files = [join(out, 'one.lish'), join(out, 'one.lish.gz'), join(out, 'all.lish')];
+		await exports.exportToFile({ lishID: ID, filePath: files[0]! });
+		await exports.exportToFile({ lishID: ID, filePath: files[1]!, compress: true, compressionAlgorithm: 'gzip' });
+		await exports.exportAllToFile({ filePath: files[2]! });
+		const expected = signedManifestBytes(original);
+		for (const file of files) {
+			// A fresh node: its own database and settings.
+			const otherDir = await tempDir('lish-sig-other-');
+			const otherDB = openDatabase(otherDir);
+			const otherStore = new DataServer(otherDB);
+			const otherSettings = await Settings.create(otherDir);
+			await otherSettings.set('storage.tempPath', await tempDir('lish-sig-othertmp-'));
+			await otherSettings.set('network.autoStartSharing', false);
+			await otherSettings.set('network.autoStartDownloading', false);
+			const other = initLISHsHandlers(
+				otherStore,
+				() => {},
+				() => {},
+				otherSettings
+			);
+			try {
+				const [parsed] = await other.parseFromFile({ filePath: file });
+				expect(signedManifestBytes(parsed!)).toEqual(expected);
+				await other.importFromFile({ filePath: file, downloadPath: await tempDir('lish-sig-otherdl-') });
+				const stored = otherStore.get(ID)!;
+				expect(signedManifestBytes(stored)).toEqual(expected);
+				expect(await verifyManifestSignature(stored)).toEqual({ signed: true, publisher: A });
+			} finally {
+				await other.stopVerifyAll();
+				otherDB.close();
+			}
+		}
+	});
 });
 
 describe('add from a peer checks the expected publisher', () => {

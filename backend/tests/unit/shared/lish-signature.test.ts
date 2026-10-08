@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canonicalJSON, decodeSignature, encodeSignature, ErrorCodes, LISH_SIGNATURE_DOMAIN, signedManifestBytes, signedManifestPayload, validateLISHStructure, type ILISH } from '@shared';
+import { canonicalJSON, decodeSignature, encodeSignature, ErrorCodes, signedManifestBytes, signedManifestPayload, validateLISHStructure, validateSignedLISHShape, type ILISH } from '@shared';
 import { createLISH, getPermissions } from '../../../src/lish/lish.ts';
 
 const PUBLISHER = '12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo';
@@ -27,7 +27,8 @@ function signed(overrides: Record<string, unknown> = {}): ILISH {
 describe('signed manifest bytes', () => {
 	it('match a fixed vector', () => {
 		const text = new TextDecoder().decode(signedManifestBytes(signed()));
-		expect(text).toBe(LISH_SIGNATURE_DOMAIN + '{"checksumAlgo":"sha256","chunkSize":4,"created":"2026-10-08T10:00:00.000Z","directories":[{"path":"docs","permissions":"755"}],"files":[{"checksums":["aa","bb"],"modified":"2026-10-08T09:00:00Z","path":"docs/a.txt","permissions":"644","size":5}],"id":"5f0c6d2e-0000-4000-8000-000000000001","links":[{"hardlink":false,"path":"docs/l","target":"docs/a.txt"}],"name":"Demo","publisher":"12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo"}');
+		// The domain prefix is spelled out: a changed constant must break the vector too.
+		expect(text).toBe('libershare/lish-manifest/v1\n{"checksumAlgo":"sha256","chunkSize":4,"created":"2026-10-08T10:00:00.000Z","directories":[{"path":"docs","permissions":"755"}],"files":[{"checksums":["aa","bb"],"modified":"2026-10-08T09:00:00Z","path":"docs/a.txt","permissions":"644","size":5}],"id":"5f0c6d2e-0000-4000-8000-000000000001","links":[{"hardlink":false,"path":"docs/l","target":"docs/a.txt"}],"name":"Demo","publisher":"12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo"}');
 	});
 
 	it('ignore key order, the signature itself and node-local fields', () => {
@@ -103,6 +104,11 @@ describe('signed manifest shape', () => {
 		reject({ ...signed(), name: null });
 		reject({ ...signed(), created: new Date() });
 		reject(signed({ files: [{ path: 'docs/a.txt', size: 5, permissions: '9', checksums: ['aa', 'bb'] }] }));
+	});
+
+	it('rejects non-text name or description on its own, which normalization would drop unsigned', () => {
+		// Signature verification runs this check without the full structure validation (previews).
+		for (const extra of [{ name: false }, { description: 0 }]) expect(() => validateSignedLISHShape({ ...signed(), ...extra } as never)).toThrow(expect.objectContaining({ code: ErrorCodes.LISH_INVALID_MANIFEST }));
 	});
 
 	it('requires both signature fields in their wire form', () => {
