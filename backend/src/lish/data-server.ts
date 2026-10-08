@@ -268,41 +268,67 @@ export class DataServer {
 	 */
 	createChunkReader(idleMs = 2000, maxFiles = 4): ChunkReader {
 		interface KeptFile {
+			readonly key: string;
 			readonly lishID: LISHid;
 			readonly opened: Promise<OpenChunkFile>;
 			users: number;
 			dropped: boolean;
+			closing: boolean;
 			idle?: ReturnType<typeof setTimeout>;
-			closing?: Promise<void>;
-			/** Settles once the file is closed. */
+			/** Settles with the outcome of closing the file. */
 			readonly closed: Promise<void>;
-			readonly markClosed: () => void;
+			readonly close: () => void;
 		}
 		// Insertion order is use order: a used entry is moved to the end.
 		const files = new Map<string, KeptFile>();
+		// Every file not closed yet, including dropped ones still closing: what a hold waits for.
+		const unclosed = new Set<KeptFile>();
+		const keep = (key: string, lishID: LISHid, opened: Promise<OpenChunkFile>): KeptFile => {
+			const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+			const entry: KeptFile = {
+				key,
+				lishID,
+				opened,
+				users: 0,
+				dropped: false,
+				closing: false,
+				closed,
+				close: () =>
+					void opened
+						.then(
+							file => file.close(),
+							() => {}
+						)
+						.then(resolve, reject),
+			};
+			unclosed.add(entry);
+			// A close started by the idle timer or the file limit has no one awaiting it.
+			closed.then(
+				() => unclosed.delete(entry),
+				error => {
+					unclosed.delete(entry);
+					console.error(`[Upload] closing a kept chunk file failed: ${error?.message ?? error}`);
+				}
+			);
+			return entry;
+		};
 		// Forget the entry; its file closes once the last read using it is done.
-		const drop = (key: string, entry: KeptFile): Promise<void> => {
-			if (files.get(key) === entry) files.delete(key);
+		const drop = (entry: KeptFile): void => {
+			if (files.get(entry.key) === entry) files.delete(entry.key);
 			entry.dropped = true;
 			clearTimeout(entry.idle);
-			if (entry.users === 0)
-				entry.closing ??= entry.opened
-					.then(
-						opened => opened.close(),
-						() => {}
-					)
-					.finally(entry.markClosed);
-			return entry.closing ?? Promise.resolve();
+			if (entry.users === 0 && !entry.closing) {
+				entry.closing = true;
+				entry.close();
+			}
 		};
-		const dropAll = (match: (entry: KeptFile) => boolean): Promise<void> =>
-			Promise.all(
-				[...files.entries()]
-					.filter(([, entry]) => match(entry))
-					.map(([key, entry]) => {
-						void drop(key, entry);
-						return entry.closed;
-					})
-			).then(() => {});
+		// Drop the matching files and wait until every one of them, and any already closing, is closed.
+		const dropAll = async (match: (entry: KeptFile) => boolean): Promise<void> => {
+			const entries = [...unclosed].filter(match);
+			for (const entry of entries) drop(entry);
+			const failed = (await Promise.allSettled(entries.map(entry => entry.closed))).find(outcome => outcome.status === 'rejected');
+			if (failed) throw failed.reason;
+		};
 		const control = { release: (lishID: LISHid) => dropAll(entry => entry.lishID === lishID) };
 		this.chunkReaders.add(control);
 		return {
@@ -318,16 +344,13 @@ export class DataServer {
 						let entry = files.get(key);
 						const reused = entry !== undefined;
 						files.delete(key);
-						if (!entry) {
-							const { promise: closed, resolve: markClosed } = Promise.withResolvers<void>();
-							entry = { lishID: id, opened: this.openChunkFile(id, filePath), users: 0, dropped: false, closed, markClosed };
-						}
+						entry ??= keep(key, id, this.openChunkFile(id, filePath));
 						files.set(key, entry);
 						entry.users++;
 						clearTimeout(entry.idle);
-						for (const [oldKey, oldEntry] of files) {
+						for (const oldEntry of files.values()) {
 							if (files.size <= maxFiles) break;
-							if (oldEntry.users === 0) void drop(oldKey, oldEntry);
+							if (oldEntry.users === 0) drop(oldEntry);
 						}
 						const kept = entry;
 						let opened: OpenChunkFile;
@@ -347,14 +370,14 @@ export class DataServer {
 								const [info, atPath] = await Promise.all([opened.file.stat(), PATH_CAN_CHANGE_WHILE_OPEN ? opened.statPath().catch(() => null) : undefined]);
 								if (atPath !== undefined && atPath?.identity !== info.identity) {
 									kept.users--;
-									await drop(key, kept);
+									drop(kept);
 									continue;
 								}
 								size = info.size;
 							}
 						} catch (error) {
 							kept.users--;
-							await drop(key, kept);
+							drop(kept);
 							throw error;
 						}
 						return {
@@ -363,10 +386,10 @@ export class DataServer {
 							done: async failed => {
 								kept.users--;
 								// A failed read may mean the kept file went bad: drop it so the next read reopens it.
-								if (failed || kept.dropped) await drop(key, kept);
+								if (failed || kept.dropped) drop(kept);
 								else if (kept.users === 0) {
 									// Per file, so reading another file does not keep this one open.
-									kept.idle = setTimeout(() => void drop(key, kept), idleMs);
+									kept.idle = setTimeout(() => drop(kept), idleMs);
 									kept.idle.unref?.();
 								}
 							},
@@ -374,8 +397,12 @@ export class DataServer {
 					}
 				}),
 			close: async () => {
-				this.chunkReaders.delete(control);
-				await dropAll(() => true);
+				// Stays registered until its files are closed, so a hold started meanwhile waits for them.
+				try {
+					await dropAll(() => true);
+				} finally {
+					this.chunkReaders.delete(control);
+				}
 			},
 		};
 	}
@@ -396,11 +423,10 @@ export class DataServer {
 			if (count > 0) this.chunkFileHolds.set(lishID, count);
 			else this.chunkFileHolds.delete(lishID);
 		};
-		try {
-			await Promise.all([...this.chunkReaders].map(reader => reader.release(lishID)));
-		} catch (error) {
+		const failed = (await Promise.allSettled([...this.chunkReaders].map(reader => reader.release(lishID)))).find(outcome => outcome.status === 'rejected');
+		if (failed) {
 			release();
-			throw error;
+			throw failed.reason;
 		}
 		return release;
 	}

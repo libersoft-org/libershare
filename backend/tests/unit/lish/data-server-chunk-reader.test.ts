@@ -23,6 +23,9 @@ describe('DataServer.createChunkReader', () => {
 	let fileOpens = 0;
 	let maxOpen = 0;
 	let openDelayMs = 0;
+	let closeDelayMs = 0;
+	let closeFails = 0;
+	let finished = 0;
 	let dataServer: DataServer;
 
 	beforeEach(() => {
@@ -36,6 +39,9 @@ describe('DataServer.createChunkReader', () => {
 		fileOpens = 0;
 		maxOpen = 0;
 		openDelayMs = 0;
+		closeDelayMs = 0;
+		closeFails = 0;
+		finished = 0;
 		const counting: typeof openDataset = async (...args) => {
 			opened++;
 			maxOpen = Math.max(maxOpen, opened - closed);
@@ -49,7 +55,13 @@ describe('DataServer.createChunkReader', () => {
 			const close = dataset.close.bind(dataset);
 			dataset.close = async () => {
 				closed++;
+				if (closeDelayMs > 0) await Bun.sleep(closeDelayMs);
 				await close();
+				if (closeFails > 0) {
+					closeFails--;
+					throw new Error('close failed');
+				}
+				finished++;
 			};
 			return dataset;
 		};
@@ -208,6 +220,86 @@ describe('DataServer.createChunkReader', () => {
 		expect(closed).toBe(opened);
 		release();
 		await reader.close();
+	});
+
+	it('waits for a close the idle timer already started', async () => {
+		const reader = dataServer.createChunkReader(20);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		closeDelayMs = 100;
+		await Bun.sleep(40);
+		expect(closed).toBe(1);
+		expect(finished).toBe(0);
+		const release = await dataServer.holdChunkFiles(LISH_ID);
+		expect(finished).toBe(1);
+		release();
+		await reader.close();
+	});
+
+	it('waits for a close the file limit already started', async () => {
+		const other = 'lish-chunk-reader-evicted' as LISHid;
+		writeFileSync(join(dir, 'other.bin'), 'OOOO');
+		addLISH(db, { id: other, name: 'other', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', directory: dir, files: [{ path: 'other.bin', size: 4, checksums: ['chunk-e-0' as ChunkID] }], chunks: ['chunk-e-0' as ChunkID] });
+		const reader = dataServer.createChunkReader(60_000, 1);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		closeDelayMs = 100;
+		await reader.getChunk(other, 'chunk-e-0' as ChunkID);
+		expect(finished).toBe(0);
+		const release = await dataServer.holdChunkFiles(LISH_ID);
+		expect(finished).toBe(1);
+		release();
+		closeDelayMs = 0;
+		await reader.close();
+	});
+
+	it('makes a second hold wait for the same close as the first', async () => {
+		const reader = dataServer.createChunkReader(60_000);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		closeDelayMs = 100;
+		const first = dataServer.holdChunkFiles(LISH_ID);
+		const second = await dataServer.holdChunkFiles(LISH_ID);
+		expect(finished).toBe(1);
+		second();
+		(await first)();
+		await reader.close();
+	});
+
+	it('waits for a reader that is still closing', async () => {
+		const reader = dataServer.createChunkReader(60_000);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		closeDelayMs = 100;
+		const closing = reader.close();
+		const release = await dataServer.holdChunkFiles(LISH_ID);
+		expect(finished).toBe(1);
+		release();
+		await closing;
+	});
+
+	it('fails the hold when a kept file cannot be closed, and reads stay uncached only while held', async () => {
+		const reader = dataServer.createChunkReader(60_000);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		closeFails = 1;
+		await expect(dataServer.holdChunkFiles(LISH_ID)).rejects.toThrow('close failed');
+		// The failed hold is released: the next read is kept again.
+		await reader.getChunk(LISH_ID, CHUNKS[1]!);
+		expect(opened - closed).toBe(1);
+		await reader.close();
+	});
+
+	it('does not leave a failed background close unhandled', async () => {
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+		process.on('unhandledRejection', onUnhandled);
+		try {
+			const reader = dataServer.createChunkReader(20);
+			await reader.getChunk(LISH_ID, CHUNKS[0]!);
+			closeFails = 1;
+			await Bun.sleep(60);
+			expect(closed).toBe(1);
+			expect(unhandled).toEqual([]);
+			await reader.close();
+		} finally {
+			process.off('unhandledRejection', onUnhandled);
+		}
 	});
 
 	it.skipIf(process.platform !== 'win32')('lets a held LISH be deleted on Windows', async () => {
