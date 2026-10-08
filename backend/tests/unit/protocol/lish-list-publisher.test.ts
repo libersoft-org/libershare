@@ -46,4 +46,16 @@ describe('listing entries carry the reported publisher', () => {
 		const entries = await receiveLISHList(undefined, async () => codecEncode(page), 1_000_000);
 		expect(entries.map(e => e.id)).toEqual(['good', 'plain']);
 	});
+
+	it('a page whose only row is dropped still leads on to the next page', async () => {
+		const snapshot = 'd0000000-0000-4000-8000-000000000009';
+		const pages = [
+			{ type: 'getLishs-result', lishs: [{ id: 'bad', publisher: 'not a Peer ID' }], page: true, offset: 0, nextCursor: `${snapshot}:1` },
+			{ type: 'getLishs-result', lishs: [{ id: 'next', publisher: A }], page: true, offset: 1 },
+		];
+		let exchanges = 0;
+		const entries = await receiveLISHList(undefined, async () => codecEncode(pages[exchanges++]), 1_000_000);
+		expect(exchanges).toBe(2);
+		expect(entries.map(e => e.id)).toEqual(['next']);
+	});
 });

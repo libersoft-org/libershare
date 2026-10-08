@@ -113,8 +113,7 @@ function listEntries(value: unknown): LISHListEntry[] {
 	for (const entry of value) {
 		if (!entry || typeof entry !== 'object' || Array.isArray(entry) || ArrayBuffer.isView(entry) || (Object.getPrototypeOf(entry) !== Object.prototype && Object.getPrototypeOf(entry) !== null) || !Object.prototype.hasOwnProperty.call(entry, 'id') || typeof entry.id !== 'string' || entry.id.length === 0 || (entry.name !== undefined && typeof entry.name !== 'string') || (entry.totalSize !== undefined && (!Number.isSafeInteger(entry.totalSize) || entry.totalSize < 0))) throw invalid();
 	}
-	// A malformed publisher drops only its row: an older or buggy peer must not cost the whole page.
-	return (value as LISHListEntry[]).filter(entry => entry.publisher === undefined || isPublisherShape(entry.publisher));
+	return value as LISHListEntry[];
 }
 
 async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -178,7 +177,9 @@ export async function receiveLISHList(query: string | undefined, exchange: (requ
 		for (const entry of page) {
 			if (ids.has(entry.id)) throw invalid();
 			ids.add(entry.id);
-			result.push(entry);
+			// A malformed publisher drops only its row, after the page itself was judged: the page
+			// still counts for progress, so one bad row never ends the listing.
+			if (entry.publisher === undefined || isPublisherShape(entry.publisher)) result.push(entry);
 		}
 		if (reply['nextCursor'] === undefined) return result;
 		cursor = reply['nextCursor'] as string;
