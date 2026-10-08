@@ -596,6 +596,16 @@
 			"errorInvalidFormat": "Invalid identity file format"
 		},
 		"language": "Language",
+		"systemMutation": {
+			"wifiPasswordChanged": "The password was changed and verified, but the Wi-Fi connection was not restored. Check the current state and confirm whether to keep the new settings.",
+			"pending": "The change has not finished. Further changes stay blocked until its end is confirmed. A restart of the computer may be needed.",
+			"settling": "The change has finished. Checking the current settings.",
+			"interrupted": "The change ended with settings that differ from both the original and requested state. Review the current values before choosing to keep them.",
+			"stale": "Current settings could not be read. These are the last known values.",
+			"acknowledge": "Keep current settings",
+			"refresh": "Refresh status",
+			"busy": "Another change has not finished. Wait for its completion or review the interrupted change."
+		},
 		"time": {
 			"label": "Time",
 			"format": "Time format",

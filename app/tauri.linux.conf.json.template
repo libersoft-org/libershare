@@ -7,7 +7,8 @@
 		},
 		"linux": {
 			"deb": {
-				"depends": ["pkexec"],
+				"depends": ["pkexec", "libsystemd0", "libasound2t64 | libasound2", "libglib2.0-0t64 | libglib2.0-0"],
+				"recommends": ["libpulse0"],
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
 					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop",
@@ -16,7 +17,8 @@
 				}
 			},
 			"rpm": {
-				"depends": ["polkit"],
+				"depends": ["polkit", "systemd-libs", "alsa-lib", "glib2"],
+				"recommends": ["pulseaudio-libs"],
 				"desktopTemplate": "desktop-entry.desktop",
 				"files": {
 					"/usr/share/applications/{{PRODUCT_NAME_LOWER}}-debug.desktop": "desktop-entry-debug.desktop",

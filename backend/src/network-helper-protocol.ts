@@ -1,8 +1,19 @@
 import { CodedError, MAX_DNS_SERVERS, validateIPv4Config, type NetIPv4Baseline, type NetIPv4Config, type SystemTimeChanges, type SystemTimeResult } from '@shared';
 import { isSystemTimeChanges, isSystemTimeResult, systemTimeExitCode } from './system-time-helper.ts';
+import { isAbsolute, win32 } from 'node:path';
 
-export interface NetworkHelperIPv4Request {
-	version: 1;
+export interface NetworkHelperIdentity {
+	version: 2;
+	operationId: string;
+	cancelPath: string;
+	deadlineUptime?: number;
+}
+
+export function isHelperOperationId(value: unknown): value is string {
+	return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+export interface NetworkHelperIPv4Request extends NetworkHelperIdentity {
 	operation: 'applyIPv4';
 	interfaceID: string;
 	config: NetIPv4Config;
@@ -26,8 +37,7 @@ export interface NetworkHelperIPv4Request {
  * `applySystemTimeSettings`, and one request is also one authorization prompt for one
  * press of Save instead of up to four.
  */
-export interface NetworkHelperTimeRequest {
-	version: 1;
+export interface NetworkHelperTimeRequest extends NetworkHelperIdentity {
 	operation: 'applySystemTime';
 	changes: SystemTimeChanges;
 	/**
@@ -53,6 +63,7 @@ export interface NetworkHelperTimeRequest {
 }
 
 export type NetworkHelperRequest = NetworkHelperIPv4Request | NetworkHelperTimeRequest;
+export type NetworkHelperOperation = (Omit<NetworkHelperIPv4Request, keyof NetworkHelperIdentity> | Omit<NetworkHelperTimeRequest, keyof NetworkHelperIdentity>) & { deadlineUptime?: number };
 
 /** Exit codes of the helper when it reports through the process status instead of stdout. */
 export const NETWORK_HELPER_EXIT = { applied: 0, rejected: 10, stale: 14 } as const;
@@ -77,8 +88,8 @@ export type NetworkHelperResponse = { ok: true } | { ok: true; time: SystemTimeR
 type ApplyIPv4 = (interfaceID: string, config: NetIPv4Config, expected: NetIPv4Baseline) => Promise<unknown>;
 type ApplySystemTime = (changes: SystemTimeChanges) => Promise<SystemTimeResult>;
 
-const IPV4_REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version'];
-const TIME_REQUEST_KEYS = ['changes', 'deadlineUptime', 'operation', 'version'];
+const IPV4_REQUEST_KEYS = ['config', 'expected', 'interfaceID', 'operation', 'version', 'operationId', 'cancelPath', 'deadlineUptime'];
+const TIME_REQUEST_KEYS = ['changes', 'deadlineUptime', 'operation', 'version', 'operationId', 'cancelPath'];
 const CONFIG_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
 const BASELINE_KEYS = ['address', 'dns', 'gateway', 'mode', 'prefixLength'];
 const MAX_BASELINE_VALUE_LENGTH = 64;
@@ -112,17 +123,15 @@ export function decodeNetworkHelperRequest(encoded: string): NetworkHelperReques
 		throw new Error('invalid network helper request');
 	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid network helper request');
-	const request = value as { version?: unknown; operation?: unknown; changes?: unknown; deadlineUptime?: unknown; interfaceID?: unknown; config?: unknown; expected?: unknown };
-	if (request.version !== 1) throw new Error('unsupported network helper operation');
+	const request = value as { version?: unknown; operationId?: unknown; cancelPath?: unknown; operation?: unknown; changes?: unknown; deadlineUptime?: unknown; interfaceID?: unknown; config?: unknown; expected?: unknown };
+	if (request.version !== 2) throw new Error('unsupported network helper version');
+	if (!isHelperOperationId(request.operationId)) throw new Error('invalid network helper operation ID');
+	if (typeof request.cancelPath !== 'string' || request.cancelPath.length > 4096 || /\p{Cc}/u.test(request.cancelPath) || !isAbsolute(request.cancelPath) || (process.platform === 'win32' && !/^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+\\)/.test(request.cancelPath)) || (process.platform !== 'win32' && win32.isAbsolute(request.cancelPath) && !request.cancelPath.startsWith('/'))) throw new Error('invalid network helper cancellation path');
+	if (request.deadlineUptime !== undefined && (typeof request.deadlineUptime !== 'number' || !Number.isFinite(request.deadlineUptime) || request.deadlineUptime < 0 || request.deadlineUptime > MAX_DEADLINE_UPTIME_S)) throw new Error('invalid network helper deadline');
 	if (request.operation === 'applySystemTime') {
 		if (!hasOnlyKeys(request as Record<string, unknown>, TIME_REQUEST_KEYS)) throw new Error('invalid network helper request');
 		if (!isSystemTimeChanges(request.changes)) throw new Error('invalid network helper time changes');
-		// A deadline is only ever allowed to shorten the work, so an absurd one is refused
-		// rather than clamped: a request this helper cannot make sense of is not one to run
-		// with a guessed limit. `MAX_DEADLINE_UPTIME_S` is a host uptime no real machine
-		// reaches (about 3 million years), which keeps this a shape check and not a policy.
-		if (request.deadlineUptime !== undefined && (typeof request.deadlineUptime !== 'number' || !Number.isFinite(request.deadlineUptime) || request.deadlineUptime < 0 || request.deadlineUptime > MAX_DEADLINE_UPTIME_S)) throw new Error('invalid network helper deadline');
-		return { version: 1, operation: 'applySystemTime', changes: request.changes, ...(request.deadlineUptime === undefined ? {} : { deadlineUptime: request.deadlineUptime }) };
+		return { version: 2, operationId: request.operationId, cancelPath: request.cancelPath, operation: 'applySystemTime', changes: request.changes, ...(request.deadlineUptime === undefined ? {} : { deadlineUptime: request.deadlineUptime }) };
 	}
 	if (!hasOnlyKeys(request as Record<string, unknown>, IPV4_REQUEST_KEYS)) throw new Error('invalid network helper request');
 	if (request.operation !== 'applyIPv4') throw new Error('unsupported network helper operation');

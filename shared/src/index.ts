@@ -445,12 +445,18 @@ export interface SystemTimeCapabilities {
 	setNtpEnabled: boolean;
 }
 
-/**
- * A snapshot of the host's time configuration. Read live from the OS on every
- * request — the OS owns this state (RTC, `/etc/localtime`, the sync daemon's
- * config), so nothing here is cached or persisted by the application.
- */
+export interface SystemMutationState {
+	state: 'pending' | 'settling' | 'interrupted';
+	since: number;
+	operation: string;
+	/** The recorded operation; an acknowledgement names it so it can only clear the one the user saw. */
+	operationId?: string;
+}
+
+/** The host owns time configuration; stale marks a last-known snapshot. */
 export interface SystemTimeStatus {
+	mutation?: SystemMutationState;
+	stale?: boolean;
 	/** False on a platform with no implemented time backend — every setter then reports `unsupported`. */
 	supported: boolean;
 	/** Current wall-clock time as a Unix timestamp in milliseconds. */
@@ -692,6 +698,8 @@ export interface NetInterfaceInfo {
 
 /** Read-only snapshot of the host's network configuration. */
 export interface NetworkStateInfo {
+	mutation?: SystemMutationState;
+	stale?: boolean;
 	interfaces: NetInterfaceInfo[];
 	/** id of the interface the app treats as primary: the user's pick, else the default-route one, else null. */
 	primaryID: string | null;

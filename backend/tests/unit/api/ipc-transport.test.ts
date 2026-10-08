@@ -20,6 +20,30 @@ function harness(message: (client: APIClient, data: string | Buffer) => Promise<
 }
 
 describe('desktop IPC sessions', () => {
+	it('carries a request to the desktop app and settles it with the matching reply', async () => {
+		const h = harness();
+		const call = h.transport.hostCall('{"operation":"state"}');
+		await Bun.sleep(0);
+		const request = h.frames.find(frame => frame.kind === IPC_KIND.HostRequest)!;
+		expect(Buffer.from(request.payload).toString()).toBe('{"operation":"state"}');
+		h.input.write(encodeIpcFrame(IPC_KIND.HostReply, request.session, Buffer.from('{"result":[]}')));
+		expect(await call).toBe('{"result":[]}');
+	});
+
+	it('treats a reply to no request as a broken pipe and refuses waiting requests when input ends', async () => {
+		const h = harness();
+		const call = h.transport.hostCall('{}');
+		call.catch(() => {});
+		h.input.write(encodeIpcFrame(IPC_KIND.HostReply, 999, Buffer.from('{}')));
+		await Bun.sleep(0);
+		expect(h.disconnected).toEqual([true]);
+		await expect(call).rejects.toThrow('disconnected');
+		// A request already handed to the app may have started; one refused here never did.
+		expect(await call.catch(error => error.mayHaveRun)).toBeUndefined();
+		await expect(h.transport.hostCall('{}')).rejects.toThrow('not connected');
+		expect(await h.transport.hostCall('{}').catch(error => error.mayHaveRun)).toBe(false);
+	});
+
 	it('keeps session ownership and writes accepted replies after orderly EOF', async () => {
 		let release!: () => void;
 		const held = new Promise<void>(resolve => {

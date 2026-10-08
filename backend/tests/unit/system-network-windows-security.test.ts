@@ -108,6 +108,12 @@ function attempt(scenario: Scenario): Result {
 			readWindowsWifiOperationState: () => ({ state: disconnected ? 4 : 1, profileName: disconnected ? null : connectionProfiles.at(-1), ssidHex: disconnected ? null : associationSnapshot().ssidHex }),
 		}));
 		const report = { adapters: [{ ifIndex: 1, Name: 'Wi-Fi', InterfaceGuid: guid, Media: 9, IfType: 71, State: 2 }], addresses: [], persistentAddresses: [], interfaces: [{ ifIndex: 1, Family: 2, Dhcp: 1 }], routes: [], persistentRoutes: [], routes6: [], dns: [] };
+		const windowsState = await import('./src/system-network-windows.ts');
+		const workers = await import('./src/native/worker-host.ts');
+		mock.module('./src/native/worker-host.ts', () => ({ ...workers, NativeWorkerChannel: class { async call(request) {
+			if(request.method !== 'win32.network.snapshot') throw new Error('Unexpected native read');
+			return windowsState.parseWindowsNetworkState(JSON.stringify(report), new Map([[guid, {radio:'on',ssid:connections?ssid:null,signal:80}]]));
+		} } }));
 		const execFile = () => { throw new Error('Only the promised state reader is allowed'); };
 		execFile[promisify.custom] = async (_file, args) => {
 			if (!args.at(-1).includes('Get-NetAdapter')) throw new Error('Unexpected system command');

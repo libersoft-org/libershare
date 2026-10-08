@@ -82,6 +82,11 @@ export async function refreshNetworkState(): Promise<NetworkStateInfo> {
 	return get(networkState);
 }
 
+/** Acknowledge the interrupted change the user is looking at; a different one in its place is refused. */
+export async function acknowledgeNetworkMutation(operationId: string): Promise<void> {
+	storeSnapshot(await api.call<NetworkStateInfo>('system.network.acknowledgeInterrupted', { operationId }));
+}
+
 /**
  * Apply an IPv4 configuration to one interface.
  *

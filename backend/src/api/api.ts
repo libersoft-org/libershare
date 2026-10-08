@@ -26,6 +26,7 @@ import { buildFactoryResetHandler } from './factory-reset-orchestrator.ts';
 import { NetworkRestartManager } from './network-restart.ts';
 import { applyNetworkLimits } from '../protocol/network-limits.ts';
 import { getLocalAddresses } from '../container.ts';
+import { setHostApp } from '../native/host-app.ts';
 interface ClientData {
 	subscribedEvents: Set<string>;
 	isLocalClient: boolean;
@@ -346,7 +347,7 @@ export class APIServer {
 			}
 			return false;
 		};
-		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, this.authenticatedTransport);
+		const _system = initSystemHandlers(this.settings, broadcastFn, hasSubscribers, this.authenticatedTransport, this.dataDir);
 		const networkAdmin = <P, R>(handler: (params: P) => R) => hostNetworkAdminHandler(this.authenticatedTransport, handler);
 		_system.startPolling();
 		const _relay = initRelayHandlers(this.networks, broadcastFn, hasSubscribers);
@@ -413,7 +414,10 @@ export class APIServer {
 			stopAllNetworks: () => this.networks.stopAllNetworks(),
 			clearUploadRuntime: _transfer.clearUploads,
 			drainUploads: () => this._upload.stopAndDrain(),
-			closeServer: () => this.closeServer(),
+			closeServer: async () => {
+				await _system.close();
+				await this.closeServer();
+			},
 		};
 
 		this.handlers = {
@@ -537,6 +541,7 @@ export class APIServer {
 			...createTimeApiHandlers(_system, this.authenticatedTransport),
 			'system.network': async (_params, client) => networkStateForClient(await _system.network(), this.authenticatedTransport, client.data.isLocalClient),
 			'system.networkApply': networkAdmin(_system.networkApply),
+			'system.network.acknowledgeInterrupted': networkAdmin(_system.acknowledgeNetwork),
 			'system.wifiScan': networkAdmin(_system.wifiScan),
 			'system.wifiConnect': networkAdmin(_system.wifiConnect),
 			'system.wifiDisconnect': networkAdmin(_system.wifiDisconnect),
@@ -576,6 +581,9 @@ export class APIServer {
 			message: (client, message) => this.handleMessage(client, message),
 			disconnect: failed => this.onIpcDisconnect(failed),
 		});
+		const stdio = this.stdio;
+		// Only the app process holds the Location Services grant that reveals macOS Wi-Fi names.
+		if (process.platform === 'darwin') setHostApp(request => stdio.hostCall(request));
 		this.stdio.start();
 	}
 

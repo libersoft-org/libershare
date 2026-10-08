@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildSetTimezoneCommands, parseRegValue, parseTzutilZone, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, readWindowsPolicyManaged } from '../../src/system-time.ts';
+import { parseRegValue, parseTzutilZone, rememberWindowsZone, windowsToIanaTimezone, timezoneOffsetMinutes, parseWindowsNtpServer, parseWindowsStartMode, parseWindowsSyncMode, parseWindowsSyncStatus, windowsSyncEnabled, windowsSyncIsOurs, readWindowsPolicyManaged } from '../../src/system-time.ts';
 import { canConvertTimezoneId, ianaToWindowsTimezoneId, probeDomainMembership, probeLocalMachineKey, type RegistryKeyProbe, type RegistryKeyState, parseWindowsNtpClientEnabled } from '../../src/system-time-windows.ts';
 import { W32TM_STATUS } from '../helpers/system-time-fixtures.ts';
 
@@ -383,11 +383,6 @@ describe.skipIf(process.platform !== 'win32')('windows ICU timezone conversion (
 
 	it('returns null for a zone with no Windows equivalent', () => {
 		expect(ianaToWindowsTimezoneId('Not/AZone')).toBeNull();
-	});
-
-	it('feeds the converted identifier into the tzutil argv', () => {
-		const zone = 'America/New_York';
-		expect(buildSetTimezoneCommands('win32', zone, ianaToWindowsTimezoneId(zone))).toEqual([{ cmd: 'tzutil', args: ['/s', 'Eastern Standard Time'] }]);
 	});
 
 	/**

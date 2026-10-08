@@ -40,6 +40,14 @@ cd libershare
 
 The native application bundles the frontend and backend into a single installable application. The build system uses Docker for Linux/Windows cross-compilation and can target multiple OS/architecture combinations from a single host. macOS builds require a macOS host (Docker cannot be used due to Apple SDK licensing).
 
+Windows ARM64 vyžaduje Bun 1.4.0 nebo novější. Starší verze na této platformě nemají podporu `bun:ffi`. Toto minimum platí i při sestavení Windows ARM64 na Linuxu nebo Windows x64.
+
+#### Běhové knihovny na Linuxu
+
+Balíčky DEB, RPM a Pacman instalují knihovny systemd, ALSA a GLib/GIO. Zachovávají také závislost na `pkexec` nebo `polkit` pro správu sítě. DEB používá alternativy `libasound2t64 | libasound2` a `libglib2.0-0t64 | libglib2.0-0`, takže podporuje Debian 12 i Ubuntu 24.04.
+
+Pro hlasitost přes PulseAudio nebo PipeWire je doporučený `libpulse0` (DEB), `pulseaudio-libs` (RPM) nebo `libpulse` (Pacman). Bez použitelného Pulse výstupu aplikace zkusí ALSA `default` / `Master`. Otevírání místních souborů vyžaduje grafické přihlášení a výchozí aplikaci pro daný typ souboru.
+
 #### Prerequisites
 
 **On Linux (Debian / Ubuntu):**
@@ -140,6 +148,15 @@ Changing the host's network settings from the app needs the signed network helpe
 - ² MSI requires WiX toolset (Windows-only)
 
 #### Running the native app
+
+Síť, Wi-Fi, čas, hlasitost a otevírání souborů používají knihovny operačního systému. Backend už kvůli těmto funkcím nespouští `nmcli`, `ip`, `systemsetup`, PowerShell ani další systémové nástroje. Zůstávají jen tyto výjimky:
+
+- Vlastní Windows launcher a pomocník pro získání oprávnění přes UAC.
+- `pkexec` s vlastním pomocníkem na Linuxu.
+- `osascript` s ověřovacím skriptem a vlastním pomocníkem na macOS. Skript používá `sh`, `mktemp`, `cp`, `codesign`, `shasum`, `awk`, `rm` a `rmdir` pro ověření a úklid privilegované kopie.
+- Vlastní program v režimu `--access-probe`, který na Linuxu ověřuje přístup účtu časové služby.
+
+Převod času na macOS čte soubor časového pásma přímo, takže kvůli proměnné `TZ` žádný další proces nespouští. Na macOS se Wi-Fi obsluhuje v procesu desktopové aplikace, která má povolenou Polohu. Výchozí aplikaci při otevření souboru spouští operační systém. Pokud se výsledek změny sítě nebo času nedá potvrdit, další zápisy zůstanou zablokované i po restartu backendu. Čtení zůstává dostupné; nepotvrzený stav se označí v rozhraní.
 
 - **Normal mode:** Just launch the application. The backend runs silently in the background.
 - **Debug mode:** Opens a built-in debug console window that shows backend log messages. Also enables the developer console in the webview (F12). Useful for troubleshooting issues.

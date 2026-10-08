@@ -41,9 +41,24 @@ async function runPath(mode: 'read' | 'apply' | 'ovs' | 'ovs-incomplete'): Promi
 			done(null, { stdout, stderr: '' });
 		};
 		mock.module('node:child_process', () => ({ ...cp, execFile }));
+		const { createNativeNetworkFixture } = await import('./tests/unit/fixtures/native-network-reader.ts');
+		const { readNativeLinuxNetwork } = await import('./src/native/linux/network-reader.ts');
+		const native = createNativeNetworkFixture(withOvs ? 2 : 150);
+		native.state.ovs = withOvs;
+		native.state.malformedProfile = mode === 'ovs-incomplete';
+		const nativeCalls = [];
+		const workerModule = { ...(await import('./src/native/worker-host.ts')) };
+		mock.module('./src/native/worker-host.ts', () => ({ ...workerModule, NativeWorkerChannel: class {
+			constructor(kind) { if (kind !== 'read') throw new Error('Expected read worker'); }
+			call(request, timeoutMs) {
+				if (request.method !== 'linux.network.snapshot') throw new Error('Unexpected native request');
+				nativeCalls.push(request);
+				return readNativeLinuxNetwork({ timeoutMs }, native.deps);
+			}
+		} }));
 		const { readLinuxNetworkState, applyLinuxIPv4 } = await import('./src/system-network-linux.ts');
 		const result = mode !== 'apply' ? await readLinuxNetworkState() : await applyLinuxIPv4('eth0', { mode: 'dhcp' }).then(() => 'applied', e => ({ name: e.name, message: e.message }));
-		console.log(JSON.stringify({ result, calls }));
+		console.log(JSON.stringify({ result, calls, nativeCalls, dbusCalls: native.calls.map(({ kind, member, path }) => ({ kind, member, path })) }));
 	`;
 	const child = Bun.spawn([process.execPath, '--eval', script], { cwd: join(import.meta.dir, '../..'), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
 	const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -52,33 +67,29 @@ async function runPath(mode: 'read' | 'apply' | 'ovs' | 'ovs-incomplete'): Promi
 	return JSON.parse(lines[lines.length - 1]!);
 }
 
-test('the production Linux reader obtains 150 profiles with one listing and one detail process', async () => {
-	const { result, calls } = await runPath('read');
+test('the production Linux reader obtains 150 profiles through its read worker without subprocesses', async () => {
+	const { result, calls, nativeCalls, dbusCalls } = await runPath('read');
 	expect(result.ipv4ProfilesUnavailable).toBe(false);
 	expect(result.interfaces[0]).toMatchObject({ id: 'eth0', ipv4Mode: 'dhcp', ipv4Configurable: true });
-	expect(calls.filter((call: any) => call.args.includes('UUID,DEVICE'))).toHaveLength(1);
-	const detail = calls.filter((call: any) => call.args.includes('multiline'));
-	expect(detail).toHaveLength(1);
-	expect(detail[0].args.filter((arg: string) => arg === 'uuid')).toHaveLength(150);
+	expect(calls).toHaveLength(0);
+	expect(nativeCalls).toHaveLength(1);
+	expect(dbusCalls.filter((call: any) => call.member === 'GetSettings')).toHaveLength(150);
+	expect(dbusCalls.every((call: any) => call.kind === 'read')).toBe(true);
 });
 
-test('the production IPv4 mutation refuses incomplete profile details before modify or reapply', async () => {
+test('the production IPv4 mutation refuses execution without durable ownership', async () => {
 	const { result, calls } = await runPath('apply');
-	expect(result.name).toBe('IncompleteProfileReadError');
-	expect(result.message).toContain('connection.multi-connect');
-	expect(calls.some((call: any) => call.args.includes('modify') || call.args.includes('reapply') || call.args.includes('up'))).toBe(false);
-	expect(calls.some((call: any) => call.args.includes('CheckpointRollback'))).toBe(true);
-	expect(calls.some((call: any) => call.args.includes('CheckpointDestroy'))).toBe(false);
+	expect(result.message).toContain('durable ownership');
+	expect(calls).toHaveLength(0);
 });
 
 test('an OVS bridge without IPv4 leaves the ordinary connection editable in the same batch', async () => {
-	const { result, calls } = await runPath('ovs');
+	const { result, calls, dbusCalls } = await runPath('ovs');
 	expect(result.ipv4ProfilesUnavailable).toBe(false);
 	expect(result.interfaces.find((iface: any) => iface.id === 'eth0')).toMatchObject({ ipv4Mode: 'dhcp', ipv4Configurable: true });
 	expect(result.interfaces.find((iface: any) => iface.id === 'ovs0')).toMatchObject({ ipv4Mode: 'unknown', ipv4Configurable: false });
-	const details = calls.filter((call: any) => call.args.includes('multiline'));
-	expect(details).toHaveLength(1);
-	expect(details[0].args.filter((arg: string) => arg === 'uuid')).toHaveLength(2);
+	expect(calls).toHaveLength(0);
+	expect(dbusCalls.filter((call: any) => call.member === 'GetSettings')).toHaveLength(2);
 });
 
 test('an OVS bridge does not make an incomplete ordinary IPv4 profile acceptable', async () => {

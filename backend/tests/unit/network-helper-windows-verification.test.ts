@@ -30,7 +30,7 @@ for (const scenario of ['timeout', 'abort', 'already-aborted', 'default-limit', 
 				globalThis.LISH_NETWORK_HELPER_SHA256 = 'a'.repeat(64);
 				const { encodeNetworkHelperRequest } = await import('./src/network-helper-protocol.ts');
 				const { parseSystemTimeExitCode } = await import('./src/system-time-helper.ts');
-				const request = { version: 1, operation: 'applySystemTime', changes: { ntpEnabled: false }, deadlineUptime: uptime() + 0.2 };
+				const request = { version: 2, operationId: '00000000-0000-4000-8000-000000000001', cancelPath: process.cwd() + '/helper-test.cancel', operation: 'applySystemTime', changes: { ntpEnabled: false }, deadlineUptime: uptime() + 0.2 };
 				process.argv = [process.execPath, 'launcher', '--request', encodeNetworkHelperRequest(request)];
 				operation = import('./src/network-helper-windows-launcher.ts').then(() => {
 					const result = parseSystemTimeExitCode(Number(process.exitCode ?? 0));

@@ -12,9 +12,14 @@ import { Settings } from './settings.ts';
 import { createProcessShutdown } from './shutdown.ts';
 import { startMemoryTrace } from './monitoring/memory-trace.ts';
 import { startHeapSnapshotTrigger } from './monitoring/heap-snapshot.ts';
+import { runTimeAccessProbeArgument } from './native/linux/time-access-probe.ts';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
+if (args[0] === '--access-probe') {
+	const status = args.length === 2 ? await runTimeAccessProbeArgument(args[1]!).catch(() => 3) : 3;
+	process.exit(status);
+}
 const ipc = args.includes('--ipc');
 if (ipc && args.some(arg => ['--healthcheck', '--host', '--port', '--secure', '--privkey', '--pubkey', '--token'].includes(arg))) {
 	console.error('[API] --ipc cannot be combined with HTTP/WebSocket options');
