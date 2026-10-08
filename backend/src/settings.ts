@@ -2,7 +2,7 @@ import { mkdir } from 'fs/promises';
 import { Mutex } from 'async-mutex';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
-import { productName, productEnvPrefix, minMessageSizeFor, DEFAULT_MAX_RELAY_RESERVATIONS, type CompressionAlgorithm } from '@shared';
+import { productName, productEnvPrefix, minMessageSizeFor, DEFAULT_MAX_RELAY_RESERVATIONS, type CompressionAlgorithm, CodedError, ErrorCodes } from '@shared';
 // Default upper bound for chunk size accepted by the app (configurable via settings).
 export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 // Default upper bound for a single P2P message on the wire (configurable via settings).
@@ -44,12 +44,13 @@ export interface SettingsData {
 		maxMessageSize: number;
 		/**
 		 * Bytes of chunk requests kept in flight to one peer: the download pipelines
-		 * `floor(chunkWindowBytes / chunkSize)` requests (at least 1). Not exposed in the UI.
+		 * `floor(chunkWindowBytes / chunkSize)` requests (at least 1). Never above
+		 * `chunkInflightBudgetBytes`, which caps it anyway. Applies to running downloads.
 		 */
 		chunkWindowBytes: number;
 		/**
 		 * Bytes of chunk requests in flight across every download in the process, including
-		 * verified chunks waiting for a write retry. Not exposed in the UI.
+		 * verified chunks waiting for a write retry. Applies to running downloads.
 		 */
 		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;
@@ -305,7 +306,16 @@ export class Settings {
 	 * ever sees the pair below the floor. A rejected key throws before anything is published.
 	 */
 	async set(path: string, value: any): Promise<void> {
-		await this.write('set', () => this.storage.prepare([{ path, value }], draft => Settings.repairDraft(draft), 'throw'));
+		await this.write('set', () =>
+			this.storage.prepare(
+				[{ path, value }],
+				draft => {
+					Settings.checkChunkWindow(this.storage.list().network, draft.network);
+					Settings.repairDraft(draft);
+				},
+				'throw'
+			)
+		);
 	}
 
 	/**
@@ -359,6 +369,20 @@ export class Settings {
 	private static repairDraft(draft: SettingsData): void {
 		const floor = minMessageSizeFor(draft.network.maxChunkSize);
 		if (draft.network.maxMessageSize < floor) draft.network.maxMessageSize = floor;
+		// An import keeps its other keys; a per-peer window above the shared budget would be capped by it anyway.
+		if (draft.network.chunkWindowBytes > draft.network.chunkInflightBudgetBytes) draft.network.chunkWindowBytes = draft.network.chunkInflightBudgetBytes;
+	}
+
+	/**
+	 * Refuse a write that sets a chunk window or budget that is not a positive whole number of
+	 * bytes, or leaves the per-peer window above the budget shared by every download: the budget
+	 * would cap it anyway, so the screen would show a window that never applies.
+	 */
+	private static checkChunkWindow(before: SettingsData['network'], after: SettingsData['network']): void {
+		const changed = (['chunkWindowBytes', 'chunkInflightBudgetBytes'] as const).filter(key => before[key] !== after[key]);
+		if (changed.length === 0) return;
+		for (const key of changed) if (!Number.isSafeInteger(after[key]) || after[key] <= 0) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `network.${key}`);
+		if (after.chunkWindowBytes > after.chunkInflightBudgetBytes) throw new CodedError(ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET);
 	}
 
 	/**

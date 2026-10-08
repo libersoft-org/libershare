@@ -97,6 +97,8 @@ const errorCodes = [
 	'INVALID_JSON',
 	'INVALID_SETTINGS_BACKUP',
 	'SETTINGS_SAVED_NOT_APPLIED',
+	// The per-peer chunk window is larger than the in-flight budget shared by every download.
+	'SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET',
 	'INVALID_IDENTITY_BACKUP',
 	'MISSING_PARAMETER',
 	'UNSUPPORTED_COMPRESSION',
