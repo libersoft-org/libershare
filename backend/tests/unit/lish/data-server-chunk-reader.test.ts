@@ -167,6 +167,58 @@ describe('DataServer.createChunkReader', () => {
 		await reader.close();
 	});
 
+	it('closes an idle file after its own idle time while the stream keeps reading another one', async () => {
+		const other = 'lish-chunk-reader-other' as LISHid;
+		writeFileSync(join(dir, 'other.bin'), 'OOOO');
+		addLISH(db, { id: other, name: 'other', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', directory: dir, files: [{ path: 'other.bin', size: 4, checksums: ['chunk-o-0' as ChunkID] }], chunks: ['chunk-o-0' as ChunkID] });
+		const reader = dataServer.createChunkReader(40);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		for (let i = 0; i < 10; i++) {
+			expect(text(await reader.getChunk(other, 'chunk-o-0' as ChunkID))).toBe('OOOO');
+			await Bun.sleep(15);
+		}
+		// The first file was last read well past its idle time ago; only the other one stays open.
+		expect(opened - closed).toBe(1);
+		await reader.close();
+		expect(closed).toBe(opened);
+	});
+
+	it('closes the files of a held LISH and reads it uncached until the hold is released', async () => {
+		const reader = dataServer.createChunkReader(60_000);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		expect(opened - closed).toBe(1);
+		const release = await dataServer.holdChunkFiles(LISH_ID);
+		expect(closed).toBe(opened);
+		expect(text(await reader.getChunk(LISH_ID, CHUNKS[1]!))).toBe('BBBB');
+		expect(closed).toBe(opened);
+		release();
+		await reader.getChunk(LISH_ID, CHUNKS[2]!);
+		expect(opened - closed).toBe(1);
+		await reader.close();
+		expect(closed).toBe(opened);
+	});
+
+	it('waits for a read still using a kept file before the hold returns', async () => {
+		const reader = dataServer.createChunkReader(60_000);
+		openDelayMs = 60;
+		const reading = reader.getChunk(LISH_ID, CHUNKS[0]!);
+		await Bun.sleep(10);
+		const release = await dataServer.holdChunkFiles(LISH_ID);
+		expect(text(await reading)).toBe('AAAA');
+		expect(closed).toBe(opened);
+		release();
+		await reader.close();
+	});
+
+	it.skipIf(process.platform !== 'win32')('lets a held LISH be deleted on Windows', async () => {
+		const reader = dataServer.createChunkReader(60_000);
+		await reader.getChunk(LISH_ID, CHUNKS[0]!);
+		const release = await dataServer.holdChunkFiles(LISH_ID);
+		expect(() => rmSync(join(dir, 'data.bin'))).not.toThrow();
+		release();
+		await reader.close();
+	});
+
 	describe('when the shared folder itself moves', () => {
 		const NESTED = 'lish-chunk-reader-nested' as LISHid;
 		const NESTED_CHUNKS = ['chunk-n-0', 'chunk-n-1', 'chunk-n-2'] as ChunkID[];

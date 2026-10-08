@@ -37,6 +37,9 @@ const PATH_CAN_CHANGE_WHILE_OPEN = process.platform !== 'win32';
 export class DataServer {
 	private db: Database;
 	private openRoot: typeof openDataset;
+	private readonly chunkReaders = new Set<{ release(lishID: LISHid): Promise<void> }>();
+	/** LISHs whose kept chunk files must stay closed, with how many holders want that. */
+	private readonly chunkFileHolds = new Map<LISHid, number>();
 
 	constructor(db: Database, openRoot: typeof openDataset = openDataset) {
 		this.db = db;
@@ -256,43 +259,72 @@ export class DataServer {
 	 * chunk, instead of opening the dataset and the file, reading their size and closing both for
 	 * every chunk (on Windows that is several round trips to the I/O worker). It keeps at most
 	 * `maxFiles` of them, closing the least recently used one first, so a stream walking through
-	 * many files cannot run the process out of file handles. Files that no read is using close
-	 * `idleMs` after the last read finished — so an idle stream does not keep them locked — and on
-	 * `close()`; a file is never closed under a read that is still opening or reading it.
+	 * many files cannot run the process out of file handles. A file that no read is using closes
+	 * `idleMs` after its own last read finished — so an idle file does not stay locked while the
+	 * stream reads others — on `close()`, and on `holdChunkFiles()` for its LISH; a file is never
+	 * closed under a read that is still opening or reading it.
 	 * The chunk's location is still looked up for every read, so a deleted LISH or reset chunk is
 	 * never served from a kept file; a moved dataset gets a new key and is opened afresh.
 	 */
 	createChunkReader(idleMs = 2000, maxFiles = 4): ChunkReader {
 		interface KeptFile {
+			readonly lishID: LISHid;
 			readonly opened: Promise<OpenChunkFile>;
 			users: number;
 			dropped: boolean;
+			idle?: ReturnType<typeof setTimeout>;
+			closing?: Promise<void>;
+			/** Settles once the file is closed. */
+			readonly closed: Promise<void>;
+			readonly markClosed: () => void;
 		}
 		// Insertion order is use order: a used entry is moved to the end.
 		const files = new Map<string, KeptFile>();
-		let timer: ReturnType<typeof setTimeout> | undefined;
 		// Forget the entry; its file closes once the last read using it is done.
-		const drop = async (key: string, entry: KeptFile): Promise<void> => {
+		const drop = (key: string, entry: KeptFile): Promise<void> => {
 			if (files.get(key) === entry) files.delete(key);
 			entry.dropped = true;
+			clearTimeout(entry.idle);
 			if (entry.users === 0)
-				await entry.opened.then(
-					opened => opened.close(),
-					() => {}
-				);
+				entry.closing ??= entry.opened
+					.then(
+						opened => opened.close(),
+						() => {}
+					)
+					.finally(entry.markClosed);
+			return entry.closing ?? Promise.resolve();
 		};
-		const dropUnused = (): Promise<void[]> => Promise.all([...files.entries()].filter(([, entry]) => entry.users === 0).map(([key, entry]) => drop(key, entry)));
+		const dropAll = (match: (entry: KeptFile) => boolean): Promise<void> =>
+			Promise.all(
+				[...files.entries()]
+					.filter(([, entry]) => match(entry))
+					.map(([key, entry]) => {
+						void drop(key, entry);
+						return entry.closed;
+					})
+			).then(() => {});
+		const control = { release: (lishID: LISHid) => dropAll(entry => entry.lishID === lishID) };
+		this.chunkReaders.add(control);
 		return {
 			getChunk: (lishID, chunkID) =>
 				this.readChunk(lishID, chunkID, async (id, filePath) => {
 					const key = JSON.stringify([id, this.getDatasetRoot(id) ?? getLISHMeta(this.db, id)?.directory ?? null, filePath]);
 					for (;;) {
+						// The dataset is being deleted or moved: read it as an uncached read would, so no handle outlives the read.
+						if (this.chunkFileHolds.has(id)) {
+							const opened = await this.openChunkFile(id, filePath);
+							return { ...opened, done: () => opened.close() };
+						}
 						let entry = files.get(key);
 						const reused = entry !== undefined;
 						files.delete(key);
-						entry ??= { opened: this.openChunkFile(id, filePath), users: 0, dropped: false };
+						if (!entry) {
+							const { promise: closed, resolve: markClosed } = Promise.withResolvers<void>();
+							entry = { lishID: id, opened: this.openChunkFile(id, filePath), users: 0, dropped: false, closed, markClosed };
+						}
 						files.set(key, entry);
 						entry.users++;
+						clearTimeout(entry.idle);
 						for (const [oldKey, oldEntry] of files) {
 							if (files.size <= maxFiles) break;
 							if (oldEntry.users === 0) void drop(oldKey, oldEntry);
@@ -330,20 +362,47 @@ export class DataServer {
 							size,
 							done: async failed => {
 								kept.users--;
-								clearTimeout(timer);
-								timer = setTimeout(() => void dropUnused(), idleMs);
-								timer.unref?.();
 								// A failed read may mean the kept file went bad: drop it so the next read reopens it.
 								if (failed || kept.dropped) await drop(key, kept);
+								else if (kept.users === 0) {
+									// Per file, so reading another file does not keep this one open.
+									kept.idle = setTimeout(() => void drop(key, kept), idleMs);
+									kept.idle.unref?.();
+								}
 							},
 						};
 					}
 				}),
 			close: async () => {
-				clearTimeout(timer);
-				await Promise.all([...files.entries()].map(([key, entry]) => drop(key, entry)));
+				this.chunkReaders.delete(control);
+				await dropAll(() => true);
 			},
 		};
+	}
+
+	/**
+	 * Close the files every chunk reader keeps open for this LISH, waiting for reads still using
+	 * them, and read it uncached until the returned function is called. Windows refuses to delete or
+	 * rename a file, or a folder above it, while it is open, so a local delete or move of the
+	 * dataset must hold this for as long as it touches the files.
+	 */
+	async holdChunkFiles(lishID: LISHid): Promise<() => void> {
+		this.chunkFileHolds.set(lishID, (this.chunkFileHolds.get(lishID) ?? 0) + 1);
+		let released = false;
+		const release = (): void => {
+			if (released) return;
+			released = true;
+			const count = (this.chunkFileHolds.get(lishID) ?? 1) - 1;
+			if (count > 0) this.chunkFileHolds.set(lishID, count);
+			else this.chunkFileHolds.delete(lishID);
+		};
+		try {
+			await Promise.all([...this.chunkReaders].map(reader => reader.release(lishID)));
+		} catch (error) {
+			release();
+			throw error;
+		}
+		return release;
 	}
 
 	/** Open a chunk's file for reading, together with its dataset, and read the file's size. */
