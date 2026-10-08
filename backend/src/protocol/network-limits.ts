@@ -2,6 +2,7 @@ import { type Settings, type SettingsData } from '../settings.ts';
 import { StorageWriteError } from '../storage.ts';
 import { Downloader } from './downloader.ts';
 import { setMaxUploadSpeed } from './lish-protocol.ts';
+import { chunkInflightBudget } from './inflight-budget.ts';
 
 /**
  * Push the two transfer rates into the protocol layer's token buckets.
@@ -16,6 +17,9 @@ import { setMaxUploadSpeed } from './lish-protocol.ts';
 export function applyNetworkLimits(net: SettingsData['network']): void {
 	Downloader.setMaxDownloadSpeed(net.maxDownloadSpeed);
 	setMaxUploadSpeed(net.maxUploadSpeed);
+	// The budget reads its capacity live, but reservations already waiting are granted only on
+	// the next release; a raised budget should let them through now.
+	chunkInflightBudget.refresh();
 }
 
 /**

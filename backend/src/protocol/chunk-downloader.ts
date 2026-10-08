@@ -430,7 +430,8 @@ export class ChunkDownloader {
 				observedHaveVersion = update.version;
 			};
 			// Requests pipelined to this peer: enough to keep chunkWindowBytes in flight, at least one.
-			const depth = pipelineDepth(lish.chunkSize);
+			// Read at every decision, so a settings change applies to running downloads.
+			const depth = (): number => pipelineDepth(lish.chunkSize);
 			// Ends every wait of this run: the download stopping (disable, error, destroy) or this peer being stopped.
 			const waitSignal = AbortSignal.any([this.deps.abortSignal, pauseController.stopSignal(), peerAbort.signal]);
 			// Workers of this run that have not decided to leave; see the idle exit below.
@@ -439,6 +440,8 @@ export class ChunkDownloader {
 			const worker = async (): Promise<void> => {
 				while (true) {
 					if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) break;
+					// The window was made smaller: this worker's slot is gone.
+					if (activeWorkers > depth()) break;
 					await pauseController.waitIfDisabled();
 					await pauseController.waitIfWritePaused();
 					// A foreign recovery pause may end while verified chunks are still queued for
@@ -821,7 +824,7 @@ export class ChunkDownloader {
 				void run.finally(() => running.delete(run));
 			};
 			const topUpWorkers = (): void => {
-				while (activeWorkers < depth && !stopped && !crashed) spawnWorker();
+				while (activeWorkers < depth() && !stopped && !crashed) spawnWorker();
 			};
 			topUpWorkers();
 			while (running.size > 0) await Promise.all([...running]);

@@ -58,6 +58,11 @@ export class ByteBudget {
 		});
 	}
 
+	/** Grant what fits again, after the capacity was raised. */
+	refresh(): void {
+		this.pump();
+	}
+
 	/** Drop every reservation and waiter. For tests only. */
 	reset(): void {
 		this.used = 0;

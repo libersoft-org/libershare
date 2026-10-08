@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { Settings, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
 import { ChunkDownloader, type ChunkDownloaderDeps } from '../../../src/protocol/chunk-downloader.ts';
 import { PeerManager } from '../../../src/protocol/peer-manager.ts';
 import { PauseController } from '../../../src/protocol/pause-controller.ts';
@@ -713,6 +717,62 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(ds.downloadedChunks.size).toBe(40);
 		expect(steady.maxActive).toBeGreaterThan(1);
 	}, 15000);
+
+	describe('when the chunk window setting changes during a download', () => {
+		let network: SettingsData['network'];
+		const useWindow = async (bytes: number): Promise<void> => {
+			if (!network) {
+				const dir = mkdtempSync(join(tmpdir(), 'lish-window-live-'));
+				network = { ...(await Settings.create(dir)).getDefaults().network };
+				rmSync(dir, { recursive: true, force: true });
+			}
+			network.chunkWindowBytes = bytes;
+			useNetworkSettings(() => network);
+		};
+		afterEach(async () => {
+			const dir = mkdtempSync(join(tmpdir(), 'lish-window-live-'));
+			const defaults = (await Settings.create(dir)).getDefaults().network;
+			rmSync(dir, { recursive: true, force: true });
+			useNetworkSettings(() => defaults);
+		});
+
+		it('sends fewer requests at once once the window shrinks', async () => {
+			await useWindow(32 * CHUNK_SIZE);
+			const { missing, data } = makeChunks(60);
+			const ds = new FakeDataServer(missing);
+			const pm = new PeerManager();
+			const cd = makeDownloader(ds, pm, 60);
+			const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 40);
+			pm.tryAdd('peer-window-shrink0', client as never, 'DIRECT');
+			const run = cd.run();
+			await Bun.sleep(20);
+			expect(client.active).toBeGreaterThan(1);
+			await useWindow(CHUNK_SIZE);
+			// Requests already on the wire finish; no new one may join them.
+			await Bun.sleep(80);
+			client.maxActive = client.active;
+			await run;
+			expect(ds.downloadedChunks.size).toBe(60);
+			expect(client.maxActive).toBe(1);
+		}, 15000);
+
+		it('sends more requests at once once the window grows', async () => {
+			await useWindow(CHUNK_SIZE);
+			const { missing, data } = makeChunks(60);
+			const ds = new FakeDataServer(missing);
+			const pm = new PeerManager();
+			const cd = makeDownloader(ds, pm, 60);
+			const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 20);
+			pm.tryAdd('peer-window-grow00', client as never, 'DIRECT');
+			const run = cd.run();
+			await Bun.sleep(70);
+			expect(client.maxActive).toBe(1);
+			await useWindow(4 * CHUNK_SIZE);
+			await run;
+			expect(ds.downloadedChunks.size).toBe(60);
+			expect(client.maxActive).toBe(4);
+		}, 15000);
+	});
 
 	it('drops valid replies that arrive after a sibling banned the peer', async () => {
 		const { missing, data } = makeChunks(6);
