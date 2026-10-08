@@ -7,7 +7,8 @@ import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts
 
 /** `signManifest` runs on the live identity; a stand-in `this` supplies just that state. */
 function signWith(state: { node: unknown; currentPrivateKey: unknown; lifecycle?: string }, lish: ILISH): Promise<ILISH> {
-	const self = { lifecycle: 'running', ...state, isRunning: Network.prototype.isRunning };
+	// The same object, not a copy: a test that swaps the identity mid-sign must reach the signer.
+	const self = Object.assign(state, { lifecycle: state.lifecycle ?? 'running', isRunning: Network.prototype.isRunning });
 	return Network.prototype.signManifest.call(self as never, lish);
 }
 
