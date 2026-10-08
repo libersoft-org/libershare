@@ -1,5 +1,6 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
+import { assertExpectedPublisher, verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
 import { type Stream } from '@libp2p/interface';
 import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure, minMessageSizeFor, formatUntrustedValue } from '@shared';
 import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE, networkSetting } from '../settings.ts';
@@ -261,7 +262,12 @@ export class LISHClient {
 	// stream — the final (total, total) is emitted on SUCCESS only, so neither a failed
 	// transfer nor a counted-through error response can flash a full bar. A throwing
 	// callback never breaks the transfer or poisons the shared decoder.
-	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
+	/**
+	 * Fetch a manifest and admit it only if its optional publisher signature is valid and matches
+	 * `expectedPublisher` (a Peer ID, `null` for an expected unsigned manifest, `undefined` when the
+	 * caller knows nothing). Any such failure is this peer's fault, so callers move to the next one.
+	 */
+	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void, expectedPublisher?: ExpectedPublisher): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
 		const safeLishID = formatUntrustedValue(lishID);
 		const safeEmit = (r: number, t: number): void => {
@@ -315,6 +321,14 @@ export class LISHClient {
 					// chunkSize is a property of the LISH itself (every honest peer serves the same
 					// manifest), so it stays a terminal local error.
 					if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`);
+					throw e;
+				}
+				// Any peer can relay a signed manifest, so a changed body, a stripped signature or
+				// another publisher's signature under this ID is a fault of the peer that sent it.
+				try {
+					assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
+				} catch (e) {
+					if (e instanceof CodedError) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim());
 					throw e;
 				}
 				// Emitted only after validation passes — a rejected manifest must not flash a full bar.
