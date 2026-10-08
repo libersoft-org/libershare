@@ -33,10 +33,10 @@
 		import { mount, unmount, tick } from 'svelte';
 		import { get } from 'svelte/store';
 		import NetworkLishsPeerList from '/src/pages/Network/NetworkLishsPeerList.svelte';
-		import NetworkLishs from '/src/pages/Network/NetworkLishs.svelte';
 		import NetworkLishDetailView from '/src/pages/Network/NetworkLishDetailView.svelte';
 		import NetworkPeersPeerDetail from '/src/pages/Network/NetworkPeersPeerDetail.svelte';
-		import DownloadLISHProgress from '/src/pages/Download/DownloadLISHProgress.svelte';
+		import DownloadLISHCreate from '/src/pages/Download/DownloadLISHCreate.svelte';
+		import Network from '/src/pages/Network/Network.svelte';
 		import { api } from '/src/scripts/api.ts';
 		import { findBindingForElement } from '/src/scripts/navArea.svelte.ts';
 		import { currentLanguage, translations, t, translateError } from '/src/scripts/language.ts';
@@ -47,9 +47,19 @@
 		const target = document.querySelector('#view');
 		const results = [];
 		const calls = [];
-		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, create: api.lishs.create };
+		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, getPeers: api.lishnets.getPeers, list: api.lishnets.list, getNodeInfo: api.lishnets.getNodeInfo, create: api.lishs.create, startSearch: api.search.startSearch, cancelSearch: api.search.cancelSearch, exists: api.fs.exists };
 		let peerListing = [];
-		api.on = () => () => {};
+		const listeners = new Map();
+		api.on = (event, listener) => {
+			listeners.set(event, listener);
+			return () => {};
+		};
+		api.lishnets.getPeers = async () => [];
+		api.lishnets.list = async () => [{ networkID: 'n', name: 'N', description: '', bootstrapPeers: [], created: '2026-10-08T00:00:00.000Z', enabled: true }];
+		api.lishnets.getNodeInfo = async () => null;
+		api.search.startSearch = async () => ({ searchID: 's1' });
+		api.search.cancelSearch = async () => {};
+		api.fs.exists = async path => (path === '/data/item.bin' ? { exists: true, type: 'file' } : { exists: false });
 		api.subscribe = async () => {};
 		api.unsubscribe = async () => {};
 		api.call = async method => {
@@ -97,7 +107,30 @@
 				results.push({ name, passed: false, error: error.message });
 			}
 		}
-		const search = results => ({ query: '', searching: false, results, error: '', searchID: 's', startedAt: null, refusedPeers: 0, start: async () => {}, cancel: async () => {}, clear() {}, dispose() {} });
+		/** Confirm a row the way the mouse manager does: through the navigation registry. */
+		const confirmRow = element => findBindingForElement(element).item.onConfirm();
+		/** Search the real Network page and feed backend updates into its real aggregation. */
+		async function searchNetwork(updates) {
+			await show(Network, {});
+			const input = target.querySelector('input');
+			input.value = 'Item';
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+			await settle();
+			button('common.search').click();
+			await settle();
+			for (const lishs of updates) listeners.get('search:lishs:update')({ searchID: 's1', lishs: structuredClone(lishs) });
+			await settle();
+		}
+		/** From the search table: open the row with this publisher text, then the given peer. */
+		async function openPeerFromRow(publisherText, peerID) {
+			const rows = [...target.querySelectorAll('[role="row"]')].filter(row => row.textContent.includes(X));
+			const row = rows.find(r => (publisherText ? r.textContent.includes(publisherText) : !r.querySelector('.lish-publisher')));
+			confirmRow(row);
+			await settle();
+			confirmRow([...target.querySelectorAll('.peer-id')].find(el => el.textContent === peerID));
+			await settle();
+		}
+		const short = id => `${id.slice(0, 14)}…${id.slice(-6)}`;
 
 		try {
 			for (const lang of ['en', 'cs']) {
@@ -128,28 +161,45 @@
 					assert(text().includes(label('lish.unsigned')), 'Unsigned preview is not marked');
 				});
 
-				await test(`${lang}: opening a peer from a search row passes the row publisher`, async () => {
-					let opened;
-					await show(NetworkLishsPeerList, { row: { id: X, name: 'Item', publisher: A, peers: [{ peerID: 'peer-1', networkID: 'n' }] }, networks: [], onBack() {}, onOpenPeer: (...args) => (opened = args) });
-					// Rows are confirmed through the navigation registry, the way the mouse manager does it.
-					findBindingForElement([...target.querySelectorAll('.peer-id')].find(el => el.textContent === 'peer-1')).item.onConfirm();
-					await settle();
-					assert(opened && opened[2] === X && opened[3] === A, `Peer was opened without the publisher: ${JSON.stringify(opened)}`);
-				});
-
-				await test(`${lang}: two publishers under one ID give two rows and a warning`, async () => {
-					await show(NetworkLishs, {
-						baseY: 0,
-						search: search([
-							{ id: X, name: 'Item', publisher: A, peers: [{ peerID: 'p1', networkID: 'n' }] },
-							{ id: X, name: 'Item', publisher: Q, peers: [{ peerID: 'p2', networkID: 'n' }] },
-						]),
-						onOpenLishPeers() {},
-					});
-					assert(target.querySelectorAll('.lish-publisher').length === 2, 'Rows with different publishers merged');
+				await test(`${lang}: two publishers under one ID stay two rows across search updates`, async () => {
+					await searchNetwork([
+						[{ id: X, name: 'Item', publisher: A, peers: [{ peerID: 'peer-1', networkID: 'n' }] }],
+						[
+							{ id: X, name: 'Item', publisher: Q, peers: [{ peerID: 'peer-2', networkID: 'n' }] },
+							{
+								id: X,
+								name: 'Item',
+								publisher: A,
+								peers: [
+									{ peerID: 'peer-1', networkID: 'n' },
+									{ peerID: 'peer-3', networkID: 'n' },
+								],
+							},
+						],
+					]);
+					assert(target.querySelectorAll('.lish-publisher').length === 2, `Rows with different publishers merged: ${target.querySelectorAll('.lish-publisher').length}`);
 					assert(text().includes(label('lish.publishersDiffer')), 'Different publishers are not flagged');
 					assert(!text().includes(label('lish.signedBy')), 'A search result claims a verified signer');
 				});
+
+				for (const [offered, rowPublisher, expected] of [
+					[Q, A, A],
+					[undefined, A, A],
+					[A, undefined, null],
+				]) {
+					await test(`${lang}: search -> peer -> add keeps the row expectation (row ${rowPublisher ? 'signed' : 'unsigned'}, peer offers ${offered ? (offered === A ? 'A' : 'Q') : 'unsigned'})`, async () => {
+						await searchNetwork([[{ id: X, name: 'Item', ...(rowPublisher ? { publisher: rowPublisher } : {}), peers: [{ peerID: 'peer-1', networkID: 'n' }] }]]);
+						peerListing = [{ id: X, name: 'Item', totalSize: 4, ...(offered ? { publisher: offered } : {}) }];
+						calls.length = 0;
+						await openPeerFromRow(rowPublisher ? short(rowPublisher) : undefined, 'peer-1');
+						assert(text().includes(label('lish.otherPublisherOnPeer')), 'The peer offering another publisher is not flagged');
+						assert(!target.querySelector('.wrap.highlight'), 'A different publisher is highlighted as the target');
+						button('network.addToDownloads').click();
+						await settle();
+						const add = calls.find(c => c[0] === 'addPeerLish');
+						assert(add && add[1] === X && add[4] === expected, `Add did not keep the row expectation: ${JSON.stringify(calls)}`);
+					});
+				}
 
 				await test(`${lang}: the peer view keeps the original expectation when the peer reports another publisher`, async () => {
 					peerListing = [{ id: X, name: 'Item', totalSize: 4, publisher: Q }];
@@ -176,12 +226,24 @@
 					assert(text().includes(label('lish.signedBy')) && text().includes(A), 'Signer is not shown');
 				});
 
-				await test(`${lang}: creating with sign sends the flag and shows the signer`, async () => {
-					await show(DownloadLISHProgress, { params: { dataPath: '/data', sign: true }, onBack() {}, onComplete() {} });
-					const call = calls.find(c => c[0] === 'create');
-					assert(call && call[13] === true, `Create did not send sign: ${JSON.stringify(calls)}`);
-					assert(text().includes(label('lish.signedBy')) && text().includes(A), 'Created signer is not shown');
-				});
+				for (const signIt of [true, false]) {
+					await test(`${lang}: the create form ${signIt ? 'sends' : 'does not send'} sign from its switch`, async () => {
+						await show(DownloadLISHCreate, {});
+						// Fields in order: name, description (textarea), data location.
+						const dataInput = target.querySelectorAll('input')[1];
+						dataInput.value = '/data/item.bin';
+						dataInput.dispatchEvent(new Event('input', { bubbles: true }));
+						target.querySelector(`[role="switch"][aria-label="${label('lish.create.saveToFile')}:"]`).click();
+						if (signIt) target.querySelector(`[role="switch"][aria-label="${label('lish.create.sign')}:"]`).click();
+						await settle();
+						assert(text().includes(label('lish.create.signHint')) === signIt, 'Sign hint does not follow the switch');
+						button('common.createLISH').click();
+						for (let i = 0; i < 20 && !calls.some(c => c[0] === 'create'); i++) await settle();
+						const call = calls.find(c => c[0] === 'create');
+						assert(call && (call[13] === true) === signIt, `Create sent the wrong sign flag: ${JSON.stringify(calls)}`);
+						assert(text().includes(label('lish.signedBy')) === signIt, 'Signer display does not match the result');
+					});
+				}
 
 				await test(`${lang}: signature errors are translated`, async () => {
 					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY']) {
@@ -195,11 +257,13 @@
 		} finally {
 			if (component) await unmount(component);
 			Object.assign(api, { on: originals.on, subscribe: originals.subscribe, unsubscribe: originals.unsubscribe, call: originals.call });
-			Object.assign(api.lishnets, { addPeerLish: originals.addPeerLish, getPeerLish: originals.getPeerLish, getPeerLishs: originals.getPeerLishs });
+			Object.assign(api.lishnets, { addPeerLish: originals.addPeerLish, getPeerLish: originals.getPeerLish, getPeerLishs: originals.getPeerLishs, getPeers: originals.getPeers, list: originals.list, getNodeInfo: originals.getNodeInfo });
+			Object.assign(api.search, { startSearch: originals.startSearch, cancelSearch: originals.cancelSearch });
 			api.lishs.create = originals.create;
+			api.fs.exists = originals.exists;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishSignatureTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 18 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 24 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
