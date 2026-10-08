@@ -1,5 +1,6 @@
 import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
+import { type ExpectedPublisher } from '../lish/manifest-signature.ts';
 import { type Settings } from '../settings.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, type NetworkMutationOutcome, CodedError, ErrorCodes, productName } from '@shared';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -36,8 +37,8 @@ interface LISHnetsHandlers {
 	getAddresses: () => string[];
 	getPeers: (p: { networkID?: string }) => PeerListEntry[];
 	getPeerLishs: (p: { peerID: string; networkID: string }) => Promise<{ lishs: PeerLishEntry[] }>;
-	getPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<IPeerLishDetail>;
-	addPeerLish: (p: { lishID: string; peerID: string; networkID: string }) => Promise<{ lishID: string }>;
+	getPeerLish: (p: PeerLishParams) => Promise<IPeerLishDetail>;
+	addPeerLish: (p: PeerLishParams) => Promise<{ lishID: string }>;
 	getNodeInfo: () => NetworkNodeInfo | null;
 	getStatus: (p: { networkID: string }) => NetworkStatus;
 	infoAll: () => NetworkInfo[];
@@ -45,8 +46,18 @@ interface LISHnetsHandlers {
 	getAllBootstrapStatuses: () => BootstrapStatus[];
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[]; detailed?: boolean }) => Promise<LISHNetworkConfig | NetworkMutationOutcome<LISHNetworkConfig>>;
 }
+/**
+ * `expectedPublisher` is the publisher the user picked the item by: a Peer ID, `null` for an
+ * unsigned row, absent when nothing is known. A manifest from another publisher is refused.
+ */
+interface PeerLishParams {
+	lishID: string;
+	peerID: string;
+	networkID: string;
+	expectedPublisher?: string | null;
+}
 /** The import pipeline WITHOUT its admission gate — the caller here already holds it. */
-type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean; expectedPublisher?: ExpectedPublisher }) => Promise<ImportLISHResponse>;
 type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
 /**
@@ -248,11 +259,22 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}
 	}
-	async function getPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<IPeerLishDetail> {
+	/** What the user picked the item by, else the publisher this node already stores under the ID. */
+	function expectedPublisherFor(p: PeerLishParams): ExpectedPublisher {
+		if (p.expectedPublisher !== undefined) {
+			if (p.expectedPublisher !== null && typeof p.expectedPublisher !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'expectedPublisher must be a string or null');
+			return p.expectedPublisher;
+		}
+		const stored = dataServer.get(p.lishID);
+		return stored ? (stored.publisher ?? null) : undefined;
+	}
+
+	async function getPeerLish(p: PeerLishParams): Promise<IPeerLishDetail> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
+		const expectedPublisher = expectedPublisherFor(p);
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher));
 			shutdownSignal.throwIfAborted();
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
@@ -276,6 +298,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 				files,
 				directories: manifest.directories ?? [],
 				links: manifest.links ?? [],
+				...(manifest.publisher ? { publisher: manifest.publisher } : {}),
 			};
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
@@ -284,16 +307,17 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}
 	}
-	async function addPeerLish(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
+	async function addPeerLish(p: PeerLishParams): Promise<{ lishID: string }> {
 		return runLISHMutation(() => addPeerLishAdmitted(p));
 	}
 
-	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
+	async function addPeerLishAdmitted(p: PeerLishParams): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
+		const expectedPublisher = expectedPublisherFor(p);
 		let manifest;
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher));
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw error;
@@ -312,7 +336,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
 		const enableSharing = settings.get('network.autoStartSharing') ?? true;
 		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
-		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading });
+		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading, expectedPublisher });
 		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {

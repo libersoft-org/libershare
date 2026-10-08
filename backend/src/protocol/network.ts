@@ -7,7 +7,7 @@ import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { loadOrCreatePrivateKey, writeIdentityKey as writeIdentityKeyToDatastore, clearIdentityKey as clearIdentityKeyFromDatastore, clearDatastore as clearDatastoreDir, clearPeerstoreOnly } from './identity-store.ts';
 import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
-import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
+import { peerIdFromPrivateKey, peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
@@ -19,7 +19,7 @@ import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
-import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, encodeSignature, signedManifestBytes, type ILISH, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@libp2p/gossipsub/score';
 import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
@@ -3848,6 +3848,21 @@ export class Network {
 		if (!this.node || !this.currentPrivateKey) return null;
 		const bytes = privateKeyToProtobuf(this.currentPrivateKey);
 		return { peerID: this.node.peerId.toString(), privateKeyBytes: bytes };
+	}
+
+	/**
+	 * Sign a manifest as its publisher with the node identity. The key is captured once, so the
+	 * `publisher` written into the manifest and the signature always belong to the same key even
+	 * if the identity is replaced meanwhile. Only manifest bytes are ever signed with it.
+	 */
+	async signManifest(lish: ILISH): Promise<ILISH> {
+		const key = this.node ? this.currentPrivateKey : null;
+		if (!key) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+		if (key.type !== 'Ed25519') throw new CodedError(ErrorCodes.LISH_SIGNING_UNSUPPORTED_KEY, key.type);
+		const { signature: _old, ...unsigned } = lish;
+		const withPublisher: ILISH = { ...unsigned, publisher: peerIdFromPrivateKey(key).toString() };
+		const signature = await key.sign(signedManifestBytes(withPublisher));
+		return { ...withPublisher, signature: encodeSignature(signature) };
 	}
 
 	/**

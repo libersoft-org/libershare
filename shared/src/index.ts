@@ -187,6 +187,8 @@ export interface IPeerLishDetail {
 
 // LISH Network definition (pure network parameters)
 export interface LISHNetworkDefinition {
+	/** Peer ID whose signature over the whole manifest was verified; absent when unsigned. */
+	publisher?: string | undefined;
 	networkID: string;
 	name: string;
 	description: string;
@@ -379,6 +381,8 @@ export interface CreateLISHResponse {
 
 export interface ImportLISHResponse {
 	lishID: string;
+	/** Publisher of the new manifest when it was signed. */
+	publisher?: string | undefined;
 	directory: string;
 }
 
