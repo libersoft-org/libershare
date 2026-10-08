@@ -37,6 +37,7 @@
 		import NetworkPeersPeerDetail from '/src/pages/Network/NetworkPeersPeerDetail.svelte';
 		import DownloadLISHCreate from '/src/pages/Download/DownloadLISHCreate.svelte';
 		import Network from '/src/pages/Network/Network.svelte';
+		import DownloadLISHImportOverwrite from '/src/pages/Download/DownloadLISHImportOverwrite.svelte';
 		import { api } from '/src/scripts/api.ts';
 		import { findBindingForElement } from '/src/scripts/navArea.svelte.ts';
 		import { currentLanguage, translations, t, translateError } from '/src/scripts/language.ts';
@@ -47,7 +48,7 @@
 		const target = document.querySelector('#view');
 		const results = [];
 		const calls = [];
-		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, getPeers: api.lishnets.getPeers, list: api.lishnets.list, getNodeInfo: api.lishnets.getNodeInfo, create: api.lishs.create, startSearch: api.search.startSearch, cancelSearch: api.search.cancelSearch, exists: api.fs.exists };
+		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, getPeers: api.lishnets.getPeers, list: api.lishnets.list, getNodeInfo: api.lishnets.getNodeInfo, create: api.lishs.create, startSearch: api.search.startSearch, cancelSearch: api.search.cancelSearch, exists: api.fs.exists, get: api.lishs.get, importFromJSON: api.lishs.importFromJSON };
 		let peerListing = [];
 		const listeners = new Map();
 		api.on = (event, listener) => {
@@ -74,6 +75,11 @@
 			return { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], publisher: args[3] ?? undefined };
 		};
 		api.lishnets.getPeerLishs = async () => ({ lishs: structuredClone(peerListing) });
+		api.lishs.get = async id => (id === 'existing-id' ? { id } : null);
+		api.lishs.importFromJSON = async (...args) => {
+			calls.push(['importFromJSON', ...args]);
+			return { lishID: JSON.parse(args[0]).id };
+		};
 		api.lishs.create = async (...args) => {
 			calls.push(['create', ...args]);
 			return { lishID: X, publisher: args[12] ? A : undefined };
@@ -245,6 +251,23 @@
 					});
 				}
 
+				await test(`${lang}: the import confirmation sends previewed signed manifests back unchanged`, async () => {
+					// What the preview returned: a signed new item and a signed item that already exists.
+					const signedNew = { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [], publisher: A, signature: 'S'.repeat(86) };
+					const signedExisting = { ...signedNew, id: 'existing-id' };
+					let done = false;
+					await show(DownloadLISHImportOverwrite, { lishs: [structuredClone(signedNew), structuredClone(signedExisting)], downloadPath: '/dl', position: [0, 0], onDone: () => (done = true), onError: error => calls.push(['error', String(error)]) });
+					button('common.yes').click();
+					for (let i = 0; i < 20 && !done; i++) await settle();
+					const sent = calls.filter(c => c[0] === 'importFromJSON').map(c => JSON.parse(c[1]));
+					assert(done && sent.length === 2, `Import did not finish: ${JSON.stringify(calls)}`);
+					for (const [original, json] of [
+						[signedExisting, sent[0]],
+						[signedNew, sent[1]],
+					])
+						assert(JSON.stringify(json) === JSON.stringify(original), `Manifest changed on the way back: ${JSON.stringify(json)}`);
+				});
+
 				await test(`${lang}: signature errors are translated`, async () => {
 					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY']) {
 						const message = translateError(Object.assign(new Error(code), { code, detail: 'x' }));
@@ -261,9 +284,10 @@
 			Object.assign(api.search, { startSearch: originals.startSearch, cancelSearch: originals.cancelSearch });
 			api.lishs.create = originals.create;
 			api.fs.exists = originals.exists;
+			Object.assign(api.lishs, { get: originals.get, importFromJSON: originals.importFromJSON });
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishSignatureTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 24 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 26 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
