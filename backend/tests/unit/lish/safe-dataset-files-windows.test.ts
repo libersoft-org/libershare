@@ -1,11 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { link, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, parse } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
-import { openWindowsDatasetDirectory, windowsDatasetWorkerCount, windowsVolumeKey } from '../../../src/lish/safe-dataset-files-windows.ts';
+import { openWindowsDatasetDirectory, windowsVolumeKey } from '../../../src/lish/safe-dataset-files-windows.ts';
 
 const windows = process.platform === 'win32' ? describe : describe.skip;
+
+/** `net session` succeeds only in an elevated shell. */
+function isElevated(): boolean {
+	return process.platform === 'win32' && Bun.spawnSync(['net', 'session'], { stdout: 'ignore', stderr: 'ignore' }).exitCode === 0;
+}
+
+function freeDriveLetter(): string {
+	for (const letter of 'ZYXWVUTSRQPONMLKJIHG') if (!existsSync(`${letter}:\\`)) return letter;
+	throw new Error('No free drive letter');
+}
 
 windows('Windows anchored dataset files', () => {
 	test.each(['file', 'directory'] as const)('does not delete a %s replaced after the facade metadata check', async kind => {
@@ -227,22 +238,95 @@ windows('Windows anchored dataset files', () => {
 		}
 	});
 
+	// exFAT rejects the extended information classes with error 87 and gives its root directory a
+	// zero file id: the fallback path on a real volume. Creating one needs an elevated shell.
+	test.skipIf(!isElevated())(
+		'reads identities on exFAT through the fallback, accepting a zero id only for the root',
+		async () => {
+			const work = await mkdtemp(join(tmpdir(), 'lish-exfat-'));
+			const letter = freeDriveLetter();
+			const image = join(work, 'exfat.vhdx');
+			const diskpart = async (lines: string[]): Promise<void> => {
+				const script = join(work, 'diskpart.txt');
+				await writeFile(script, lines.join('\r\n'));
+				const child = Bun.spawn(['diskpart', '/s', script], { stdout: 'pipe', stderr: 'pipe' });
+				const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+				if (code !== 0) throw new Error(output);
+			};
+			await diskpart([`create vdisk file="${image}" maximum=64 type=expandable`, `select vdisk file="${image}"`, 'attach vdisk', 'create partition primary', 'format fs=exfat quick', `assign letter=${letter}`]);
+			try {
+				const volume = `${letter}:\\`;
+				await mkdir(join(volume, 'sub'));
+				await writeFile(join(volume, 'a.bin'), 'a');
+				await writeFile(join(volume, 'sub', 'b.bin'), 'b');
+				const root = await openWindowsDatasetDirectory(volume);
+				try {
+					expect((await root.stat()).kind).toBe('directory');
+					const a = await root.openFile('a.bin', 'read');
+					const sub = await root.openDirectory('sub');
+					try {
+						const b = await sub.openFile('b.bin', 'read');
+						try {
+							const ids = [(await a.stat()).identity, (await sub.stat()).identity, (await b.stat()).identity];
+							for (const id of ids) expect(id.slice(16)).not.toMatch(/^0+$/);
+							expect(new Set(ids).size).toBe(3);
+						} finally {
+							await b.close();
+						}
+					} finally {
+						await sub.close();
+						await a.close();
+					}
+				} finally {
+					await root.close();
+				}
+			} finally {
+				await diskpart([`select vdisk file="${image}"`, 'detach vdisk']);
+				await rm(work, { recursive: true, force: true });
+			}
+		},
+		60_000
+	);
+
+	// A fresh process, so no worker another test left open on the same volume skews the count.
 	test('ends the volume worker once every handle is closed, and after a failed open', async () => {
 		const path = await mkdtemp(join(tmpdir(), 'lish-worker-life-'));
-		try {
-			const before = windowsDatasetWorkerCount();
+		const source = `
+			import { join } from 'node:path';
+			import { openWindowsDatasetDirectory, windowsDatasetWorkerCount } from './src/lish/safe-dataset-files-windows.ts';
+			const path = ${JSON.stringify(path)};
+			const counts = [];
 			const root = await openWindowsDatasetDirectory(path);
-			const file = await root.openFile('part', 'create');
-			await root.close();
-			expect(windowsDatasetWorkerCount()).toBe(before + 1);
-			await file.close();
-			expect(windowsDatasetWorkerCount()).toBe(before);
-			await expect(openWindowsDatasetDirectory(join(path, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' });
-			expect(windowsDatasetWorkerCount()).toBe(before);
+			let file;
+			try {
+				file = await root.openFile('part', 'create');
+				await root.close();
+				counts.push(windowsDatasetWorkerCount());
+				await file.close();
+				counts.push(windowsDatasetWorkerCount());
+				await openWindowsDatasetDirectory(join(path, 'missing')).then(() => counts.push('opened'), error => counts.push(error.code));
+				counts.push(windowsDatasetWorkerCount());
+			} finally {
+				await file?.close();
+				await root.close();
+			}
+			console.log(JSON.stringify(counts));
+		`;
+		const child = Bun.spawn([process.execPath, '--eval', source], { cwd: join(import.meta.dir, '../../..'), stdout: 'pipe', stderr: 'pipe' });
+		const timer = setTimeout(() => child.kill(), 20_000);
+		try {
+			const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+			if (code !== 0) throw new Error(error);
+			expect(JSON.parse(output.trim())).toEqual([1, 0, 'ENOENT', 0]);
 		} finally {
+			clearTimeout(timer);
+			if (child.exitCode === null) {
+				child.kill();
+				await child.exited;
+			}
 			await rm(path, { recursive: true, force: true });
 		}
-	});
+	}, 30_000);
 });
 
 describe('Windows dataset volume key', () => {
