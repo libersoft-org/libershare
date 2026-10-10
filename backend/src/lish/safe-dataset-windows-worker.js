@@ -17,6 +17,7 @@ function nativeLibraries() {
 			GetFileType: { args: [FFIType.u64], returns: FFIType.u32 },
 			GetFileInformationByHandleEx: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			GetFileInformationByHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
+			GetFinalPathNameByHandleW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32], returns: FFIType.u32 },
 			SetFileInformationByHandle: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			SetFilePointerEx: { args: [FFIType.u64, FFIType.i64, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			ReadFile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
@@ -49,6 +50,14 @@ function extendedInformation(handle, infoClass, buffer, operation) {
 	const number = kernel.GetLastError();
 	if (!UNSUPPORTED_INFO_CLASS.has(number)) windowsError(operation, number);
 	return false;
+}
+/** Whether the handle is the root directory of its volume or share. */
+function isVolumeRoot(handle) {
+	const path = Buffer.alloc(8);
+	// VOLUME_NAME_NONE: the path within the volume, which is a lone backslash only for its root.
+	const length = native().kernel.symbols.GetFinalPathNameByHandleW(handle, ptr(path), path.length / 2, 4);
+	if (length === 0) windowsError('Read final path');
+	return length === 1 && path.readUInt16LE(0) === 0x5c;
 }
 /** BY_HANDLE_FILE_INFORMATION, which every filesystem and SMB server answers. */
 function handleInformation(handle) {
@@ -104,13 +113,13 @@ class WindowsHandle {
 		if (!extendedInformation(handle, 18, identity, 'Read file identity')) {
 			// Same FILE_ID_INFO layout: volume serial, then the 64-bit file index as the low half of the id.
 			legacy ??= handleInformation(handle);
-			// A zero index would make every file on the share look like the same file. FAT gives it
-			// to the volume root directory alone, so only a file with it is refused.
-			if (!standard[21] && legacy.readUInt32LE(44) === 0 && legacy.readUInt32LE(48) === 0) fail('LISH_UNSAFE_PATH', 'Filesystem does not report file identity');
 			identity.writeUInt32LE(legacy.readUInt32LE(28), 0);
 			identity.writeUInt32LE(legacy.readUInt32LE(48), 8);
 			identity.writeUInt32LE(legacy.readUInt32LE(44), 12);
 		}
+		// A zero file id would make unrelated objects look identical. FAT gives it to the volume
+		// root directory alone, so it is accepted only there.
+		if (identity.subarray(8).every(byte => byte === 0) && !(standard[21] && isVolumeRoot(handle))) fail('LISH_UNSAFE_PATH', 'Filesystem does not report file identity');
 		const times = Buffer.alloc(40);
 		if (!kernel.GetFileInformationByHandleEx(handle, 0, ptr(times), times.length)) windowsError('Read file timestamps');
 		const size = standard.readBigInt64LE(8);
