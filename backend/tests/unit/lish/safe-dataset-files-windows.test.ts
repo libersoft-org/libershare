@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { link, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
-import { openWindowsDatasetDirectory } from '../../../src/lish/safe-dataset-files-windows.ts';
+import { openWindowsDatasetDirectory, windowsDatasetWorkerCount, windowsVolumeKey } from '../../../src/lish/safe-dataset-files-windows.ts';
 
 const windows = process.platform === 'win32' ? describe : describe.skip;
 
@@ -216,5 +216,46 @@ windows('Windows anchored dataset files', () => {
 			await root.close();
 			await rm(path, { recursive: true, force: true });
 		}
+	});
+
+	test('opens a drive root as its root directory, not as the volume device', async () => {
+		const root = await openWindowsDatasetDirectory(parse(tmpdir()).root);
+		try {
+			expect((await root.stat()).kind).toBe('directory');
+		} finally {
+			await root.close();
+		}
+	});
+
+	test('ends the volume worker once every handle is closed, and after a failed open', async () => {
+		const path = await mkdtemp(join(tmpdir(), 'lish-worker-life-'));
+		try {
+			const before = windowsDatasetWorkerCount();
+			const root = await openWindowsDatasetDirectory(path);
+			const file = await root.openFile('part', 'create');
+			await root.close();
+			expect(windowsDatasetWorkerCount()).toBe(before + 1);
+			await file.close();
+			expect(windowsDatasetWorkerCount()).toBe(before);
+			await expect(openWindowsDatasetDirectory(join(path, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' });
+			expect(windowsDatasetWorkerCount()).toBe(before);
+		} finally {
+			await rm(path, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('Windows dataset volume key', () => {
+	test.each([
+		['C:\\data\\file', 'c:'],
+		['c:', 'c:'],
+		['\\\\?\\C:\\data', 'c:'],
+		['\\\\Server\\Share\\data', '\\\\server\\share'],
+		['\\\\?\\UNC\\Server\\Share\\data', '\\\\server\\share'],
+		['\\\\?\\UNC\\Other\\Share\\data', '\\\\other\\share'],
+		['//server/share/data', '\\\\server\\share'],
+		['\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\data', 'volume{0f1e2d3c-0000-0000-0000-000000000000}'],
+	])('%s is on %s', (path, volume) => {
+		expect(windowsVolumeKey(path)).toBe(volume);
 	});
 });

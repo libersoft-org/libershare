@@ -2,19 +2,28 @@
 import workerPath from './safe-dataset-windows-worker.js' with { type: 'file' };
 import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types.ts';
 import { windowsDatasetError } from './windows-dataset-error.ts';
+import { realpath } from 'node:fs/promises';
 import { win32 } from 'node:path';
 
 type Request = { operation: 'openRoot'; path: string } | { operation: 'stat' | 'close'; handle: number } | { operation: 'openDirectory' | 'createDirectory'; handle: number; name: string } | { operation: 'openFile'; handle: number; name: string; mode: 'read' | 'write' | 'create' } | { operation: 'removeFile' | 'removeDirectory'; handle: number; name: string; identity: string; guard?: DatasetContentGuard } | { operation: 'read'; handle: number; length: number; position: number } | { operation: 'write'; handle: number; bytes: Uint8Array; position: number } | { operation: 'truncate'; handle: number; size: number };
 
 type Reply = { id: number; value?: unknown; error?: { message: string; code?: string; operation?: string; number?: number } };
 
+const OPENS_HANDLE = new Set<Request['operation']>(['openRoot', 'openDirectory', 'createDirectory', 'openFile']);
+
 class WindowsIO {
 	private readonly worker = new Worker(workerPath);
-	private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+	private readonly pending = new Map<number, { operation: Request['operation']; resolve(value: unknown): void; reject(error: Error): void }>();
 	private nextID = 1;
 	private failure: Error | undefined;
+	/** Handles the worker holds open; with none and nothing pending the worker is ended. */
+	private handles = 0;
+	private retired = false;
+	private readonly retire: () => void;
 
-	constructor() {
+	/** @param retire Called once when this worker ends, idle or failed, so it is no longer handed out. */
+	constructor(retire: () => void) {
+		this.retire = retire;
 		this.worker.unref();
 		this.worker.onmessage = (event: MessageEvent<Reply>) => {
 			const { id, value, error } = event.data;
@@ -22,14 +31,20 @@ class WindowsIO {
 			if (!request) return;
 			this.pending.delete(id);
 			if (this.pending.size === 0) this.worker.unref();
+			if (!error && OPENS_HANDLE.has(request.operation)) this.handles++;
+			// The worker forgets the handle even when closing it reports an error.
+			if (request.operation === 'close') this.handles--;
 			if (error) request.reject(error.number !== undefined && error.operation ? windowsDatasetError(error.operation, error.number) : Object.assign(new Error(error.message), { code: error.code }));
 			else request.resolve(value);
+			if (this.handles === 0 && this.pending.size === 0) this.end();
 		};
 		const fail = (): void => {
+			if (this.retired) return;
 			this.failure = Object.assign(new Error('Windows dataset worker stopped'), { code: 'EIO' });
 			for (const request of this.pending.values()) request.reject(this.failure);
 			this.pending.clear();
 			this.worker.unref();
+			this.end();
 		};
 		this.worker.onerror = event => {
 			event.preventDefault();
@@ -38,11 +53,19 @@ class WindowsIO {
 		this.worker.addEventListener('close', fail);
 	}
 
+	private end(): void {
+		if (this.retired) return;
+		this.retired = true;
+		this.retire();
+		void this.worker.terminate();
+	}
+
 	async call<T>(request: Request): Promise<T> {
 		if (this.failure) throw this.failure;
+		if (this.retired) throw Object.assign(new Error('Windows dataset worker ended'), { code: 'EBADF' });
 		const id = this.nextID++;
 		return new Promise((resolve, reject) => {
-			this.pending.set(id, { resolve: value => resolve(value as T), reject });
+			this.pending.set(id, { operation: request.operation, resolve: value => resolve(value as T), reject });
 			this.worker.ref();
 			try {
 				this.worker.postMessage({ id, request }, request.operation === 'write' ? [request.bytes.buffer as ArrayBuffer] : []);
@@ -50,6 +73,7 @@ class WindowsIO {
 				this.pending.delete(id);
 				if (this.pending.size === 0) this.worker.unref();
 				reject(error);
+				if (this.handles === 0 && this.pending.size === 0) this.end();
 			}
 		});
 	}
@@ -58,7 +82,7 @@ class WindowsIO {
 /**
  * One worker per volume, keyed by drive letter or `\\server\share`. Its calls are synchronous,
  * so a share that stops answering would otherwise hold every other dataset's IO behind it.
- * Workers stay for the life of the process and do not keep it alive while idle.
+ * A worker ends once it holds no open handle and has nothing pending.
  */
 const workers = new Map<string, WindowsIO>();
 
@@ -135,8 +159,33 @@ class WindowsDirectory extends WindowsHandle implements DatasetDirectoryHandle {
 
 export async function openWindowsDatasetDirectory(path: string): Promise<DatasetDirectoryHandle> {
 	if (process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch)) throw new Error('Windows dataset handles require 64-bit Windows');
-	const volume = win32.parse(win32.resolve(path)).root.toLowerCase();
+	// Keyed by where the path really leads: a link on C: to a share must not share C:'s worker.
+	// The worker resolves the root again itself; this only picks the queue.
+	const volume = windowsVolumeKey(await realpath(path).catch(() => path));
 	let worker = workers.get(volume);
-	if (!worker) workers.set(volume, (worker = new WindowsIO()));
+	if (!worker) {
+		const created: WindowsIO = new WindowsIO(() => {
+			if (workers.get(volume) === created) workers.delete(volume);
+		});
+		workers.set(volume, (worker = created));
+	}
 	return new WindowsDirectory(worker, await worker.call({ operation: 'openRoot', path }));
+}
+
+/** The volume a Windows path lives on, lower-cased: `c:`, `\\server\share` or a `\\?\` volume name. */
+export function windowsVolumeKey(path: string): string {
+	const plain = path.replace(/^[\\/]{2}[?.][\\/]UNC[\\/]/iu, '\\\\').replace(/^[\\/]{2}[?.][\\/](?=[A-Za-z]:)/u, '');
+	// `\\?\Volume{guid}\…` and other device paths: the device name is the volume.
+	const device = /^[\\/]{2}[?.][\\/]([^\\/]+)/u.exec(plain);
+	if (device) return device[1]!.toLowerCase();
+	const unc = /^[\\/]{2}([^\\/]+)[\\/]+([^\\/]+)/u.exec(plain);
+	if (unc) return `\\\\${unc[1]}\\${unc[2]}`.toLowerCase();
+	const drive = /^([A-Za-z]:)/u.exec(plain);
+	if (drive) return drive[1]!.toLowerCase();
+	return win32.parse(win32.resolve(plain)).root.toLowerCase();
+}
+
+/** How many dataset workers are running; for tests. */
+export function windowsDatasetWorkerCount(): number {
+	return workers.size;
 }
