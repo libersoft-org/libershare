@@ -66,6 +66,24 @@ const PEER_ANNOUNCE_MAX_ADDR_LENGTH = 512;
 /** Max addrs we take from a single known peer when including transitive list. */
 const PEER_ANNOUNCE_MAX_ADDRS_PER_PEER = 3;
 /**
+ * Relay (`/p2p-circuit`) addresses announced per peer, after its direct ones. Two peers
+ * that are both behind NAT can reach each other only through a relay they share, so
+ * without these a seeder has no way back to a downloader it does not already know.
+ * A node holds a reservation on every relay it found, so a few are enough.
+ */
+const PEER_ANNOUNCE_MAX_RELAY_ADDRS = 4;
+
+/** Direct addresses first, relay circuits after them: a relay is the fallback route. */
+function directFirst<T>(addresses: T[], text: (address: T) => string): T[] {
+	return [...addresses.filter(a => !text(a).includes('/p2p-circuit')), ...addresses.filter(a => text(a).includes('/p2p-circuit'))];
+}
+
+/** A circuit is dialable only through a relay that has a transport address and an identity. */
+function hasRelayHop(address: string): boolean {
+	const hop = address.slice(0, address.indexOf('/p2p-circuit'));
+	return hop.includes('/p2p/') && !hop.startsWith('/p2p/');
+}
+/**
  * How long a peer stays an eligible transitive-announce target for a topic after
  * we last saw it in that topic's subscriber list. gossipsub drops a peer from
  * getSubscribers the moment it disconnects — but that is exactly when the peer
@@ -572,12 +590,17 @@ export class PeerAnnounceManager {
 		// back-to-back loopback dials from peer-announce intake within 3s of startup).
 		const selfAddrs: string[] = [];
 		let skippedSelf = 0;
-		for (const ma of node.getMultiaddrs()) {
+		let selfRelays = 0;
+		for (const ma of directFirst(node.getMultiaddrs(), a => a.toString())) {
 			const s = ma.toString();
-			if (s.includes('/p2p-circuit')) continue;
+			// The relay's own address decides routability, so a relay on a foreign LAN is dropped.
 			if (shouldDenyDial(ma, localCidrs)) {
 				skippedSelf++;
 				continue;
+			}
+			if (s.includes('/p2p-circuit')) {
+				if (!hasRelayHop(s)) continue;
+				if (++selfRelays > PEER_ANNOUNCE_MAX_RELAY_ADDRS) break;
 			}
 			selfAddrs.push(s);
 			if (selfAddrs.length >= PEER_ANNOUNCE_MAX_ADDRS) break;
@@ -614,11 +637,12 @@ export class PeerAnnounceManager {
 				if (pid === myID) continue;
 				if (!members.has(pid)) continue;
 				let perPeer = 0;
-				for (const addr of peer.addresses) {
-					if (perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) break;
+				let perPeerRelays = 0;
+				for (const addr of directFirst(peer.addresses, a => a.multiaddr.toString())) {
 					if (collected.size >= PEER_ANNOUNCE_MAX_TOTAL_ADDRS) break;
 					const base = addr.multiaddr.toString();
-					if (base.includes('/p2p-circuit')) continue;
+					const relayed = base.includes('/p2p-circuit');
+					if (relayed ? perPeerRelays >= PEER_ANNOUNCE_MAX_RELAY_ADDRS || !hasRelayHop(base) : perPeer >= PEER_ANNOUNCE_MAX_ADDRS_PER_PEER) continue;
 					if (shouldDenyDial(addr.multiaddr, localCidrs)) {
 						skippedTransitive++;
 						continue;
@@ -629,14 +653,18 @@ export class PeerAnnounceManager {
 					// learned it as B's address and dialed the wrong identity. Ask the
 					// destination — the same way the dial paths do — and skip what disagrees.
 					const destination = extractDestinationPeerID(addr.multiaddr);
-					if (destination !== null && destination !== pid) {
+					// A stored circuit ends at the relay (`…/p2p/<relay>/p2p-circuit`); the peer's
+					// identity completes it, the same way the dial paths complete one.
+					const openCircuit = relayed && base.endsWith('/p2p-circuit');
+					if (destination !== null && destination !== pid && !openCircuit) {
 						trace(`[NET] peer-announce skipping addr of ${pid.slice(0, 16)} that resolves to ${destination.slice(0, 16)}: ${base}`);
 						continue;
 					}
 					const full = destination === pid ? base : `${base}/p2p/${pid}`;
 					if (!collected.has(full)) transitiveAdded++;
 					collected.add(full);
-					perPeer++;
+					if (relayed) perPeerRelays++;
+					else perPeer++;
 				}
 			}
 			// Broadcast even if only self made it in — subscribers with unusable

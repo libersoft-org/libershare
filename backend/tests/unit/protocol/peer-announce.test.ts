@@ -729,15 +729,74 @@ describe('PeerAnnounceManager.emit — what one peer may contribute', () => {
 		expect(mine).toContain('192.0.2.10/'); // its own address still goes out
 	});
 
-	it('never relays a relay-circuit address, whoever it belongs to', async () => {
-		// A circuit address names a hop we have no reason to send anyone else through.
-		const viaRelay = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(`/ip4/192.0.2.77/tcp/9090/p2p/${PC_ID}/p2p-circuit/p2p/${PA_ID}`) }, { multiaddr: Multiaddr(PA_ADDR) }] };
+	it('relays a member reachable only through a relay, after its direct addresses', async () => {
+		// Two peers behind NAT reach each other only through a relay they share. Without the
+		// circuit a seeder cannot answer a downloader it has never been connected to.
+		const relayed = `/ip4/198.51.100.7/tcp/9090/p2p/${PC_ID}/p2p-circuit/p2p/${PA_ID}`;
+		const viaRelay = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(relayed) }, { multiaddr: Multiaddr(PA_ADDR) }] };
+		const { mgr, broadcasts } = emitWith(peersWithFillers(viaRelay as any), [PA_ID]);
+
+		await (mgr as any).emit();
+
+		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs;
+		expect(mine).toContain(relayed);
+		expect(mine.indexOf(`${PA_ADDR}/p2p/${PA_ID}`)).toBeLessThan(mine.indexOf(relayed));
+	});
+
+	it('completes a stored circuit that ends at the relay with the peer it reaches', async () => {
+		const open = `/ip4/198.51.100.7/tcp/9090/p2p/${PC_ID}/p2p-circuit`;
+		const viaRelay = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(open) }] };
+		const { mgr, broadcasts } = emitWith(peersWithFillers(viaRelay as any), [PA_ID]);
+
+		await (mgr as any).emit();
+
+		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs;
+		expect(mine).toContain(`${open}/p2p/${PA_ID}`);
+		expect(mine.some(a => a.endsWith(`/p2p/${PC_ID}/p2p-circuit`))).toBe(false);
+	});
+
+	it('takes at most four relay circuits from one peer, on top of its direct addresses', async () => {
+		const relays = Array.from({ length: 9 }, (_, i) => ({ multiaddr: Multiaddr(`/ip4/198.51.100.${10 + i}/tcp/9090/p2p/${PC_ID}/p2p-circuit/p2p/${PA_ID}`) }));
+		const direct = Array.from({ length: 5 }, (_, i) => ({ multiaddr: Multiaddr(`/ip4/192.0.2.${60 + i}/tcp/9090`) }));
+		const many = { id: { toString: () => PA_ID }, addresses: [...relays, ...direct] };
+		const { mgr, broadcasts } = emitWith(peersWithFillers(many as any), [PA_ID]);
+
+		await (mgr as any).emit();
+
+		const fromPA = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs.filter(a => a.endsWith(`/p2p/${PA_ID}`));
+		expect(fromPA.filter(a => a.includes('/p2p-circuit'))).toHaveLength(4);
+		expect(fromPA.filter(a => !a.includes('/p2p-circuit'))).toHaveLength(3);
+	});
+
+	it('drops circuits through a relay on a foreign private network or with no relay hop', async () => {
+		const foreignRelay = `/ip4/10.123.45.6/tcp/9090/p2p/${PC_ID}/p2p-circuit/p2p/${PA_ID}`;
+		const noHop = `/p2p-circuit/p2p/${PA_ID}`;
+		const viaRelay = { id: { toString: () => PA_ID }, addresses: [{ multiaddr: Multiaddr(foreignRelay) }, { multiaddr: Multiaddr(noHop) }, { multiaddr: Multiaddr(PA_ADDR) }] };
 		const { mgr, broadcasts } = emitWith(peersWithFillers(viaRelay as any), [PA_ID]);
 
 		await (mgr as any).emit();
 
 		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs.join(' ');
 		expect(mine).not.toContain('p2p-circuit');
+		expect(mine).toContain(`${PA_ADDR}/p2p/${PA_ID}`);
+	});
+
+	it('announces its own relay circuits after its direct addresses, at most four', async () => {
+		const ownRelays = Array.from({ length: 6 }, (_, i) => Multiaddr(`/ip4/198.51.100.${30 + i}/tcp/9090/p2p/${PC_ID}/p2p-circuit/p2p/${SELF_ID}`));
+		const node = {
+			peerId: { toString: () => SELF_ID },
+			getMultiaddrs: () => [...ownRelays, Multiaddr(SELF_ADDR)],
+			peerStore: { all: async () => peersWithFillers(fakePeer(PA_ID, PA_ADDR)) },
+		};
+		const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: () => [fakeSubscriber(PA_ID)] };
+		const { mgr, broadcasts } = buildManager(node as any, pubsub as any);
+
+		await (mgr as any).emit();
+
+		const mine = broadcasts.find(b => b.topic === TOPIC_A)!.msg.multiaddrs;
+		const own = mine.filter(a => a.endsWith(`/p2p-circuit/p2p/${SELF_ID}`));
+		expect(own).toHaveLength(4);
+		expect(mine.indexOf(SELF_ADDR)).toBeLessThan(mine.indexOf(own[0]!));
 	});
 });
 
