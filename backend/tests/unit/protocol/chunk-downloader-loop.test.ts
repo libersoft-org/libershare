@@ -818,3 +818,47 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(ds.downloadedChunks.has(late.chunkID)).toBe(true);
 	}, 15000);
 });
+
+describe('ChunkDownloader peerLoop — a lost connection', () => {
+	function lossDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lost: string[]): ChunkDownloader {
+		const cd = makeDownloader(ds, pm, chunkCount);
+		(cd as any).deps.onPeerConnectionLost = (peerID: string): void => {
+			lost.push(peerID);
+		};
+		return cd;
+	}
+
+	it('hands the peer back for a reconnect instead of quarantining it, reported once', async () => {
+		// Every pipelined request fails at once when the connection dies; the peer still has the data.
+		const { missing } = makeChunks(6);
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'gone' as Reply])));
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 6, lost);
+		pm.tryAdd('peer-conn-lost', client as never, 'RELAY');
+
+		await cd.run();
+
+		expect(lost).toEqual(['peer-conn-lost']);
+		expect(pm.isDropped('peer-conn-lost')).toBe(false);
+		expect(pm.has('peer-conn-lost')).toBe(false);
+	}, 15000);
+
+	it('still quarantines a peer that refuses the LISH', async () => {
+		const { missing } = makeChunks(2);
+		const client = new GatedClient(new Map());
+		client.gate(missing[0]!.chunkID, ErrorCodes.PEER_LISH_NOT_SHARED);
+		client.open(missing[0]!.chunkID);
+		const ds = new FakeDataServer(missing.slice(0, 1));
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 1, lost);
+		pm.tryAdd('peer-not-shared', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(lost).toEqual([]);
+		expect(pm.isDropped('peer-not-shared')).toBe(true);
+	}, 15000);
+});
