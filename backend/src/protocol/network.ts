@@ -2505,6 +2505,9 @@ export class Network {
 					// black-holed address cannot hold the entry open — see BOOTSTRAP_DIAL_TIMEOUT_MS.
 					const dialEntry = this.bootstrapByAddress.get(canonicalAddress);
 					const dialSignal = AbortSignal.any([abort.signal, AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS)]);
+					// Every announce cycle re-mentions peers we are already connected to, and libp2p
+					// answers those dials with the connection it holds; only a new one is news.
+					const heldConnections = new Set<unknown>(pidObj ? this.node.getConnections(pidObj) : []);
 					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true, signal: dialSignal } : { signal: dialSignal });
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					// A configured install may have landed while this dial was open and skipped
@@ -2600,7 +2603,8 @@ export class Network {
 					// connected row — evictable by age alongside the invented addresses the
 					// ranking exists to drop.
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin, verifiedThisAddr);
-					console.log('✓ Connected to new bootstrap peer');
+					if (heldConnections.has(conn)) trace(`[NET] bootstrap peer already connected: ${peer}`);
+					else console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					if (superseded()) {
 						// A failed probe must not consume an expired quarantine permanently merely
