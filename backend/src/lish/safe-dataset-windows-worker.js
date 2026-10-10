@@ -53,11 +53,17 @@ function extendedInformation(handle, infoClass, buffer, operation) {
 }
 /** Whether the handle is the root directory of its volume or share. */
 function isVolumeRoot(handle) {
-	const path = Buffer.alloc(8);
-	// VOLUME_NAME_NONE: the path within the volume, which is a lone backslash only for its root.
-	const length = native().kernel.symbols.GetFinalPathNameByHandleW(handle, ptr(path), path.length / 2, 4);
-	if (length === 0) windowsError('Read final path');
-	return length === 1 && path.readUInt16LE(0) === 0x5c;
+	const kernel = native().kernel.symbols;
+	// VOLUME_NAME_DOS is `\\?\D:\` for a drive root and `\\?\UNC\server\share` for a share root.
+	let buffer = Buffer.alloc(1024);
+	let length = kernel.GetFinalPathNameByHandleW(handle, ptr(buffer), buffer.length / 2, 0);
+	if (length >= buffer.length / 2) {
+		buffer = Buffer.alloc((length + 1) * 2);
+		length = kernel.GetFinalPathNameByHandleW(handle, ptr(buffer), buffer.length / 2, 0);
+	}
+	if (length === 0 || length >= buffer.length / 2) windowsError('Read final path');
+	const path = buffer.toString('utf16le', 0, length * 2);
+	return /^\\\\\?\\[A-Za-z]:\\$/u.test(path) || /^\\\\\?\\UNC\\[^\\]+\\[^\\]+\\?$/iu.test(path);
 }
 /** BY_HANDLE_FILE_INFORMATION, which every filesystem and SMB server answers. */
 function handleInformation(handle) {
