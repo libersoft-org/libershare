@@ -224,7 +224,8 @@ class WindowsDirectory extends WindowsHandle {
 	}
 }
 async function openWindowsDatasetDirectory(path) {
-	const resolved = await realpath(path);
+	// realpath('D:\\') answers 'D:', and '\\\\?\\D:' would open the volume device, not its root directory.
+	const resolved = (await realpath(path)).replace(/^([A-Za-z]:)$/u, '$1\\');
 	const extended = resolved.startsWith('\\\\?\\') ? resolved : resolved.startsWith('\\\\') ? `\\\\?\\UNC\\${resolved.slice(2)}` : `\\\\?\\${resolved}`;
 	const encoded = Buffer.from(`${extended}\0`, 'utf16le');
 	// The explicitly selected root may resolve a link once; children never do.
