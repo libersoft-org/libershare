@@ -2,6 +2,7 @@
 import workerPath from './safe-dataset-windows-worker.js' with { type: 'file' };
 import type { DatasetDirectoryHandle, DatasetEntryInfo, DatasetFileHandle, DatasetContentGuard } from './safe-dataset-types.ts';
 import { windowsDatasetError } from './windows-dataset-error.ts';
+import { win32 } from 'node:path';
 
 type Request = { operation: 'openRoot'; path: string } | { operation: 'stat' | 'close'; handle: number } | { operation: 'openDirectory' | 'createDirectory'; handle: number; name: string } | { operation: 'openFile'; handle: number; name: string; mode: 'read' | 'write' | 'create' } | { operation: 'removeFile' | 'removeDirectory'; handle: number; name: string; identity: string; guard?: DatasetContentGuard } | { operation: 'read'; handle: number; length: number; position: number } | { operation: 'write'; handle: number; bytes: Uint8Array; position: number } | { operation: 'truncate'; handle: number; size: number };
 
@@ -54,7 +55,12 @@ class WindowsIO {
 	}
 }
 
-let io: WindowsIO | undefined;
+/**
+ * One worker per volume, keyed by drive letter or `\\server\share`. Its calls are synchronous,
+ * so a share that stops answering would otherwise hold every other dataset's IO behind it.
+ * Workers stay for the life of the process and do not keep it alive while idle.
+ */
+const workers = new Map<string, WindowsIO>();
 
 class WindowsHandle {
 	protected readonly io: WindowsIO;
@@ -129,6 +135,8 @@ class WindowsDirectory extends WindowsHandle implements DatasetDirectoryHandle {
 
 export async function openWindowsDatasetDirectory(path: string): Promise<DatasetDirectoryHandle> {
 	if (process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch)) throw new Error('Windows dataset handles require 64-bit Windows');
-	const worker = (io ??= new WindowsIO());
+	const volume = win32.parse(win32.resolve(path)).root.toLowerCase();
+	let worker = workers.get(volume);
+	if (!worker) workers.set(volume, (worker = new WindowsIO()));
 	return new WindowsDirectory(worker, await worker.call({ operation: 'openRoot', path }));
 }
