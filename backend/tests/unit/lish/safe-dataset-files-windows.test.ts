@@ -253,8 +253,9 @@ windows('Windows anchored dataset files', () => {
 				const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
 				if (code !== 0) throw new Error(output);
 			};
-			await diskpart([`create vdisk file="${image}" maximum=64 type=expandable`, `select vdisk file="${image}"`, 'attach vdisk', 'create partition primary', 'format fs=exfat quick', `assign letter=${letter}`]);
 			try {
+				// The image exists from here on even when a later step fails, so cleanup always detaches it.
+				await diskpart([`create vdisk file="${image}" maximum=64 type=expandable`, `select vdisk file="${image}"`, 'attach vdisk', 'create partition primary', 'format fs=exfat quick', `assign letter=${letter}`]);
 				const volume = `${letter}:\\`;
 				await mkdir(join(volume, 'sub'));
 				await writeFile(join(volume, 'a.bin'), 'a');
@@ -281,8 +282,9 @@ windows('Windows anchored dataset files', () => {
 					await root.close();
 				}
 			} finally {
-				await diskpart([`select vdisk file="${image}"`, 'detach vdisk']);
-				await rm(work, { recursive: true, force: true });
+				// Cleanup failures are reported but never replace the error that ended the test.
+				if (existsSync(image)) await diskpart([`select vdisk file="${image}"`, 'detach vdisk']).catch(error => console.error(`exFAT test image not detached: ${error}`));
+				await rm(work, { recursive: true, force: true }).catch(error => console.error(`exFAT test directory not removed: ${error}`));
 			}
 		},
 		60_000
