@@ -16,6 +16,7 @@ function nativeLibraries() {
 			GetLastError: { args: [], returns: FFIType.u32 },
 			GetFileType: { args: [FFIType.u64], returns: FFIType.u32 },
 			GetFileInformationByHandleEx: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+			GetFileInformationByHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
 			SetFileInformationByHandle: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			SetFilePointerEx: { args: [FFIType.u64, FFIType.i64, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			ReadFile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
@@ -37,6 +38,23 @@ function fail(code, message) {
 }
 function windowsError(operation, number = native().kernel.symbols.GetLastError()) {
 	throw Object.assign(new Error(operation), { operation, number });
+}
+// ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER: what FAT, exFAT and Samba
+// shares answer for information classes they do not implement.
+const UNSUPPORTED_INFO_CLASS = new Set([1, 50, 87]);
+/** Read an extended information class; false when the filesystem does not implement it. */
+function extendedInformation(handle, infoClass, buffer, operation) {
+	const kernel = native().kernel.symbols;
+	if (kernel.GetFileInformationByHandleEx(handle, infoClass, ptr(buffer), buffer.length)) return true;
+	const number = kernel.GetLastError();
+	if (!UNSUPPORTED_INFO_CLASS.has(number)) windowsError(operation, number);
+	return false;
+}
+/** BY_HANDLE_FILE_INFORMATION, which every filesystem and SMB server answers. */
+function handleInformation(handle) {
+	const info = Buffer.alloc(52);
+	if (!native().kernel.symbols.GetFileInformationByHandle(handle, ptr(info))) windowsError('Read file information');
+	return info;
 }
 function component(name) {
 	if (!name || name === '.' || name === '..' || /[\x00-\x1f\\/:*?"<>|]/u.test(name) || /[. ]$/u.test(name) || /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu.test(name)) {
@@ -75,14 +93,24 @@ class WindowsHandle {
 	async stat() {
 		const handle = this.value();
 		const kernel = native().kernel.symbols;
+		let legacy;
 		const attributes = Buffer.alloc(8);
-		if (!kernel.GetFileInformationByHandleEx(handle, 9, ptr(attributes), attributes.length)) windowsError('Read file attributes');
-		if (attributes.readUInt32LE(0) & 0x400) fail('LISH_UNSAFE_PATH', 'Dataset child is a reparse point');
+		const attributeBits = extendedInformation(handle, 9, attributes, 'Read file attributes') ? attributes.readUInt32LE(0) : (legacy ??= handleInformation(handle)).readUInt32LE(0);
+		if (attributeBits & 0x400) fail('LISH_UNSAFE_PATH', 'Dataset child is a reparse point');
 		if (kernel.GetFileType(handle) !== 1) fail('LISH_UNSAFE_PATH', 'Dataset object is not a disk file');
 		const standard = Buffer.alloc(24);
 		if (!kernel.GetFileInformationByHandleEx(handle, 1, ptr(standard), standard.length)) windowsError('Read file metadata');
 		const identity = Buffer.alloc(24);
-		if (!kernel.GetFileInformationByHandleEx(handle, 18, ptr(identity), identity.length)) windowsError('Read file identity');
+		if (!extendedInformation(handle, 18, identity, 'Read file identity')) {
+			// Same FILE_ID_INFO layout: volume serial, then the 64-bit file index as the low half of the id.
+			legacy ??= handleInformation(handle);
+			// A zero index would make every file on the share look like the same file. FAT gives it
+			// to the volume root directory alone, so only a file with it is refused.
+			if (!standard[21] && legacy.readUInt32LE(44) === 0 && legacy.readUInt32LE(48) === 0) fail('LISH_UNSAFE_PATH', 'Filesystem does not report file identity');
+			identity.writeUInt32LE(legacy.readUInt32LE(28), 0);
+			identity.writeUInt32LE(legacy.readUInt32LE(48), 8);
+			identity.writeUInt32LE(legacy.readUInt32LE(44), 12);
+		}
 		const times = Buffer.alloc(40);
 		if (!kernel.GetFileInformationByHandleEx(handle, 0, ptr(times), times.length)) windowsError('Read file timestamps');
 		const size = standard.readBigInt64LE(8);
