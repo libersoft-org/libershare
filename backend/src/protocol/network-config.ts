@@ -190,6 +190,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		transports,
 		connectionEncrypters: [noise({ crypto: noiseCrypto })],
 		streamMuxers: [yamux()],
+		// The monitor's heartbeat is a ping stream, and the ping service admits only two
+		// inbound ones per connection. Under a bulk transfer both sides' pings back up, the
+		// third is reset, and the default reaction aborted the whole connection — every
+		// chunk stream and every relayed circuit on it included — every few seconds. A
+		// stalled peer is still caught by the chunk read timeout and yamux keep-alive.
+		connectionMonitor: { abortConnectionOnPingFailure: false },
 		connectionManager: {
 			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=8 / Dhi=12)
 			// + a handful of relay reservations + transient identify/AutoNAT dials —
