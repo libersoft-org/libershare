@@ -926,6 +926,9 @@ export class Downloader {
 		}
 		if (this.wantsNoPeers() || !this.peerManager.has(peerID)) return;
 		console.log(`[DL] Peer ${peerID.slice(0, 12)} reconnected (total: ${this.peerManager.size()})`);
+		// Losing the last seeder ended the chunk run as "exhausted"; its 10 s retry wait must not hold back the peer that is back.
+		this.lastExhaustedTime = 0;
+		this.clearRetryTimer();
 		if (!this.downloadActive)
 			this.doWork().catch(e => {
 				if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);

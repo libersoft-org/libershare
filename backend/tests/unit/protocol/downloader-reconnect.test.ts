@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'bun:test';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
-import { MockDataServer, MockLISHClient, makeLISH, priv } from './downloader-test-helpers.ts';
+import type { ChunkID } from '@shared';
+import { MockDataServer, MockLISHClient, makeLISH, makeMissingChunk, priv } from './downloader-test-helpers.ts';
 
 /**
  * A seeder whose connection dies mid-transfer still has the data. It must be dialed again at
@@ -115,6 +116,28 @@ describe('Downloader – reconnecting a seeder after a lost connection', () => {
 
 		expect(s.net.dials).toEqual([]);
 		expect(peerManager(dl).has('peer-a')).toBe(false);
+	});
+
+	it('resumes the transfer right after the last seeder reconnects, without waiting out the exhausted-run pause', async () => {
+		const net = new DialingNetwork();
+		const ds = new MockDataServer();
+		ds.missingChunks = [makeMissingChunk('chunk-left' as ChunkID)];
+		dl = new Downloader('/tmp/dl', net as never, ds as never, 'net-001');
+		await dl.initFromManifest(makeLISH());
+		// Real doWork(); only the chunk transfer itself is recorded instead of run.
+		const runs: number[] = [];
+		(dl as any).chunkDownloader.run = async (): Promise<void> => void runs.push(Date.now());
+		(dl as any).missingChunks = ds.getMissingChunks('');
+		(dl as any).transitionTo('downloading', 'test', true);
+		// The chunk run just ended because its only seeder dropped.
+		(dl as any).lastExhaustedTime = Date.now();
+
+		lost(dl, 'peer-back');
+		await settle(1300);
+
+		// The run started within the reconnect delay, not after the 10 s pause.
+		expect(net.dials).toEqual([{ kind: 'id', target: 'peer-back' }]);
+		expect(runs.length).toBe(1);
 	});
 
 	for (const viaHave of [true, false]) {
