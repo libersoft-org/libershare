@@ -205,7 +205,14 @@ export class Downloader {
 		}
 		trace(`[DL] ${this.lishID?.slice(0, 8) ?? '?'} ${from} → ${newState} (${reason})`);
 		this.state = newState;
+		// A finished download is dropped from the transfer map without destroy(), so nothing else would cancel these.
+		if (newState === 'downloaded') this.clearReconnectTimers();
 		return true;
+	}
+
+	/** True once no seeder connection is wanted: the download finished, was stopped, failed or was destroyed. */
+	private wantsNoPeers(): boolean {
+		return this.destroyed || this.disabled || this.state === 'downloaded';
 	}
 	getError(): IDownloadError | null {
 		if (this.state !== 'error') return null;
@@ -817,8 +824,9 @@ export class Downloader {
 				if (this.destroyed) return;
 
 				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, this.abortController.signal);
-				if (this.destroyed) {
-					dlStream.abort(new Error('downloader destroyed'));
+				// Re-checked after the dial: the download may have been stopped or finished while it ran.
+				if (this.wantsNoPeers()) {
+					dlStream.abort(new Error('download no longer wants peers'));
 					return;
 				}
 				// Atomic add — if onHaveAnnouncement concurrently added this peer during our dial,
@@ -897,7 +905,7 @@ export class Downloader {
 	}
 
 	private async reconnectPeerInternal(peerID: NodeID): Promise<void> {
-		if (this.destroyed || this.disabled || this.peerManager.has(peerID) || this.peerManager.isBanned(peerID)) return;
+		if (this.wantsNoPeers() || this.peerManager.has(peerID) || this.peerManager.isBanned(peerID)) return;
 		const have = this.seederHave.get(peerID);
 		try {
 			if (have) await this.connectToPeer(peerID, have.multiaddrs, have.chunks);
@@ -905,7 +913,8 @@ export class Downloader {
 				// Found by probing a gossip neighbour, so no HAVE was kept: dial by identity.
 				const { stream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, this.abortController.signal);
 				const client = new LISHClient(stream);
-				if (this.destroyed || !this.peerManager.tryAdd(peerID, client, connectionType)) {
+				// Re-checked after the dial: the download may have been stopped or finished while it ran.
+				if (this.wantsNoPeers() || !this.peerManager.tryAdd(peerID, client, connectionType)) {
 					client.abort(new Error('reconnect not needed'));
 					return;
 				}
@@ -915,7 +924,7 @@ export class Downloader {
 			this.onPeerConnectionLost(peerID);
 			return;
 		}
-		if (this.destroyed || !this.peerManager.has(peerID)) return;
+		if (this.wantsNoPeers() || !this.peerManager.has(peerID)) return;
 		console.log(`[DL] Peer ${peerID.slice(0, 12)} reconnected (total: ${this.peerManager.size()})`);
 		if (!this.downloadActive)
 			this.doWork().catch(e => {
@@ -1032,8 +1041,9 @@ export class Downloader {
 		const multiaddrs: Multiaddr[] = multiaddrStrings.map(ma => multiaddr(ma));
 		trace(`[DL] dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
 		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL, this.abortController.signal);
-		if (this.destroyed) {
-			stream.abort(new Error('downloader destroyed'));
+		// Re-checked after the dial: the download may have been stopped or finished while it ran.
+		if (this.wantsNoPeers()) {
+			stream.abort(new Error('download no longer wants peers'));
 			return;
 		}
 		const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;

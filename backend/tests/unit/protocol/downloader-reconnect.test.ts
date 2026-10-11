@@ -10,15 +10,27 @@ import { MockDataServer, MockLISHClient, makeLISH, priv } from './downloader-tes
 class DialingNetwork extends MockNetwork {
 	dials: Array<{ kind: 'addrs' | 'id'; target: string }> = [];
 	failDials = false;
+	/** When set, every dial waits for it — a dial still in flight while the test changes the download. */
+	gate: Promise<void> | undefined;
+	aborted = 0;
+	private stream(): MockLISHClient {
+		const stream = new MockLISHClient() as MockLISHClient & { abort(): void };
+		stream.abort = (): void => {
+			this.aborted++;
+		};
+		return stream;
+	}
 	override async dialProtocol(multiaddrs: unknown[]): Promise<never> {
 		this.dials.push({ kind: 'addrs', target: String(multiaddrs[0]) });
+		await this.gate;
 		if (this.failDials) throw new Error('dial failed');
-		return { stream: new MockLISHClient(), connectionType: 'RELAY' } as never;
+		return { stream: this.stream(), connectionType: 'RELAY' } as never;
 	}
 	override async dialProtocolByPeerId(peerID: string): Promise<never> {
 		this.dials.push({ kind: 'id', target: peerID });
+		await this.gate;
 		if (this.failDials) throw new Error('dial failed');
-		return { stream: new MockLISHClient(), connectionType: 'DIRECT' } as never;
+		return { stream: this.stream(), connectionType: 'DIRECT' } as never;
 	}
 }
 
@@ -92,4 +104,36 @@ describe('Downloader – reconnecting a seeder after a lost connection', () => {
 
 		expect(s.net.dials).toEqual([]);
 	});
+
+	it('cancels a pending reconnect when another seeder completes the download', async () => {
+		const s = await setup();
+		dl = s.dl;
+
+		lost(dl, 'peer-a');
+		(dl as any).transitionTo('downloaded', 'test: last chunk came from another seeder', true);
+		await settle(1300);
+
+		expect(s.net.dials).toEqual([]);
+		expect(peerManager(dl).has('peer-a')).toBe(false);
+	});
+
+	for (const viaHave of [true, false]) {
+		it(`drops a reconnect ${viaHave ? 'by HAVE addresses' : 'by peer ID'} that finishes after the download was stopped`, async () => {
+			const s = await setup();
+			dl = s.dl;
+			if (viaHave) (dl as any).seederHave.set('peer-slow', { multiaddrs: [RELAYED], chunks: 'all' });
+			let release!: () => void;
+			s.net.gate = new Promise(r => (release = r));
+
+			lost(dl, 'peer-slow');
+			await settle(1100);
+			expect(s.net.dials.length).toBe(1);
+			dl.disable();
+			release();
+			await settle(50);
+
+			expect(peerManager(dl).has('peer-slow')).toBe(false);
+			expect(s.net.aborted).toBe(1);
+		});
+	}
 });
