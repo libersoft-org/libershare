@@ -28,6 +28,7 @@ import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { ONE_WAY_PUBSUB_GRACE_MS, OneWayPubsubWatch } from './one-way-pubsub-watch.ts';
+import { ConnectionLiveness } from './connection-liveness.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
 import { LISHServingHandlers, type SearchLishsMessage, type SeenSearch } from './lish-handlers.ts';
 export type { SearchLishsMessage } from './lish-handlers.ts';
@@ -529,6 +530,7 @@ export class Network {
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
 	private readonly oneWayPubsub = new OneWayPubsubWatch();
+	private readonly connectionLiveness = new ConnectionLiveness();
 
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
@@ -906,6 +908,7 @@ export class Network {
 			allSettings,
 			bootstrapPeers,
 			myPeerID: privateKey.publicKey.toString(),
+			connectionLiveness: this.connectionLiveness,
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		// Aliased, not copied. The dial-gater bypass and the PX appSpecificScore close over
@@ -946,6 +949,7 @@ export class Network {
 			throw err;
 		}
 		console.log('Node started');
+		this.connectionLiveness.start();
 
 		const addresses = this.node.getMultiaddrs();
 		console.log('Listening on addresses:');
@@ -4074,6 +4078,7 @@ export class Network {
 		this.lastMeshChange.clear();
 		this._lastScores.clear();
 		this.oneWayPubsub.clear();
+		this.connectionLiveness.stop();
 		this.recentDisconnects.length = 0;
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
