@@ -230,19 +230,23 @@ describe('PeerAnnounceManager.emit recently-seen membership', () => {
 		}
 	});
 
-	it('records membership on a node too small to advertise itself', async () => {
-		// The peerStore threshold decides whether we BROADCAST, not whether we remember
-		// who we saw. Gating both together left getRecentMembers permanently empty on
-		// small nodes — where the readers of it (the listing gate) need it most.
-		const allPeers = [fakePeer(PA_ID, PA_ADDR)]; // 1 peer — below PEER_ANNOUNCE_MIN_PEER_STORE
-		const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR)], peerStore: { all: async () => allPeers } };
+	it('announces itself, relay circuit included, when it knows only its bootstrap', async () => {
+		// Two peers behind NAT that share nothing but one relaying bootstrap: each has a
+		// one-entry peerStore, and its circuit is the only address the other can dial. A
+		// minimum peerStore size before announcing kept both silent, so a HAVE answering
+		// the other's want had "no valid addresses" and the download never started.
+		const RELAY_ID = '12D3KooWRe1ayPeerRe1ayPeerRe1ayPeerRe1ayPeerRe1ayPe';
+		const circuit = `/ip4/198.51.100.10/tcp/9090/p2p/${RELAY_ID}/p2p-circuit/p2p/${SELF_ID}`;
+		const allPeers = [fakePeer(PA_ID, PA_ADDR)];
+		const node = { peerId: { toString: () => SELF_ID }, getMultiaddrs: () => [Multiaddr(SELF_ADDR), Multiaddr(circuit)], peerStore: { all: async () => allPeers } };
 		const pubsub = { getTopics: () => [TOPIC_A], getSubscribers: (t: string) => (t === TOPIC_A ? [fakeSubscriber(PA_ID)] : []) };
 		const { mgr, broadcasts } = buildManager(node, pubsub);
 
 		await (mgr as any).emit();
 
-		expect(broadcasts).toHaveLength(0); // still too small to announce
-		expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]); // but membership was recorded
+		expect(broadcasts).toHaveLength(1);
+		expect(broadcasts[0]!.msg.multiaddrs).toContain(circuit);
+		expect(mgr.getRecentMembers(TOPIC_A)).toEqual([PA_ID]);
 	});
 
 	it('honours a shorter max age than the advertising TTL', async () => {

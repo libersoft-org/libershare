@@ -35,8 +35,6 @@ const PEER_ANNOUNCE_INTERVAL_ISOLATED_MS = 15_000; // peerStore < 20 (cold start
 const PEER_ANNOUNCE_INTERVAL_STEADY_MS = 30_000; // peerStore 20..80 (mid-convergence)
 const PEER_ANNOUNCE_INTERVAL_SATURATED_MS = 180_000; // peerStore > 80 (near full visibility)
 const PEER_ANNOUNCE_JITTER_RATIO = 0.25; // ±25% jitter of chosen interval (thunder-herd avoidance)
-/** Minimum peerStore size before we consider ourselves worth advertising. */
-const PEER_ANNOUNCE_MIN_PEER_STORE = 5;
 /** Hard cap on number of multiaddrs we include in a single announce (safety bound). */
 const PEER_ANNOUNCE_MAX_ADDRS = 32;
 /**
@@ -578,7 +576,8 @@ export class PeerAnnounceManager {
 		// restart landing in that await would otherwise have us publish the previous run's
 		// addresses onto the new node's topics.
 		if (this.isSuperseded(generation)) return;
-		if (allPeers.length < PEER_ANNOUNCE_MIN_PEER_STORE) return;
+		// No minimum peerStore size: a node behind NAT that knows only its bootstrap is
+		// exactly the one whose relay addresses nobody else can learn any other way.
 		const localCidrs = getLocalCidrs();
 		const myID = node.peerId.toString();
 		// Our own multiaddrs (shared across all topics — we are a member of every
