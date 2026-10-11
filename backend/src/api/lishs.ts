@@ -93,6 +93,8 @@ interface LISHsHandlers {
 	stopAllCreates: () => Promise<SuccessResponse>;
 	move: (p: MoveParams) => Promise<SuccessResponse>;
 	startVerification: (lishID: string) => void;
+	/** Re-queue the verifications a stop or crash interrupted; called once at startup. */
+	resumePendingVerifications: () => void;
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
 	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
 	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
@@ -508,6 +510,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (currentVerification?.lishID === lishID) return;
 		if (verificationQueue.includes(lishID)) return;
 		setBusy(lishID, 'verifying');
+		dataServer.setVerifyPending(lishID, true);
 		verificationQueue.push(lishID);
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
 		processVerificationQueue();
@@ -541,6 +544,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				activeVerificationRuns.delete(run);
 				const isOwner = currentVerification === run;
 				if (isOwner) {
+					// Only a run that reached its end settles the LISH; an aborted one (shutdown,
+					// network restart) is finished by the next start.
+					if (!ac.signal.aborted && !verificationQueue.includes(lishID)) dataServer.setVerifyPending(lishID, false);
 					if (!verificationQueue.includes(lishID)) {
 						clearBusy(lishID);
 						if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
@@ -561,6 +567,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			enqueueVerification(lishID);
 		} finally {
 			leave();
+		}
+	}
+
+	function resumePendingVerifications(): void {
+		for (const lishID of dataServer.getVerifyPendingLishs()) {
+			console.log(`[Verify] ${lishID.slice(0, 8)}: resuming verification interrupted before restart`);
+			startVerification(lishID);
 		}
 	}
 
@@ -607,6 +620,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['lishID']);
 		moveRecoveryTokens.delete(p.lishID);
 		clearBusy(p.lishID);
+		dataServer.setVerifyPending(p.lishID, false);
 		// Stop if currently running
 		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
 		// Remove from queue if pending
@@ -838,5 +852,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

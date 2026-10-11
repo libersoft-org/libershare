@@ -68,6 +68,7 @@ describe('LISH factory-reset mutation drain', () => {
 			releaseExists = resolve;
 		});
 		const writes: string[] = [];
+		const pendingWrites: boolean[] = [];
 		const dataServer = {
 			get: () => ({ id: 'verify-reset', directory: '/tmp/verify-reset', chunkSize: 1024, checksumAlgo: 'sha256' }),
 			openDataset: async () => ({
@@ -90,6 +91,7 @@ describe('LISH factory-reset mutation drain', () => {
 			markAllFileChunksFailed: () => writes.push('file-failed'),
 			markChunkVerified: () => writes.push('chunk-verified'),
 			markChunkFailed: () => writes.push('chunk-failed'),
+			setVerifyPending: (_id: string, pending: boolean) => pendingWrites.push(pending),
 		};
 		const handlers = createHandlers(dataServer);
 
@@ -108,6 +110,8 @@ describe('LISH factory-reset mutation drain', () => {
 			await stopping;
 
 			expect(writes).toEqual([]);
+			// Marked when queued and left marked: an aborted run is not a finished one.
+			expect(pendingWrites).toEqual([true]);
 		} finally {
 			handlers.resumeMutations();
 		}

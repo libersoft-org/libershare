@@ -39,6 +39,19 @@ export function getDownloadEnabledLishs(db: Database): Set<string> {
 	);
 }
 
+/** Persists whether a LISH has a verification that has not run to its end yet. */
+export function setVerifyPending(db: Database, lishID: LISHid, pending: boolean): void {
+	db.run('UPDATE lishs SET verify_pending = ? WHERE lish_id = ?', [pending ? 1 : 0, lishID]);
+}
+
+/** Returns the LISHids whose verification was interrupted (stop, crash) before it finished. */
+export function getVerifyPendingLishs(db: Database): string[] {
+	return db
+		.query<{ lish_id: string }, []>('SELECT lish_id FROM lishs WHERE verify_pending = TRUE ORDER BY id')
+		.all()
+		.map(r => r.lish_id);
+}
+
 // -- Transfer stats persistence --
 
 /** Adds to the cumulative uploaded-bytes counter for a LISH. */

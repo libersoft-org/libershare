@@ -29,7 +29,7 @@ it('stops relay polling before waiting for accepted API requests', async () => {
 			prepareMaintenance: async () => ({ drain: async () => {}, release() {} }),
 			stopAllNetworks: async () => {},
 		};
-		const server = new APIServer(${JSON.stringify(dir)}, {}, networks, settings, {
+		const server = new APIServer(${JSON.stringify(dir)}, { getVerifyPendingLishs: () => [] }, networks, settings, {
 			host: '127.0.0.1', port: 0, secure: false, keyFile: undefined, certFile: undefined, apiToken: 'relay-shutdown-test-token',
 		});
 		const events = [];
