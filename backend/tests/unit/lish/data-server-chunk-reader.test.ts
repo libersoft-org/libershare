@@ -7,6 +7,7 @@ import { addLISH } from '../../../src/db/lishs.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { openDataset } from '../../../src/lish/safe-dataset-files.ts';
 import { type ChunkID, type IStoredLISH, type LISHid } from '@shared';
+import { rejection } from '../helpers/rejection.ts';
 
 const LISH_ID = 'lish-chunk-reader-test' as LISHid;
 const CHUNKS = ['chunk-r-0', 'chunk-r-1', 'chunk-r-2'] as ChunkID[];
@@ -320,7 +321,7 @@ describe('DataServer.createChunkReader', () => {
 		const reader = dataServer.createChunkReader(60_000);
 		await reader.getChunk(LISH_ID, CHUNKS[0]!);
 		closeFails = 1;
-		await expect(dataServer.holdChunkFiles(LISH_ID)).rejects.toThrow('close failed');
+		expect((await rejection(dataServer.holdChunkFiles(LISH_ID))).message).toBe('close failed');
 		// The failed hold is released: the next read is kept again.
 		await reader.getChunk(LISH_ID, CHUNKS[1]!);
 		expect(opened - closed).toBe(1);
