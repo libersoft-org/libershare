@@ -40,16 +40,19 @@ describe('OneWayPubsubWatch', () => {
 });
 
 /** A Network carrying only what the status tick's renewal step reads, over a fake node and router. */
-function networkWithOneWayPeer(opts: { suppressed?: boolean } = {}) {
+function networkWithOneWayPeer(opts: { suppressed?: boolean; peers?: string[]; onDial?: (peerID: string) => void } = {}) {
 	const calls: string[] = [];
-	const peer = { toString: () => PEER_A };
+	const peerIDs = opts.peers ?? [PEER_A];
+	const pubsub = { streamsOutbound: new Map<string, unknown>(peerIDs.map(id => [id, {}])), streamsInbound: new Map<string, unknown>() };
 	const node = {
-		getPeers: () => [peer],
+		getPeers: () => peerIDs.map(id => ({ toString: () => id })),
 		getConnections: () => [{ status: 'open', remoteAddr: multiaddr('/ip4/192.0.2.1/tcp/9090') }],
 		hangUp: async (id: { toString(): string }) => void calls.push(`hangUp ${id.toString()}`),
-		dial: async (id: { toString(): string }) => void calls.push(`dial ${id.toString()}`),
+		dial: async (id: { toString(): string }) => {
+			calls.push(`dial ${id.toString()}`);
+			opts.onDial?.(id.toString());
+		},
 	};
-	const pubsub = { streamsOutbound: new Map([[PEER_A, {}]]), streamsInbound: new Map() };
 	const network = Object.create(Network.prototype) as Network;
 	(network as any).runEpoch = 1;
 	(network as any).node = node;
@@ -57,7 +60,7 @@ function networkWithOneWayPeer(opts: { suppressed?: boolean } = {}) {
 	(network as any).oneWayPubsub = new OneWayPubsubWatch();
 	(network as any).isRedialSuppressed = () => opts.suppressed === true;
 	const tick = (now: number): Promise<void> => (network as any).renewOneWayPubsub(node, pubsub, 1, now);
-	return { calls, tick };
+	return { calls, tick, pubsub };
 }
 
 describe('Network — one-way pubsub renewal', () => {
@@ -74,5 +77,17 @@ describe('Network — one-way pubsub renewal', () => {
 		await tick(0);
 		await tick(ONE_WAY_PUBSUB_GRACE_MS);
 		expect(calls).toEqual([`hangUp ${PEER_A}`]);
+	});
+
+	it('leaves alone a second peer whose pubsub came back while the first was being renewed', async () => {
+		const setup = networkWithOneWayPeer({
+			peers: [PEER_A, PEER_B],
+			onDial: id => {
+				if (id === PEER_A) setup.pubsub.streamsInbound.set(PEER_B, {});
+			},
+		});
+		await setup.tick(0);
+		await setup.tick(ONE_WAY_PUBSUB_GRACE_MS);
+		expect(setup.calls).toEqual([`hangUp ${PEER_A}`, `dial ${PEER_A}`]);
 	});
 });

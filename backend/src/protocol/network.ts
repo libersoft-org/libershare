@@ -1423,15 +1423,18 @@ export class Network {
 	private async renewOneWayPubsub(node: Libp2p, pubsub: PubSub, epoch: number, now: number = Date.now()): Promise<void> {
 		const router = pubsub as any;
 		if (!(router.streamsOutbound instanceof Map) || !(router.streamsInbound instanceof Map)) return;
+		const isDirect = (peer: PeerID): boolean => node.getConnections(peer).some(c => c.status === 'open' && (c as any).limits == null && !Circuit.matches(c.remoteAddr));
 		const direct = node
 			.getPeers()
-			.filter(peer => node.getConnections(peer).some(c => c.status === 'open' && (c as any).limits == null && !Circuit.matches(c.remoteAddr)))
+			.filter(isDirect)
 			.map(peer => peer.toString());
 		const due = this.oneWayPubsub.check({ outbound: router.streamsOutbound.keys(), inbound: router.streamsInbound.keys(), direct }, now);
 		for (const peerID of due) {
 			if (epoch !== this.runEpoch || this.node !== node) return;
-			console.log(`[NET] no pubsub from ${peerID.slice(0, 12)} for ${ONE_WAY_PUBSUB_GRACE_MS / 1000}s while connected, renewing the connection`);
 			const peer = peerIDFromString(peerID);
+			// Renewing an earlier peer awaited a dial; this one may have paired up or reconnected meanwhile.
+			if (!router.streamsOutbound.has(peerID) || router.streamsInbound.has(peerID) || !isDirect(peer)) continue;
+			console.log(`[NET] no pubsub from ${peerID.slice(0, 12)} for ${ONE_WAY_PUBSUB_GRACE_MS / 1000}s while connected, renewing the connection`);
 			try {
 				await node.hangUp(peer);
 				if (epoch !== this.runEpoch || this.isRedialSuppressed(peerID)) continue;
