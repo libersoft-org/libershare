@@ -214,6 +214,15 @@ export class Downloader {
 	private wantsNoPeers(): boolean {
 		return this.destroyed || this.disabled || this.state === 'downloaded';
 	}
+
+	/**
+	 * True when a decision taken after a dial was planned rules this seeder out: it was banned
+	 * or dropped (a refusal, bad data), or the network layer forbids dialing it — we left the
+	 * lishnet it belongs to and no joined one still claims it.
+	 */
+	private isPeerRuledOut(peerID: NodeID): boolean {
+		return this.peerManager.isBanned(peerID) || this.peerManager.isDropped(peerID) || this.network.isDialSuppressed(peerID);
+	}
 	getError(): IDownloadError | null {
 		if (this.state !== 'error') return null;
 		const err: IDownloadError = { code: this.errorCode! };
@@ -905,7 +914,7 @@ export class Downloader {
 	}
 
 	private async reconnectPeerInternal(peerID: NodeID): Promise<void> {
-		if (this.wantsNoPeers() || this.peerManager.has(peerID) || this.peerManager.isBanned(peerID)) return;
+		if (this.wantsNoPeers() || this.peerManager.has(peerID) || this.isPeerRuledOut(peerID)) return;
 		const have = this.seederHave.get(peerID);
 		try {
 			if (have) await this.connectToPeer(peerID, have.multiaddrs, have.chunks);
@@ -913,8 +922,8 @@ export class Downloader {
 				// Found by probing a gossip neighbour, so no HAVE was kept: dial by identity.
 				const { stream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, this.abortController.signal);
 				const client = new LISHClient(stream);
-				// Re-checked after the dial: the download may have been stopped or finished while it ran.
-				if (this.wantsNoPeers() || !this.peerManager.tryAdd(peerID, client, connectionType)) {
+				// Re-checked after the dial: the download or the peer may have been ruled out while it ran.
+				if (this.wantsNoPeers() || this.isPeerRuledOut(peerID) || !this.peerManager.tryAdd(peerID, client, connectionType)) {
 					client.abort(new Error('reconnect not needed'));
 					return;
 				}
@@ -1044,8 +1053,8 @@ export class Downloader {
 		const multiaddrs: Multiaddr[] = multiaddrStrings.map(ma => multiaddr(ma));
 		trace(`[DL] dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
 		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL, this.abortController.signal);
-		// Re-checked after the dial: the download may have been stopped or finished while it ran.
-		if (this.wantsNoPeers()) {
+		// Re-checked after the dial: the download or the peer may have been ruled out while it ran.
+		if (this.wantsNoPeers() || this.isPeerRuledOut(peerID)) {
 			stream.abort(new Error('download no longer wants peers'));
 			return;
 		}

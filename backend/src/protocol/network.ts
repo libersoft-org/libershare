@@ -1499,6 +1499,11 @@ export class Network {
 	 * Pure read: quarantine entries expire by time here and are deleted elsewhere
 	 * (peer:connect, the prune at the end of runRedialMaintenance).
 	 */
+	/** Whether a dial to this peer must not happen now — see {@link dialSuppressionReason}. For callers outside Network that dial by themselves. */
+	isDialSuppressed(peerID: string): boolean {
+		return this.dialSuppressionReason(peerID) !== null;
+	}
+
 	private dialSuppressionReason(peerID: string, now: number = Date.now()): 'left-network' | 'unreachable' | null {
 		if (this.isRedialSuppressed(peerID)) return 'left-network';
 		// A configured peer is user data and is never held back by an observation: the

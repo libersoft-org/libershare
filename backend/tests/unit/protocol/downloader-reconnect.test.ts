@@ -140,6 +140,50 @@ describe('Downloader – reconnecting a seeder after a lost connection', () => {
 		expect(runs.length).toBe(1);
 	});
 
+	it('does not redial a seeder of a lishnet we left while the download goes on through another', async () => {
+		const s = await setup();
+		dl = s.dl;
+		(dl as any).seederHave.set('peer-left-net', { multiaddrs: [RELAYED], chunks: 'all' });
+
+		lost(dl, 'peer-left-net');
+		// Leaving the lishnet: the download keeps its other networks, the network layer suppresses the peer.
+		dl.removeNetwork('net-001');
+		s.net.dialSuppressed.add('peer-left-net');
+		await settle(1300);
+
+		expect(s.net.dials).toEqual([]);
+		expect(peerManager(dl).has('peer-left-net')).toBe(false);
+	});
+
+	it('drops a reconnect whose lishnet was left while the dial ran', async () => {
+		const s = await setup();
+		dl = s.dl;
+		let release!: () => void;
+		s.net.gate = new Promise(r => (release = r));
+
+		lost(dl, 'peer-left-net');
+		await settle(1100);
+		s.net.dialSuppressed.add('peer-left-net');
+		release();
+		await settle(50);
+
+		expect(peerManager(dl).has('peer-left-net')).toBe(false);
+		expect(s.net.aborted).toBe(1);
+	});
+
+	it('does not let an older reconnect bring back a seeder dropped since', async () => {
+		const s = await setup();
+		dl = s.dl;
+
+		lost(dl, 'peer-refused');
+		// Before the timer fires the peer came back on its own, refused to serve and was dropped.
+		(priv(dl)['peerManager'] as { remove(id: string, kind: string): void }).remove('peer-refused', 'drop');
+		await settle(1300);
+
+		expect(s.net.dials).toEqual([]);
+		expect(peerManager(dl).has('peer-refused')).toBe(false);
+	});
+
 	for (const viaHave of [true, false]) {
 		it(`drops a reconnect ${viaHave ? 'by HAVE addresses' : 'by peer ID'} that finishes after the download was stopped`, async () => {
 			const s = await setup();
