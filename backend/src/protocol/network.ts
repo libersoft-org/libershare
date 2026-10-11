@@ -27,6 +27,7 @@ import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
+import { ONE_WAY_PUBSUB_GRACE_MS, OneWayPubsubWatch } from './one-way-pubsub-watch.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
 import { LISHServingHandlers, type SearchLishsMessage, type SeenSearch } from './lish-handlers.ts';
 export type { SearchLishsMessage } from './lish-handlers.ts';
@@ -527,6 +528,7 @@ export class Network {
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
+	private readonly oneWayPubsub = new OneWayPubsubWatch();
 
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
@@ -1391,6 +1393,8 @@ export class Network {
 				dumpGossipsubScores({ node, pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
+				await this.renewOneWayPubsub(node, pubsub, epoch);
+				if (epoch !== this.runEpoch) return;
 				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
 				if (epoch !== this.runEpoch) return;
 				await this.runZeroConnectionRecovery(connectedPeers, epoch);
@@ -1409,6 +1413,33 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
+	}
+
+	/**
+	 * Renew the connection to a peer whose pubsub reaches us no longer (see {@link OneWayPubsubWatch}).
+	 * Closing every connection makes both routers drop the peer with its streams; the dial that
+	 * follows sets them up again in both directions. A peer we left a network of is only hung up.
+	 */
+	private async renewOneWayPubsub(node: Libp2p, pubsub: PubSub, epoch: number, now: number = Date.now()): Promise<void> {
+		const router = pubsub as any;
+		if (!(router.streamsOutbound instanceof Map) || !(router.streamsInbound instanceof Map)) return;
+		const direct = node
+			.getPeers()
+			.filter(peer => node.getConnections(peer).some(c => c.status === 'open' && (c as any).limits == null && !Circuit.matches(c.remoteAddr)))
+			.map(peer => peer.toString());
+		const due = this.oneWayPubsub.check({ outbound: router.streamsOutbound.keys(), inbound: router.streamsInbound.keys(), direct }, now);
+		for (const peerID of due) {
+			if (epoch !== this.runEpoch || this.node !== node) return;
+			console.log(`[NET] no pubsub from ${peerID.slice(0, 12)} for ${ONE_WAY_PUBSUB_GRACE_MS / 1000}s while connected, renewing the connection`);
+			const peer = peerIDFromString(peerID);
+			try {
+				await node.hangUp(peer);
+				if (epoch !== this.runEpoch || this.isRedialSuppressed(peerID)) continue;
+				await node.dial(peer, { signal: AbortSignal.any([this.dialAbort.signal, AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS)]) });
+			} catch (err: any) {
+				trace(`[NET] renewing ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+			}
+		}
 	}
 
 	/**
@@ -4034,6 +4065,7 @@ export class Network {
 		this._lastMeshSizes.clear();
 		this.lastMeshChange.clear();
 		this._lastScores.clear();
+		this.oneWayPubsub.clear();
 		this.recentDisconnects.length = 0;
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();
