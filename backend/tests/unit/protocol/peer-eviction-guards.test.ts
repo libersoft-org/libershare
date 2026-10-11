@@ -3,6 +3,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { Mutex } from 'async-mutex';
 import { Network, isRecoveryDialDue, isSameDialEndpoint, normalizeMultiaddrForCompare, type IBootstrapEntry } from '../../../src/protocol/network.ts';
 import { OneWayPubsubWatch } from '../../../src/protocol/one-way-pubsub-watch.ts';
+import { ConnectionLiveness } from '../../../src/protocol/connection-liveness.ts';
 import { BootstrapStatusTracker } from '../../../src/protocol/bootstrap-status.ts';
 import { installBootstrapRegistry, registryAddresses } from '../helpers/bootstrap-registry.ts';
 
@@ -1526,6 +1527,7 @@ describe('Network.stop — per-run state really is per run', () => {
 			(network as any)[field] = field === 'seenSearchIDs' || field === 'dcutrPeers' || field === 'bootstrapPeerIDs' || field === 'configuredBootstrapPeerIDs' || field === 'configuredBootstrapAddresses' ? new Set() : new Map();
 		}
 		(network as any).oneWayPubsub = new OneWayPubsubWatch();
+		(network as any).connectionLiveness = new ConnectionLiveness();
 		(network as any).runEpoch = 1;
 		(network as any).statusInterval = null;
 		(network as any).bootstrapWorkaroundTimer = null;
