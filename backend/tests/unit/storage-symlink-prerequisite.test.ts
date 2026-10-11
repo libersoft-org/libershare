@@ -1,5 +1,5 @@
 import { expect, it } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,7 +19,10 @@ for (const code of ['ENOTSUP', 'EIO', ...(process.platform === 'win32' ? ['EPERM
 				}));
 			`
 			);
-			const child = Bun.spawn([process.execPath, 'test', '--preload', preload, 'tests/unit/storage-atomic-write.test.ts', 'tests/unit/api/settings-persistence-response.test.ts'], { cwd: join(import.meta.dir, '../..'), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+			// The JUnit report names every skipped test; the console reporter lists only failures
+			// when it does not write to a terminal.
+			const report = join(dir, 'report.xml');
+			const child = Bun.spawn([process.execPath, 'test', '--preload', preload, '--reporter=junit', `--reporter-outfile=${report}`, 'tests/unit/storage-atomic-write.test.ts', 'tests/unit/api/settings-persistence-response.test.ts'], { cwd: join(import.meta.dir, '../..'), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
 			const timeout = setTimeout(() => child.kill(), 10_000);
 			try {
 				const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -29,8 +32,9 @@ for (const code of ['ENOTSUP', 'EIO', ...(process.platform === 'win32' ? ['EPERM
 					expect(output).toContain('injected symlink failure: EIO');
 				} else {
 					if (exitCode !== 0) throw new Error(output);
-					expect(output).toMatch(/\b7 skip\b/);
-					expect(output).toContain(`(${code})]`);
+					const xml = await readFile(report, 'utf8');
+					expect(xml.match(/<skipped/g)?.length).toBe(7);
+					expect(xml).toContain(`(${code})]`);
 				}
 			} finally {
 				clearTimeout(timeout);
