@@ -38,6 +38,19 @@ describe('ConnectionLiveness', () => {
 		expect(conn.abortedWith).toBeUndefined();
 	});
 
+	it('keeps watching a connection tracked before the sweep started', () => {
+		const watch = new ConnectionLiveness();
+		const conn = new FakeConnection();
+		// The upgrader reports connections made while the node is still starting.
+		watch.track(conn, 0);
+		watch.start();
+		try {
+			expect(watch.sweep(CONNECTION_SILENCE_LIMIT_MS)).toBe(1);
+		} finally {
+			watch.stop();
+		}
+	});
+
 	it('forgets a connection once it closes', () => {
 		const watch = new ConnectionLiveness();
 		const conn = new FakeConnection();

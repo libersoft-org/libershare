@@ -62,11 +62,13 @@ export class ConnectionLiveness {
 		return aborted;
 	}
 
+	/** Start the periodic sweep. Keeps connections tracked before it, e.g. while the node was starting. */
 	start(): void {
-		this.stop();
+		if (this.timer) clearInterval(this.timer);
 		this.timer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
 	}
 
+	/** Stop sweeping and forget every connection; the node they belong to is being torn down. */
 	stop(): void {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
