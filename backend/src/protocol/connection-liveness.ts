@@ -28,25 +28,26 @@ export interface WatchedConnection {
  * retransmitting — measured at 16 minutes on Linux — and every new stream to that peer is opened on
  * it, because libp2p reuses an open connection. Inbound bytes are observed the way
  * `@libp2p/simple-metrics` counts them: by wrapping `dispatchEvent`, so no `message` listener is
- * added and no inbound data is consumed early.
+ * added and no inbound data is consumed early. Silence is timed on `performance.now()`, which a
+ * change of the system clock does not move.
  */
 export class ConnectionLiveness {
 	private readonly lastHeard = new Map<WatchedConnection, number>();
 	private timer: ReturnType<typeof setInterval> | undefined;
 
 	/** Start watching a connection; called for every connection libp2p upgrades. */
-	track(conn: WatchedConnection, now: number = Date.now()): void {
+	track(conn: WatchedConnection, now: number = performance.now()): void {
 		this.lastHeard.set(conn, now);
 		const dispatch = conn.dispatchEvent.bind(conn);
 		conn.dispatchEvent = (event: Event): boolean => {
-			if (event.type === 'message' && this.lastHeard.has(conn)) this.lastHeard.set(conn, Date.now());
+			if (event.type === 'message' && this.lastHeard.has(conn)) this.lastHeard.set(conn, performance.now());
 			return dispatch(event);
 		};
 		conn.addEventListener('close', () => this.lastHeard.delete(conn), { once: true });
 	}
 
 	/** Abort every open connection silent for longer than the limit. Returns how many were aborted. */
-	sweep(now: number = Date.now(), limitMs: number = CONNECTION_SILENCE_LIMIT_MS): number {
+	sweep(now: number = performance.now(), limitMs: number = CONNECTION_SILENCE_LIMIT_MS): number {
 		let aborted = 0;
 		for (const [conn, heard] of this.lastHeard) {
 			if (conn.status !== 'open') {

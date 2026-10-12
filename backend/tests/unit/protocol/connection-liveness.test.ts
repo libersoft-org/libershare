@@ -32,9 +32,9 @@ describe('ConnectionLiveness', () => {
 	it('keeps a connection that keeps receiving, however long it lives', () => {
 		const watch = new ConnectionLiveness();
 		const conn = new FakeConnection();
-		watch.track(conn, Date.now() - 10 * CONNECTION_SILENCE_LIMIT_MS);
+		watch.track(conn, performance.now() - 10 * CONNECTION_SILENCE_LIMIT_MS);
 		conn.receive();
-		expect(watch.sweep(Date.now() + CONNECTION_SILENCE_LIMIT_MS - 1000)).toBe(0);
+		expect(watch.sweep(performance.now() + CONNECTION_SILENCE_LIMIT_MS - 1000)).toBe(0);
 		expect(conn.abortedWith).toBeUndefined();
 	});
 
@@ -49,6 +49,27 @@ describe('ConnectionLiveness', () => {
 		} finally {
 			watch.stop();
 		}
+	});
+
+	it('is not fooled by the system clock jumping', () => {
+		const realNow = Date.now;
+		const watch = new ConnectionLiveness();
+		const fresh = new FakeConnection();
+		const silent = new FakeConnection();
+		try {
+			watch.track(fresh);
+			watch.track(silent, performance.now() - CONNECTION_SILENCE_LIMIT_MS - 5000);
+			// A clock set a minute ahead makes no fresh connection look silent ...
+			Date.now = (): number => realNow() + 60_000;
+			// ... and one set a minute back hides no connection that really went silent.
+			watch.sweep();
+			Date.now = (): number => realNow() - 60_000;
+			watch.sweep();
+		} finally {
+			Date.now = realNow;
+		}
+		expect(fresh.abortedWith).toBeUndefined();
+		expect(silent.abortedWith?.message).toContain('silent');
 	});
 
 	it('forgets a connection once it closes', () => {
@@ -67,6 +88,6 @@ describe('ConnectionLiveness', () => {
 		const conn = new FakeConnection();
 		factory({}).trackMultiaddrConnection(conn);
 		expect(reported).toEqual([conn]);
-		expect(watch.sweep(Date.now() + CONNECTION_SILENCE_LIMIT_MS)).toBe(1);
+		expect(watch.sweep(performance.now() + CONNECTION_SILENCE_LIMIT_MS)).toBe(1);
 	});
 });
