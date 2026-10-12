@@ -1443,6 +1443,9 @@ export class Network {
 				await node.hangUp(peer);
 				if (epoch !== this.runEpoch || this.isRedialSuppressed(peerID)) continue;
 				await node.dial(peer, { signal: AbortSignal.any([this.dialAbort.signal, AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS)]) });
+				if (epoch !== this.runEpoch || this.node !== node) continue;
+				// Leaving the peer's lishnet while the dial ran hangs up only connections that existed then.
+				await this.hangUpIfLeft(peerID);
 			} catch (err: any) {
 				trace(`[NET] renewing ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
 			}

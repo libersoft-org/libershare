@@ -40,8 +40,9 @@ describe('OneWayPubsubWatch', () => {
 });
 
 /** A Network carrying only what the status tick's renewal step reads, over a fake node and router. */
-function networkWithOneWayPeer(opts: { suppressed?: boolean; peers?: string[]; onDial?: (peerID: string) => void } = {}) {
+function networkWithOneWayPeer(opts: { suppressed?: boolean; peers?: string[]; onDial?: (peerID: string) => void; neededElsewhere?: boolean } = {}) {
 	const calls: string[] = [];
+	const state = { suppressed: opts.suppressed === true };
 	const peerIDs = opts.peers ?? [PEER_A];
 	const pubsub = { streamsOutbound: new Map<string, unknown>(peerIDs.map(id => [id, {}])), streamsInbound: new Map<string, unknown>() };
 	const node = {
@@ -58,9 +59,10 @@ function networkWithOneWayPeer(opts: { suppressed?: boolean; peers?: string[]; o
 	(network as any).node = node;
 	(network as any).dialAbort = new AbortController();
 	(network as any).oneWayPubsub = new OneWayPubsubWatch();
-	(network as any).isRedialSuppressed = () => opts.suppressed === true;
+	(network as any).isRedialSuppressed = () => state.suppressed;
+	(network as any).isPeerNeededByJoinedNetwork = () => opts.neededElsewhere === true;
 	const tick = (now: number): Promise<void> => (network as any).renewOneWayPubsub(node, pubsub, 1, now);
-	return { calls, tick, pubsub };
+	return { calls, tick, pubsub, state };
 }
 
 describe('Network — one-way pubsub renewal', () => {
@@ -78,6 +80,22 @@ describe('Network — one-way pubsub renewal', () => {
 		await tick(ONE_WAY_PUBSUB_GRACE_MS);
 		expect(calls).toEqual([`hangUp ${PEER_A}`]);
 	});
+
+	for (const neededElsewhere of [false, true]) {
+		it(`${neededElsewhere ? 'keeps' : 'hangs up'} a renewal dial that lands after we left the peer's lishnet${neededElsewhere ? ' when another joined network needs the peer' : ''}`, async () => {
+			const setup = networkWithOneWayPeer({
+				neededElsewhere,
+				onDial: () => {
+					setup.state.suppressed = true;
+				},
+			});
+			await setup.tick(0);
+			await setup.tick(ONE_WAY_PUBSUB_GRACE_MS);
+			const expected = [`hangUp ${PEER_A}`, `dial ${PEER_A}`];
+			if (!neededElsewhere) expected.push(`hangUp ${PEER_A}`);
+			expect(setup.calls).toEqual(expected);
+		});
+	}
 
 	it('hangs up a late dial to a peer of a left lishnet only when no joined network needs it', async () => {
 		const calls: string[] = [];
