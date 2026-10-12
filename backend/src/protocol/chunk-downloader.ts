@@ -68,6 +68,8 @@ export interface ChunkDownloaderDeps {
 	onPeerConnectionLost?(peerID: string): void;
 	/** A chunk from this peer passed verification and was stored. */
 	onChunkVerified?(peerID: string): void;
+	/** The peer announced (HAVE) that it holds this LISH. */
+	announcedHave?(peerID: string): boolean;
 }
 
 /**
@@ -944,8 +946,10 @@ export class ChunkDownloader {
 			// A seeder admits us once a pubsub stream on a direct connection has carried our subscription
 			// to its lishnet. On a stream that has not been answered yet \u2014 a connection just dialed, or
 			// dialed again after a relay circuit hit its limit \u2014 the request can beat that subscription.
-			// Retried through the bounded reconnect; a refusal that persists still ends in quarantine.
-			if (code === ErrorCodes.PEER_LISH_NOT_SHARED && unproven()) {
+			// Only a peer that announced it holds the LISH is retried: the same answer also means "I do not
+			// have it", which is what a probed lishnet member says. Retried through the bounded reconnect;
+			// a refusal that persists still ends in quarantine.
+			if (code === ErrorCodes.PEER_LISH_NOT_SHARED && unproven() && peerID !== undefined && this.deps.announcedHave?.(peerID)) {
 				console.debug(`[DL] ${peerID?.slice(0, 12)} refused before our membership reached it, retrying`);
 				return 'peer-lost';
 			}

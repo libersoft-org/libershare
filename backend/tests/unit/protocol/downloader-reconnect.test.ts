@@ -112,6 +112,16 @@ describe('Downloader – reconnecting a seeder after a lost connection', () => {
 		expect(peerManager(dl).isDropped('peer-fast')).toBe(false);
 	}, 10_000);
 
+	it('tells the chunk engine which peers announced the LISH', async () => {
+		const s = await setup();
+		dl = s.dl;
+		const announcedHave = (dl as any).chunkDownloader.deps.announcedHave as (peerID: string) => boolean;
+		(dl as any).seederHave.set('peer-seeder', { multiaddrs: [RELAYED], chunks: 'all' });
+
+		expect(announcedHave('peer-seeder')).toBe(true);
+		expect(announcedHave('peer-probed')).toBe(false);
+	});
+
 	it('still quarantines a peer whose reconnects succeed but never deliver anything', async () => {
 		const s = await setup();
 		dl = s.dl;

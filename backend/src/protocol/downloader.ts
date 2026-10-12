@@ -489,6 +489,7 @@ export class Downloader {
 			emitAllocProgress: (p, total): void => this.emitAllocProgress(p, total),
 			onPeerConnectionLost: (peerID): void => this.onPeerConnectionLost(peerID),
 			onChunkVerified: (peerID): void => this.onPeerDelivered(peerID),
+			announcedHave: (peerID): boolean => this.seederHave.has(peerID),
 		});
 	}
 
