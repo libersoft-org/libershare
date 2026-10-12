@@ -881,6 +881,14 @@ describe('ChunkDownloader peerLoop — a lost connection', () => {
 		['the remote resets the stream', stream => stream.onRemoteReset()],
 		['the connection is aborted', stream => stream.abort(new Error('connection silent for 45 s'))],
 		['the socket fails', stream => stream.abort(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))],
+		[
+			'the stream ends inside the reply',
+			stream => {
+				// A length prefix of 100 bytes followed by only 3 of them, then the remote closes.
+				stream.onData(new Uint8Array([100, 1, 2, 3]));
+				stream.onRemoteCloseWrite();
+			},
+		],
 	];
 	for (const [what, fail] of failures) {
 		it(`hands the peer back for a reconnect when ${what} while a request waits for its reply`, async () => {

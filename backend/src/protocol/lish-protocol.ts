@@ -222,6 +222,9 @@ export class LISHClient {
 			message = await Promise.race([this.decoder.next(), timeout]);
 		} catch (error) {
 			this.stream.abort(error instanceof Error ? error : new Error(String(error)));
+			// The stream ended inside a reply, as a relay circuit cut at its data limit does: the same
+			// lost transport as a stream ending between replies. The decoder does not export the class.
+			if ((error as Error | undefined)?.name === 'UnexpectedEOFError') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `${label}: stream ended inside the reply`);
 			throw error;
 		} finally {
 			clearTimeout(timer);
