@@ -185,11 +185,22 @@ export class LISHClient {
 		});
 	}
 
-	/** Passthrough over the raw stream that reports each chunk's byte length to the active byteSink. */
+	/**
+	 * Passthrough over the raw stream that reports each chunk's byte length to the active byteSink.
+	 * Whatever the stream itself throws means it closed under the read — a remote reset, an aborted
+	 * connection, a socket error — so it surfaces as PEER_UNREACHABLE, like a stream that ended; an
+	 * oversized or malformed reply is thrown by the decoder above this and keeps its own error.
+	 */
 	private async *countingSource(src: AsyncIterable<Uint8Array | Uint8ArrayList>): AsyncGenerator<Uint8Array | Uint8ArrayList> {
-		for await (const chunk of src) {
-			this.byteSink?.((chunk as Uint8ArrayList).byteLength ?? (chunk as Uint8Array).length);
-			yield chunk;
+		try {
+			for await (const chunk of src) {
+				this.byteSink?.((chunk as Uint8ArrayList).byteLength ?? (chunk as Uint8Array).length);
+				yield chunk;
+			}
+		} catch (error) {
+			if (error instanceof CodedError) throw error;
+			const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `stream closed under the read (${detail})`);
 		}
 	}
 

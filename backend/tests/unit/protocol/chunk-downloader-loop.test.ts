@@ -10,6 +10,9 @@ import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import { ProgressReporter } from '../../../src/protocol/progress-reporter.ts';
 import { CodedError, ErrorCodes, type ErrorCode, type ChunkID, type LISHid, type IStoredLISH } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
+import { LISHClient } from '../../../src/protocol/lish-protocol.ts';
+import { AbstractStream, type SendResult } from '@libp2p/utils';
+import type { Uint8ArrayList } from 'uint8arraylist';
 
 /**
  * Behavioral tests for the peerLoop inside ChunkDownloader.run() — the queue
@@ -844,6 +847,59 @@ describe('ChunkDownloader peerLoop — a lost connection', () => {
 		expect(pm.isDropped('peer-conn-lost')).toBe(false);
 		expect(pm.has('peer-conn-lost')).toBe(false);
 	}, 15000);
+
+	// A real LISHClient over a stream that accepts the request and never answers, so the transport can fail mid-read.
+	class SilentStream extends AbstractStream {
+		/** Settles once the request is sent and its reply is being read. */
+		reading = Promise.withResolvers<void>();
+		private sent = false;
+		private listening = false;
+		constructor() {
+			super({ id: 'silent', log: Object.assign(() => {}, { error() {}, trace() {} }) as never });
+		}
+		sendData(data: Uint8ArrayList): SendResult {
+			this.sent = true;
+			if (this.listening) this.reading.resolve();
+			return { sentBytes: data.byteLength, canSendMore: true };
+		}
+		override addEventListener(...args: Parameters<AbstractStream['addEventListener']>): void {
+			super.addEventListener(...args);
+			// The stream's reader subscribes to 'message' when the read starts.
+			if (args[0] !== 'message') return;
+			this.listening = true;
+			if (this.sent) this.reading.resolve();
+		}
+		sendReset(): void {}
+		sendPause(): void {}
+		sendResume(): void {}
+		async sendCloseWrite(): Promise<void> {}
+		async sendCloseRead(): Promise<void> {}
+	}
+
+	const failures: Array<[string, (stream: SilentStream) => void]> = [
+		['the remote resets the stream', stream => stream.onRemoteReset()],
+		['the connection is aborted', stream => stream.abort(new Error('connection silent for 45 s'))],
+		['the socket fails', stream => stream.abort(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))],
+	];
+	for (const [what, fail] of failures) {
+		it(`hands the peer back for a reconnect when ${what} while a request waits for its reply`, async () => {
+			const { missing } = makeChunks(1);
+			const stream = new SilentStream();
+			const ds = new FakeDataServer(missing);
+			const pm = new PeerManager();
+			const lost: string[] = [];
+			const cd = lossDownloader(ds, pm, 1, lost);
+			pm.tryAdd('peer-reset-read', new LISHClient(stream) as never, 'RELAY');
+
+			const running = cd.run();
+			await stream.reading.promise;
+			fail(stream);
+			await running;
+
+			expect(lost).toEqual(['peer-reset-read']);
+			expect(pm.isDropped('peer-reset-read')).toBe(false);
+		}, 15000);
+	}
 
 	it('still quarantines a peer that refuses the LISH', async () => {
 		const { missing } = makeChunks(2);
