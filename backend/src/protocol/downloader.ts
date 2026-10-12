@@ -488,6 +488,7 @@ export class Downloader {
 			onRetry: (info): void => this.onRetry?.(info),
 			emitAllocProgress: (p, total): void => this.emitAllocProgress(p, total),
 			onPeerConnectionLost: (peerID): void => this.onPeerConnectionLost(peerID),
+			onChunkVerified: (peerID): void => this.onPeerDelivered(peerID),
 		});
 	}
 
@@ -889,7 +890,9 @@ export class Downloader {
 	 * A seeder's connection died mid-transfer (a relay hitting its data limit, a NAT mapping
 	 * expiring, a reset). It still has the data, so dial it again straight away rather than
 	 * waiting for its next HAVE, which its want cooldown holds back for a minute. A peer whose
-	 * connection keeps dying is quarantined like any other dropped peer.
+	 * connection keeps dying without delivering anything is quarantined like any other dropped
+	 * peer; one that delivers a verified chunk between losses starts its budget over (see
+	 * {@link onPeerDelivered}).
 	 */
 	private onPeerConnectionLost(peerID: NodeID): void {
 		if (this.destroyed || this.disabled) return;
@@ -907,6 +910,16 @@ export class Downloader {
 			this.reconnectPeer(peerID).catch(e => trace(`[DL] reconnect ${peerID.slice(0, 12)} error: ${e?.message ?? e}`));
 		}, 1000 * recent.length);
 		this.reconnectTimers.add(timer);
+	}
+
+	/**
+	 * A verified chunk proves the connection worked. A fast transfer over a relay loses its
+	 * circuit at every data limit (1 GiB); counting those losses as failures quarantined a
+	 * healthy seeder after its fourth gigabyte. Merely reconnecting proves nothing and does
+	 * not reset the budget, so a peer that drops right after every dial is still caught.
+	 */
+	private onPeerDelivered(peerID: NodeID): void {
+		this.reconnectAttempts.delete(peerID);
 	}
 
 	private reconnectPeer(peerID: NodeID): Promise<void> {

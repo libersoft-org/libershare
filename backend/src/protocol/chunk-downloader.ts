@@ -66,6 +66,8 @@ export interface ChunkDownloaderDeps {
 	 * left the PeerManager without quarantine; the Downloader decides whether to reconnect.
 	 */
 	onPeerConnectionLost?(peerID: string): void;
+	/** A chunk from this peer passed verification and was stored. */
+	onChunkVerified?(peerID: string): void;
 }
 
 /**
@@ -805,6 +807,7 @@ export class ChunkDownloader {
 						dataServer.markChunkDownloaded(lishID, chunk.chunkID);
 						dataServer.incrementDownloadedBytes(lishID, data.length);
 						recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);
+						this.deps.onChunkVerified?.(peerID);
 						downloadedCount++;
 						// A write that started before another peer acquired the recovery pause may
 						// finish while that peer is still retrying. It does not prove the active

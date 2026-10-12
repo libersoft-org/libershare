@@ -376,6 +376,15 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.errors).toHaveLength(0);
 	});
 
+	it('reports the peer that delivered a verified, stored chunk', async () => {
+		const h = harness(0);
+		const delivered: string[] = [];
+		(h.deps as { onChunkVerified?: (peerID: string) => void }).onChunkVerified = peerID => delivered.push(peerID);
+		await h.cd.run();
+
+		expect(delivered).toEqual(['peer-1']);
+	});
+
 	for (const code of ['EACCES', 'EPERM', 'EROFS'] as const) {
 		it(`${code} retries the verified chunk from memory`, async () => {
 			const h = harness(0);

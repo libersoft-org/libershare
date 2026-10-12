@@ -95,6 +95,38 @@ describe('Downloader – reconnecting a seeder after a lost connection', () => {
 		expect(peerManager(dl).isDropped('peer-flaky')).toBe(true);
 	}, 10_000);
 
+	it('keeps reconnecting a seeder that delivers data between losses, as at every relay data limit', async () => {
+		const s = await setup();
+		dl = s.dl;
+		const delivered = (dl as any).chunkDownloader.deps.onChunkVerified as (peerID: string) => void;
+
+		// Each circuit carries its full data limit, then the relay ends it.
+		for (let i = 0; i < 4; i++) {
+			lost(dl, 'peer-fast');
+			await settle(1100);
+			delivered('peer-fast');
+			peerManager(dl).has('peer-fast') && (priv(dl)['peerManager'] as { remove(id: string, kind: string): void }).remove('peer-fast', 'disconnect');
+		}
+
+		expect(s.net.dials.length).toBe(4);
+		expect(peerManager(dl).isDropped('peer-fast')).toBe(false);
+	}, 10_000);
+
+	it('still quarantines a peer whose reconnects succeed but never deliver anything', async () => {
+		const s = await setup();
+		dl = s.dl;
+
+		for (let i = 1; i <= 3; i++) {
+			lost(dl, 'peer-empty');
+			await settle(1000 * i + 100);
+			(priv(dl)['peerManager'] as { remove(id: string, kind: string): void }).remove('peer-empty', 'disconnect');
+		}
+		lost(dl, 'peer-empty');
+
+		expect(s.net.dials.length).toBe(3);
+		expect(peerManager(dl).isDropped('peer-empty')).toBe(true);
+	}, 10_000);
+
 	it('stops a pending reconnect when the download is disabled', async () => {
 		const s = await setup();
 		dl = s.dl;
