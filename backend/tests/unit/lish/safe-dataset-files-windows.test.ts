@@ -5,6 +5,7 @@ import { join, parse } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
 import { openWindowsDatasetDirectory, windowsVolumeKey } from '../../../src/lish/safe-dataset-files-windows.ts';
+import { rejection } from '../helpers/rejection.ts';
 
 const windows = process.platform === 'win32' ? describe : describe.skip;
 
@@ -38,7 +39,7 @@ windows('Windows anchored dataset files', () => {
 				else await mkdir(join(path, name));
 				await remove(name, identity);
 			};
-			await expect(dataset[method]('target', expected!.identity)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(dataset[method]('target', expected!.identity))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			expect(intercepted).toBe(true);
 			if (kind === 'file') {
 				expect(await readFile(join(path, 'target'), 'utf8')).toBe('replacement');
@@ -60,7 +61,7 @@ windows('Windows anchored dataset files', () => {
 			const directory = await root.createDirectory('files');
 			const directoryIdentity = (await directory.stat()).identity;
 			try {
-				await expect(root.createDirectory('files')).rejects.toMatchObject({ code: 'EEXIST' });
+				expect(await rejection(root.createDirectory('files'))).toMatchObject({ code: 'EEXIST' });
 				const file = await directory.openFile('part', 'create');
 				const fileIdentity = (await file.stat()).identity;
 				try {
@@ -70,9 +71,9 @@ windows('Windows anchored dataset files', () => {
 					expect(await file.read(bytes, 1)).toBe(3);
 					expect(bytes.toString()).toBe('bXY');
 					expect(await file.read(bytes, 0x100000001)).toBe(0);
-					await expect(file.write(bytes, Number.MAX_SAFE_INTEGER + 1)).rejects.toMatchObject({ code: 'EINVAL' });
+					expect(await rejection(file.write(bytes, Number.MAX_SAFE_INTEGER + 1))).toMatchObject({ code: 'EINVAL' });
 					expect((await file.stat()).size).toBe(6);
-					await expect(directory.openFile('part', 'create')).rejects.toMatchObject({ code: 'EEXIST' });
+					expect(await rejection(directory.openFile('part', 'create'))).toMatchObject({ code: 'EEXIST' });
 					await file.truncate(4);
 				} finally {
 					await file.close();
@@ -82,17 +83,17 @@ windows('Windows anchored dataset files', () => {
 				expect(await readFile(join(path, 'files', 'part'), 'utf8')).toBe('abXY');
 				const reader = await directory.openFile('part', 'read');
 				try {
-					await expect(reader.write(Buffer.from('!'), 0)).rejects.toMatchObject({ code: 'EACCES' });
+					expect(await rejection(reader.write(Buffer.from('!'), 0))).toMatchObject({ code: 'EACCES' });
 				} finally {
 					await reader.close();
 				}
 				await directory.removeFile('part', fileIdentity);
-				await expect(directory.openFile('part', 'read')).rejects.toMatchObject({ code: 'ENOENT' });
+				expect(await rejection(directory.openFile('part', 'read'))).toMatchObject({ code: 'ENOENT' });
 			} finally {
 				await directory.close();
 			}
 			await root.removeDirectory('files', directoryIdentity);
-			await expect(root.openDirectory('files')).rejects.toMatchObject({ code: 'ENOENT' });
+			expect(await rejection(root.openDirectory('files'))).toMatchObject({ code: 'ENOENT' });
 		} finally {
 			await root.close();
 			await rm(path, { recursive: true, force: true });
@@ -105,11 +106,11 @@ windows('Windows anchored dataset files', () => {
 		const child = await root.createDirectory('parent');
 		const file = await child.openFile('part', 'create');
 		try {
-			await expect(rename(join(path, 'parent'), join(path, 'moved'))).rejects.toBeDefined();
+			expect(await rejection(rename(join(path, 'parent'), join(path, 'moved')))).toBeDefined();
 			await child.close();
 			await root.close();
-			await expect(rename(join(path, 'parent'), join(path, 'moved'))).rejects.toBeDefined();
-			await expect(rename(path, `${path}-moved`)).rejects.toBeDefined();
+			expect(await rejection(rename(join(path, 'parent'), join(path, 'moved')))).toBeDefined();
+			expect(await rejection(rename(path, `${path}-moved`))).toBeDefined();
 			await file.write(Buffer.from('anchored'), 0);
 		} finally {
 			await file.close();
@@ -119,7 +120,7 @@ windows('Windows anchored dataset files', () => {
 		try {
 			await rename(join(path, 'parent'), join(path, 'moved'));
 			expect(await readFile(join(path, 'moved', 'part'), 'utf8')).toBe('anchored');
-			await expect(file.stat()).rejects.toMatchObject({ code: 'EBADF' });
+			expect(await rejection(file.stat())).toMatchObject({ code: 'EBADF' });
 		} finally {
 			await rm(path, { recursive: true, force: true });
 		}
@@ -141,7 +142,7 @@ windows('Windows anchored dataset files', () => {
 			expect(first.toString()).toBe('abcd');
 			expect(second.toString()).toBe('EFGH');
 			expect(await readFile(join(path, 'data.bin'), 'utf8')).toBe('abcdEFGH');
-			await expect(file.read(Buffer.alloc(4), 0)).rejects.toMatchObject({ code: 'EBADF' });
+			expect(await rejection(file.read(Buffer.alloc(4), 0))).toMatchObject({ code: 'EBADF' });
 		} finally {
 			await file.close();
 			await root.close();
@@ -181,10 +182,10 @@ windows('Windows anchored dataset files', () => {
 		const root = await openWindowsDatasetDirectory(path);
 		try {
 			await symlink(type === 'file' ? join(outside, 'valuable') : outside, join(path, 'redirect'), type);
-			await expect(root.openDirectory('redirect')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(root.openFile('redirect', 'write')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(root.removeFile('redirect', 'unused')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(root.removeDirectory('redirect', 'unused')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.openDirectory('redirect'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.openFile('redirect', 'write'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.removeFile('redirect', 'unused'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.removeDirectory('redirect', 'unused'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			expect((await lstat(join(path, 'redirect'))).isSymbolicLink()).toBe(true);
 			expect(await readFile(join(outside, 'valuable'), 'utf8')).toBe('unchanged');
 		} finally {
@@ -220,7 +221,7 @@ windows('Windows anchored dataset files', () => {
 		try {
 			for (const name of ['', '.', '..', '../outside', 'child\\outside', 'part:stream', 'NUL', 'COM1.log', 'part.', 'part ', 'x\0y']) {
 				for (const operation of [() => root.openDirectory(name), () => root.createDirectory(name), () => root.openFile(name, 'read'), () => root.openFile(name, 'write'), () => root.openFile(name, 'create'), () => root.removeFile(name, 'unused'), () => root.removeDirectory(name, 'unused')]) {
-					await expect(operation()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+					expect(await rejection(operation())).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				}
 			}
 		} finally {

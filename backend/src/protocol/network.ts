@@ -27,6 +27,8 @@ import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
 import { applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
+import { ONE_WAY_PUBSUB_GRACE_MS, OneWayPubsubWatch } from './one-way-pubsub-watch.ts';
+import { ConnectionLiveness } from './connection-liveness.ts';
 import { classifyConnection as classifyConnectionFn, dialProtocol as dialProtocolFn, dialProtocolByPeerId as dialProtocolByPeerIdFn, connectToPeer as connectToPeerFn } from './dial-helpers.ts';
 import { LISHServingHandlers, type SearchLishsMessage, type SeenSearch } from './lish-handlers.ts';
 export type { SearchLishsMessage } from './lish-handlers.ts';
@@ -527,6 +529,8 @@ export class Network {
 	// Previous gossipsub peer scores — tracked per-peer to detect significant
 	// score deltas and log threshold crossings (e.g. entered graylist).
 	private _lastScores: Map<string, number> = new Map();
+	private readonly oneWayPubsub = new OneWayPubsubWatch();
+	private readonly connectionLiveness = new ConnectionLiveness();
 
 	/** Per-instance dedup set for PX ingress log keys; owned here, passed into gossipsub-patches deps. */
 	private readonly pxIngressLogKeys = new Set<string>();
@@ -904,6 +908,7 @@ export class Network {
 			allSettings,
 			bootstrapPeers,
 			myPeerID: privateKey.publicKey.toString(),
+			connectionLiveness: this.connectionLiveness,
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		// Aliased, not copied. The dial-gater bypass and the PX appSpecificScore close over
@@ -944,6 +949,7 @@ export class Network {
 			throw err;
 		}
 		console.log('Node started');
+		this.connectionLiveness.start();
 
 		const addresses = this.node.getMultiaddrs();
 		console.log('Listening on addresses:');
@@ -1391,6 +1397,8 @@ export class Network {
 				dumpGossipsubScores({ node, pubsub, settings: this.settings, lastScores: this._lastScores }, connectedPeers);
 				// Periodic peer count refresh — catches cases where GRAFT/PRUNE events were missed
 				this.checkPeerCounts();
+				await this.renewOneWayPubsub(node, pubsub, epoch);
+				if (epoch !== this.runEpoch) return;
 				await this.runRedialMaintenance(connectedPeers, allPeers, epoch);
 				if (epoch !== this.runEpoch) return;
 				await this.runZeroConnectionRecovery(connectedPeers, epoch);
@@ -1409,6 +1417,39 @@ export class Network {
 		// Status interval 30 s. promoteKnownPeersToBootstrap + gossipsub.direct
 		// mutations run on the 5th tick (~150 s) — fast enough to absorb peer
 		// churn at N≈100 without flooding logs or burning CPU on per-second probes.
+	}
+
+	/**
+	 * Renew the connection to a peer whose pubsub reaches us no longer (see {@link OneWayPubsubWatch}).
+	 * Closing every connection makes both routers drop the peer with its streams; the dial that
+	 * follows sets them up again in both directions. A peer we left a network of is only hung up.
+	 */
+	private async renewOneWayPubsub(node: Libp2p, pubsub: PubSub, epoch: number, now: number = Date.now()): Promise<void> {
+		const router = pubsub as any;
+		if (!(router.streamsOutbound instanceof Map) || !(router.streamsInbound instanceof Map)) return;
+		const isDirect = (peer: PeerID): boolean => node.getConnections(peer).some(c => c.status === 'open' && (c as any).limits == null && !Circuit.matches(c.remoteAddr));
+		const direct = node
+			.getPeers()
+			.filter(isDirect)
+			.map(peer => peer.toString());
+		const due = this.oneWayPubsub.check({ outbound: router.streamsOutbound.keys(), inbound: router.streamsInbound.keys(), direct }, now);
+		for (const peerID of due) {
+			if (epoch !== this.runEpoch || this.node !== node) return;
+			const peer = peerIDFromString(peerID);
+			// Renewing an earlier peer awaited a dial; this one may have paired up or reconnected meanwhile.
+			if (!router.streamsOutbound.has(peerID) || router.streamsInbound.has(peerID) || !isDirect(peer)) continue;
+			console.log(`[NET] no pubsub from ${peerID.slice(0, 12)} for ${ONE_WAY_PUBSUB_GRACE_MS / 1000}s while connected, renewing the connection`);
+			try {
+				await node.hangUp(peer);
+				if (epoch !== this.runEpoch || this.isRedialSuppressed(peerID)) continue;
+				await node.dial(peer, { signal: AbortSignal.any([this.dialAbort.signal, AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS)]) });
+				if (epoch !== this.runEpoch || this.node !== node) continue;
+				// Leaving the peer's lishnet while the dial ran hangs up only connections that existed then.
+				await this.hangUpIfLeft(peerID);
+			} catch (err: any) {
+				trace(`[NET] renewing ${peerID.slice(0, 12)} failed: ${err?.message ?? err}`);
+			}
+		}
 	}
 
 	/**
@@ -1465,6 +1506,27 @@ export class Network {
 	 * Pure read: quarantine entries expire by time here and are deleted elsewhere
 	 * (peer:connect, the prune at the end of runRedialMaintenance).
 	 */
+	/**
+	 * Hang up a peer whose dial landed after we left its lishnet, unless a joined network still
+	 * needs it (a member, a configured bootstrap, a relay). The same rule as a late discovery dial.
+	 * A dial opens the connection before the protocol stream, so closing just the stream leaves it up.
+	 */
+	async hangUpIfLeft(peerID: string): Promise<void> {
+		const node = this.node;
+		if (!node || !this.isRedialSuppressed(peerID) || this.isPeerNeededByJoinedNetwork(peerID)) return;
+		trace(`[NET] dial landed after leave, hanging up: ${peerID.slice(0, 16)}`);
+		try {
+			await node.hangUp(peerIDFromString(peerID));
+		} catch (err: any) {
+			trace(`[NET] hangUp of late dial failed: ${err?.message ?? err}`);
+		}
+	}
+
+	/** Whether a dial to this peer must not happen now — see {@link dialSuppressionReason}. For callers outside Network that dial by themselves. */
+	isDialSuppressed(peerID: string): boolean {
+		return this.dialSuppressionReason(peerID) !== null;
+	}
+
 	private dialSuppressionReason(peerID: string, now: number = Date.now()): 'left-network' | 'unreachable' | null {
 		if (this.isRedialSuppressed(peerID)) return 'left-network';
 		// A configured peer is user data and is never held back by an observation: the
@@ -2505,6 +2567,9 @@ export class Network {
 					// black-holed address cannot hold the entry open — see BOOTSTRAP_DIAL_TIMEOUT_MS.
 					const dialEntry = this.bootstrapByAddress.get(canonicalAddress);
 					const dialSignal = AbortSignal.any([abort.signal, AbortSignal.timeout(BOOTSTRAP_DIAL_TIMEOUT_MS)]);
+					// Every announce cycle re-mentions peers we are already connected to, and libp2p
+					// answers those dials with the connection it holds; only a new one is news.
+					const heldConnections = new Set<unknown>(pidObj ? this.node.getConnections(pidObj) : []);
 					const conn = await this.node.dial(ma, effectiveOrigin === 'configured' ? { force: true, signal: dialSignal } : { signal: dialSignal });
 					const verifiedThisAddr = isSameDialEndpoint(String(conn?.remoteAddr ?? ''), ma.toString());
 					// A configured install may have landed while this dial was open and skipped
@@ -2600,7 +2665,8 @@ export class Network {
 					// connected row — evictable by age alongside the invented addresses the
 					// ranking exists to drop.
 					this.bootstrapTracker.recordOutcome(networkID, peer, peerID, 'connected', null, conn?.remotePeer?.toString() ?? null, effectiveOrigin, verifiedThisAddr);
-					console.log('✓ Connected to new bootstrap peer');
+					if (heldConnections.has(conn)) trace(`[NET] bootstrap peer already connected: ${peer}`);
+					else console.log('✓ Connected to new bootstrap peer');
 				} catch (err: any) {
 					if (superseded()) {
 						// A failed probe must not consume an expired quarantine permanently merely
@@ -3820,12 +3886,25 @@ export class Network {
 
 	async dialProtocol(multiaddrs: any[], protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol, signal);
+		try {
+			return await dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol, signal);
+		} catch (err) {
+			const peerID = multiaddrs[0]?.getPeerId?.();
+			if (peerID) void this.hangUpIfLeft(peerID);
+			throw err;
+		}
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol, signal);
+		try {
+			return await dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol, signal);
+		} catch (err) {
+			// The connection can be up even though the protocol stream on it failed; one to a peer of a
+			// lishnet left meanwhile must not outlive the attempt.
+			void this.hangUpIfLeft(peerID);
+			throw err;
+		}
 	}
 
 	/**
@@ -4030,6 +4109,8 @@ export class Network {
 		this._lastMeshSizes.clear();
 		this.lastMeshChange.clear();
 		this._lastScores.clear();
+		this.oneWayPubsub.clear();
+		this.connectionLiveness.stop();
 		this.recentDisconnects.length = 0;
 		this.redialBackoff.clear();
 		this.unreachableQuarantine.clear();

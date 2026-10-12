@@ -64,13 +64,13 @@ function subscriptionSink(mgr: PeerAnnounceManager, pubsub: any): Network {
 }
 
 describe('PeerAnnounceManager topic membership', () => {
-	it('records a subscriber on a network too small to broadcast', async () => {
-		// The regression: membership used to be a side effect of the announce, which is
-		// skipped below PEER_ANNOUNCE_MIN_PEER_STORE — so on a 2-node network the cache
-		// stayed empty and leave-network had no one to disconnect.
+	it('records a subscriber on a two-node network', async () => {
+		// The regression: membership used to be a side effect of the announce, which a
+		// small network once skipped — so on a 2-node network the cache stayed empty and
+		// leave-network had no one to disconnect. A small network now announces too.
 		const { mgr, broadcasts } = makeManager(['peer-b'], 2);
 		await tick(mgr);
-		expect(broadcasts).toEqual([]); // still below the announce threshold
+		expect(broadcasts).toEqual([TOPIC]);
 		expect(mgr.getRecentMembers(TOPIC)).toEqual(['peer-b']);
 	});
 

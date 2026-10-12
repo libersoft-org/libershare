@@ -128,6 +128,37 @@ describe('bootstrap registry — address identity', () => {
  * never put one in — and a failed discovered dial leaves nothing behind that could
  * ever take it out again.
  */
+/**
+ * Peer announce re-mentions every connected peer on each cycle, and libp2p answers such a
+ * dial with the connection it already holds. Reporting each of those as a new bootstrap
+ * connection filled the log every few seconds and hid the real ones.
+ */
+describe('bootstrap dial — connection report', () => {
+	async function connectedLines(heldBefore: boolean): Promise<number> {
+		const { network } = bareNetwork();
+		const held = { remoteAddr: multiaddr(ADDR_A) };
+		(network as any).node.getConnections = () => (heldBefore ? [held] : []);
+		(network as any).node.dial = async () => held;
+		const lines: string[] = [];
+		const original = console.log;
+		console.log = (...args: unknown[]) => void lines.push(args.join(' '));
+		try {
+			await (network as any).addBootstrapPeers([ADDR_A], 'net-a', 'discovered');
+		} finally {
+			console.log = original;
+		}
+		return lines.filter(line => line.includes('Connected to new bootstrap peer')).length;
+	}
+
+	it('stays quiet when libp2p hands back a connection that already existed', async () => {
+		expect(await connectedLines(true)).toBe(0);
+	});
+
+	it('reports a connection the dial actually opened', async () => {
+		expect(await connectedLines(false)).toBe(1);
+	});
+});
+
 describe('bootstrap trust set — admission', () => {
 	it('does not admit a discovered identity that never answered', async () => {
 		const { network } = bareNetwork({ failDial: true });

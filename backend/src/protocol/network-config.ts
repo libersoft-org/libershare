@@ -17,6 +17,7 @@ import { autoNATv2 } from '@libp2p/autonat-v2';
 import { uPnPNAT } from '@libp2p/upnp-nat';
 import { simpleMetrics } from '@libp2p/simple-metrics';
 import { onLibp2pMetrics } from '../monitoring/libp2p-metrics.ts';
+import { type ConnectionLiveness, withConnectionLiveness } from './connection-liveness.ts';
 import { dcutr } from '@libp2p/dcutr';
 import { networkInterfaces } from 'os';
 import { isLinkLocalIp } from '@libp2p/utils';
@@ -66,6 +67,8 @@ export interface BuildConfigParams {
 	allSettings: SettingsData;
 	bootstrapPeers: string[];
 	myPeerID: string;
+	/** Closes connections that went silent; given every connection the upgrader reports. */
+	connectionLiveness?: ConnectionLiveness;
 }
 export interface BuildConfigResult {
 	config: any;
@@ -186,10 +189,17 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		//      instance for the relay widget; only the interval matters for that path.
 		// 5 s sample interval is sufficient for both: the leak monitor is anyway
 		// downsampled, and the relay widget refreshes far less often than 1 Hz.
-		metrics: simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }),
+		metrics: withConnectionLiveness(simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }), params.connectionLiveness),
 		transports,
 		connectionEncrypters: [noise({ crypto: noiseCrypto })],
 		streamMuxers: [yamux()],
+		// The monitor's heartbeat is a ping stream, and the ping service admits only two
+		// inbound ones per connection. Under a bulk transfer both sides' pings back up, the
+		// third is reset, and the default reaction aborted the whole connection — every
+		// chunk stream and every relayed circuit on it included — every few seconds. A dead
+		// connection is closed instead by ConnectionLiveness after 45 s without a single byte
+		// from the far side (yamux keep-alive only logs a failed ping, it never closes).
+		connectionMonitor: { abortConnectionOnPingFailure: false },
 		connectionManager: {
 			// Tuned for ~100-peer fleets. Each peer keeps gossipsub mesh (D=8 / Dhi=12)
 			// + a handful of relay reservations + transient identify/AutoNAT dials —

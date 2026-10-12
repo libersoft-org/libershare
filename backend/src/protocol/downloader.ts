@@ -112,6 +112,13 @@ export class Downloader {
 	// Core chunk-transfer engine. Constructed lazily in init()/initFromManifest() once `lishID` is known.
 	// Owns fileReallocAttempts/writeRetryCount/notAvailableLoggedPeers and the peerLoop orchestration.
 	private chunkDownloader: ChunkDownloader | undefined;
+	/** Addresses and availability each seeder last announced, used to reconnect after a lost connection. */
+	private readonly seederHave = new Map<NodeID, { multiaddrs: string[]; chunks: HaveChunks }>();
+	/** Recent reconnect attempts per peer, to give up on one whose connection keeps dying. */
+	private readonly reconnectAttempts = new Map<NodeID, number[]>();
+	private readonly reconnectTimers = new Set<ReturnType<typeof setTimeout>>();
+	private static readonly RECONNECT_MAX_ATTEMPTS = 3;
+	private static readonly RECONNECT_WINDOW_MS = 120_000;
 	// Fix D: exponential backoff for no-peers retry
 	private noPeersRetryCount = 0;
 	private static readonly BASE_NO_PEERS_RETRY_MS = 10_000;
@@ -198,7 +205,23 @@ export class Downloader {
 		}
 		trace(`[DL] ${this.lishID?.slice(0, 8) ?? '?'} ${from} → ${newState} (${reason})`);
 		this.state = newState;
+		// A finished download is dropped from the transfer map without destroy(), so nothing else would cancel these.
+		if (newState === 'downloaded') this.clearReconnectTimers();
 		return true;
+	}
+
+	/** True once no seeder connection is wanted: the download finished, was stopped, failed or was destroyed. */
+	private wantsNoPeers(): boolean {
+		return this.destroyed || this.disabled || this.state === 'downloaded';
+	}
+
+	/**
+	 * True when a decision taken after a dial was planned rules this seeder out: it was banned
+	 * or dropped (a refusal, bad data), or the network layer forbids dialing it — we left the
+	 * lishnet it belongs to and no joined one still claims it.
+	 */
+	private isPeerRuledOut(peerID: NodeID): boolean {
+		return this.peerManager.isBanned(peerID) || this.peerManager.isDropped(peerID) || this.network.isDialSuppressed(peerID);
 	}
 	getError(): IDownloadError | null {
 		if (this.state !== 'error') return null;
@@ -235,6 +258,7 @@ export class Downloader {
 		this.errorDetail = detail;
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
+		this.clearReconnectTimers();
 		this.disposeNetworkHandlers();
 		// Fire-and-forget close — stream may already be reset/aborted, which is benign.
 		// Log at trace so real bugs (e.g. TypeError) can still be spotted in debug logs.
@@ -284,6 +308,7 @@ export class Downloader {
 		this.disabled = true;
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
+		this.clearReconnectTimers();
 		this.peerManager.closeAll('disable');
 		this.lastServingPeerCount = 0;
 		this.pauseController.notifyStateChange();
@@ -346,6 +371,7 @@ export class Downloader {
 		this.abortController.abort();
 		this.clearRetryTimer();
 		this.clearPeerDiscoveryTimer();
+		this.clearReconnectTimers();
 		this.disposeNetworkHandlers();
 		this.downloadReject?.(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
 		this.downloadResolve = undefined;
@@ -461,6 +487,8 @@ export class Downloader {
 			onSetError: (code, detail): void => this.setError(code, detail),
 			onRetry: (info): void => this.onRetry?.(info),
 			emitAllocProgress: (p, total): void => this.emitAllocProgress(p, total),
+			onPeerConnectionLost: (peerID): void => this.onPeerConnectionLost(peerID),
+			onChunkVerified: (peerID): void => this.onPeerDelivered(peerID),
 		});
 	}
 
@@ -806,8 +834,9 @@ export class Downloader {
 				if (this.destroyed) return;
 
 				const { stream: dlStream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, this.abortController.signal);
-				if (this.destroyed) {
-					dlStream.abort(new Error('downloader destroyed'));
+				// Re-checked after the dial: the download may have been stopped or finished while it ran.
+				if (this.wantsNoPeers()) {
+					dlStream.abort(new Error('download no longer wants peers'));
 					return;
 				}
 				// Atomic add — if onHaveAnnouncement concurrently added this peer during our dial,
@@ -850,6 +879,83 @@ export class Downloader {
 			clearTimeout(this.peerDiscoveryTimer);
 			this.peerDiscoveryTimer = undefined;
 		}
+	}
+
+	private clearReconnectTimers(): void {
+		for (const timer of this.reconnectTimers) clearTimeout(timer);
+		this.reconnectTimers.clear();
+	}
+
+	/**
+	 * A seeder's connection died mid-transfer (a relay hitting its data limit, a NAT mapping
+	 * expiring, a reset). It still has the data, so dial it again straight away rather than
+	 * waiting for its next HAVE, which its want cooldown holds back for a minute. A peer whose
+	 * connection keeps dying without delivering anything is quarantined like any other dropped
+	 * peer; one that delivers a verified chunk between losses starts its budget over (see
+	 * {@link onPeerDelivered}).
+	 */
+	private onPeerConnectionLost(peerID: NodeID): void {
+		if (this.destroyed || this.disabled) return;
+		const now = Date.now();
+		const recent = (this.reconnectAttempts.get(peerID) ?? []).filter(at => now - at < Downloader.RECONNECT_WINDOW_MS);
+		if (recent.length >= Downloader.RECONNECT_MAX_ATTEMPTS) {
+			console.log(`[DL] Peer ${peerID.slice(0, 12)} lost ${recent.length} connections in ${Downloader.RECONNECT_WINDOW_MS / 1000}s, dropping`);
+			this.peerManager.remove(peerID, 'drop');
+			return;
+		}
+		recent.push(now);
+		this.reconnectAttempts.set(peerID, recent);
+		const timer = setTimeout(() => {
+			this.reconnectTimers.delete(timer);
+			this.reconnectPeer(peerID).catch(e => trace(`[DL] reconnect ${peerID.slice(0, 12)} error: ${e?.message ?? e}`));
+		}, 1000 * recent.length);
+		this.reconnectTimers.add(timer);
+	}
+
+	/**
+	 * A verified chunk proves the connection worked. A fast transfer over a relay loses its
+	 * circuit at every data limit (1 GiB); counting those losses as failures quarantined a
+	 * healthy seeder after its fourth gigabyte. Merely reconnecting proves nothing and does
+	 * not reset the budget, so a peer that drops right after every dial is still caught.
+	 */
+	private onPeerDelivered(peerID: NodeID): void {
+		this.reconnectAttempts.delete(peerID);
+	}
+
+	private reconnectPeer(peerID: NodeID): Promise<void> {
+		return this.trackLifecycle(this.reconnectPeerInternal(peerID));
+	}
+
+	private async reconnectPeerInternal(peerID: NodeID): Promise<void> {
+		if (this.wantsNoPeers() || this.peerManager.has(peerID) || this.isPeerRuledOut(peerID)) return;
+		const have = this.seederHave.get(peerID);
+		try {
+			if (have) await this.connectToPeer(peerID, have.multiaddrs, have.chunks);
+			else {
+				// Found by probing a gossip neighbour, so no HAVE was kept: dial by identity.
+				const { stream, connectionType } = await this.network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, this.abortController.signal);
+				const client = new LISHClient(stream);
+				// Re-checked after the dial: the download or the peer may have been ruled out while it ran.
+				if (this.wantsNoPeers() || this.isPeerRuledOut(peerID) || !this.peerManager.tryAdd(peerID, client, connectionType)) {
+					client.abort(new Error('reconnect not needed'));
+					void this.network.hangUpIfLeft(peerID);
+					return;
+				}
+			}
+		} catch (err: any) {
+			console.debug(`[DL] reconnect ${peerID.slice(0, 12)} failed: ${err?.message?.slice(0, 80) ?? err}`);
+			this.onPeerConnectionLost(peerID);
+			return;
+		}
+		if (this.wantsNoPeers() || !this.peerManager.has(peerID)) return;
+		console.log(`[DL] Peer ${peerID.slice(0, 12)} reconnected (total: ${this.peerManager.size()})`);
+		// Losing the last seeder ended the chunk run as "exhausted"; its 10 s retry wait must not hold back the peer that is back.
+		this.lastExhaustedTime = 0;
+		this.clearRetryTimer();
+		if (!this.downloadActive)
+			this.doWork().catch(e => {
+				if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);
+			});
 	}
 
 	/**
@@ -929,6 +1035,7 @@ export class Downloader {
 			return;
 		}
 		if (this.peerManager.clearDropped(ann.peerID)) console.debug(`[DL] ${peerIDShort} removed from droppedPeers (sent have)`);
+		this.seederHave.set(ann.peerID, { multiaddrs: ann.multiaddrs, chunks: ann.chunks });
 		console.debug(`[DL] HAVE from ${peerIDShort}: ${chunks} chunks [${addrTypes.join(',')}], active=${this.downloadActive}`);
 		if (this.peerManager.has(ann.peerID)) {
 			// Update availability for already-connected peer
@@ -960,8 +1067,11 @@ export class Downloader {
 		const multiaddrs: Multiaddr[] = multiaddrStrings.map(ma => multiaddr(ma));
 		trace(`[DL] dialing ${peerID.slice(0, 12)} via ${multiaddrs.length} addrs`);
 		const { stream, connectionType } = await this.network.dialProtocol(multiaddrs, LISH_PROTOCOL, this.abortController.signal);
-		if (this.destroyed) {
-			stream.abort(new Error('downloader destroyed'));
+		// Re-checked after the dial: the download or the peer may have been ruled out while it ran.
+		if (this.wantsNoPeers() || this.isPeerRuledOut(peerID)) {
+			stream.abort(new Error('download no longer wants peers'));
+			// The dial also opened a connection; one to a peer of a lishnet left meanwhile must go too.
+			void this.network.hangUpIfLeft(peerID);
 			return;
 		}
 		const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;

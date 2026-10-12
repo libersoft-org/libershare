@@ -10,6 +10,9 @@ import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import { ProgressReporter } from '../../../src/protocol/progress-reporter.ts';
 import { CodedError, ErrorCodes, type ErrorCode, type ChunkID, type LISHid, type IStoredLISH } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
+import { LISHClient } from '../../../src/protocol/lish-protocol.ts';
+import { AbstractStream, type SendResult } from '@libp2p/utils';
+import type { Uint8ArrayList } from 'uint8arraylist';
 
 /**
  * Behavioral tests for the peerLoop inside ChunkDownloader.run() — the queue
@@ -76,8 +79,8 @@ class FakeDataServer {
 	}
 }
 
-/** Scripted responses: payload → success, 'nf' → PEER_CHUNK_NOT_FOUND, 'busy' → PEER_BUSY, 'gone' → PEER_UNREACHABLE. */
-type Reply = Uint8Array | 'nf' | 'busy' | 'gone';
+/** Scripted responses: payload → success, 'nf' → PEER_CHUNK_NOT_FOUND, 'busy' → PEER_BUSY, 'gone' → PEER_UNREACHABLE, 'refuse' → PEER_LISH_NOT_SHARED. */
+type Reply = Uint8Array | 'nf' | 'busy' | 'gone' | 'refuse';
 
 class ScriptedClient {
 	requests: ChunkID[] = [];
@@ -117,6 +120,7 @@ class ScriptedClient {
 		if (reply === 'nf') throw new CodedError(ErrorCodes.PEER_CHUNK_NOT_FOUND, 'not found');
 		if (reply === 'busy') throw new CodedError(ErrorCodes.PEER_BUSY, 'busy');
 		if (reply === 'gone') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, 'gone');
+		if (reply === 'refuse') throw new CodedError(ErrorCodes.PEER_LISH_NOT_SHARED, 'not shared');
 		return reply;
 	}
 	abortCalls = 0;
@@ -816,5 +820,133 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		await cd.run();
 
 		expect(ds.downloadedChunks.has(late.chunkID)).toBe(true);
+	}, 15000);
+});
+
+describe('ChunkDownloader peerLoop — a lost connection', () => {
+	function lossDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lost: string[]): ChunkDownloader {
+		const cd = makeDownloader(ds, pm, chunkCount);
+		(cd as any).deps.onPeerConnectionLost = (peerID: string): void => {
+			lost.push(peerID);
+		};
+		return cd;
+	}
+
+	it('hands the peer back for a reconnect instead of quarantining it, reported once', async () => {
+		// Every pipelined request fails at once when the connection dies; the peer still has the data.
+		const { missing } = makeChunks(6);
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'gone' as Reply])));
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 6, lost);
+		pm.tryAdd('peer-conn-lost', client as never, 'RELAY');
+
+		await cd.run();
+
+		expect(lost).toEqual(['peer-conn-lost']);
+		expect(pm.isDropped('peer-conn-lost')).toBe(false);
+		expect(pm.has('peer-conn-lost')).toBe(false);
+	}, 15000);
+
+	// A real LISHClient over a stream that accepts the request and never answers, so the transport can fail mid-read.
+	class SilentStream extends AbstractStream {
+		/** Settles once the request is sent and its reply is being read. */
+		reading = Promise.withResolvers<void>();
+		private sent = false;
+		private listening = false;
+		constructor() {
+			super({ id: 'silent', log: Object.assign(() => {}, { error() {}, trace() {} }) as never });
+		}
+		sendData(data: Uint8ArrayList): SendResult {
+			this.sent = true;
+			if (this.listening) this.reading.resolve();
+			return { sentBytes: data.byteLength, canSendMore: true };
+		}
+		override addEventListener(...args: Parameters<AbstractStream['addEventListener']>): void {
+			super.addEventListener(...args);
+			// The stream's reader subscribes to 'message' when the read starts.
+			if (args[0] !== 'message') return;
+			this.listening = true;
+			if (this.sent) this.reading.resolve();
+		}
+		sendReset(): void {}
+		sendPause(): void {}
+		sendResume(): void {}
+		async sendCloseWrite(): Promise<void> {}
+		async sendCloseRead(): Promise<void> {}
+	}
+
+	const failures: Array<[string, (stream: SilentStream) => void]> = [
+		['the remote resets the stream', stream => stream.onRemoteReset()],
+		['the connection is aborted', stream => stream.abort(new Error('connection silent for 45 s'))],
+		['the socket fails', stream => stream.abort(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))],
+		[
+			'the stream ends inside the reply',
+			stream => {
+				// A length prefix of 100 bytes followed by only 3 of them, then the remote closes.
+				stream.onData(new Uint8Array([100, 1, 2, 3]));
+				stream.onRemoteCloseWrite();
+			},
+		],
+	];
+	for (const [what, fail] of failures) {
+		it(`hands the peer back for a reconnect when ${what} while a request waits for its reply`, async () => {
+			const { missing } = makeChunks(1);
+			const stream = new SilentStream();
+			const ds = new FakeDataServer(missing);
+			const pm = new PeerManager();
+			const lost: string[] = [];
+			const cd = lossDownloader(ds, pm, 1, lost);
+			pm.tryAdd('peer-reset-read', new LISHClient(stream) as never, 'RELAY');
+
+			const running = cd.run();
+			await stream.reading.promise;
+			fail(stream);
+			await running;
+
+			expect(lost).toEqual(['peer-reset-read']);
+			expect(pm.isDropped('peer-reset-read')).toBe(false);
+		}, 15000);
+	}
+
+	it('retries a fresh stream refused before our membership reached the seeder, without quarantine', async () => {
+		// Every pipelined request on the new stream is refused at once; the peer is reported once.
+		const { missing } = makeChunks(4);
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'refuse' as Reply])));
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 4, lost);
+		pm.tryAdd('peer-not-synced', client as never, 'RELAY');
+
+		await cd.run();
+
+		expect(lost).toEqual(['peer-not-synced']);
+		expect(pm.isDropped('peer-not-synced')).toBe(false);
+	}, 15000);
+
+	it('still quarantines a peer that refuses the LISH after it has served this stream', async () => {
+		const { missing, data } = makeChunks(2);
+		const [served, refused] = [missing[0]!.chunkID, missing[1]!.chunkID];
+		const client = new ScriptedClient(
+			new Map<ChunkID, Reply>([
+				[served, data.get(served)!],
+				[refused, 'refuse'],
+			])
+		);
+		// The refusal arrives after the first answer, as when the peer left our lishnet mid-transfer.
+		client.delayByChunk.set(refused, 200);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 2, lost);
+		pm.tryAdd('peer-not-shared', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(ds.downloadedChunks.has(served)).toBe(true);
+		expect(lost).toEqual([]);
+		expect(pm.isDropped('peer-not-shared')).toBe(true);
 	}, 15000);
 });

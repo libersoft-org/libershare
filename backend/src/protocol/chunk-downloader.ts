@@ -61,6 +61,13 @@ export interface ChunkDownloaderDeps {
 	onRetry?: (info: RetryInfo) => void;
 	/** Shared with doWork Phase 2: wraps FileAllocator progress into onProgress shape. */
 	emitAllocProgress(p: AllocationProgress, totalChunks: number): void;
+	/**
+	 * The connection to a peer was lost mid-transfer (stream reset, read timeout). The peer
+	 * left the PeerManager without quarantine; the Downloader decides whether to reconnect.
+	 */
+	onPeerConnectionLost?(peerID: string): void;
+	/** A chunk from this peer passed verification and was stored. */
+	onChunkVerified?(peerID: string): void;
 }
 
 /**
@@ -399,23 +406,27 @@ export class ChunkDownloader {
 			let stopped = false;
 			// Why the peer was stopped: after a drop, data already received is still verified and kept;
 			// after a ban nothing more from this peer is used.
-			let stopReason: 'drop' | 'ban' | undefined;
+			let stopReason: 'drop' | 'ban' | 'disconnect' | undefined;
 			const peerAbort = new AbortController();
 			/**
 			 * Take the peer out of this download, once. The stream is aborted rather than half-closed:
 			 * removeAwait only half-closes it and forgets the client, so replies still in flight would
 			 * keep arriving until their timeout, out of reach of any later teardown.
+			 * Returns whether this call was the one that stopped it.
 			 */
-			const stopPeer = async (reason: 'drop' | 'ban'): Promise<void> => {
-				if (stopped) return;
+			const stopPeer = async (reason: 'drop' | 'ban' | 'disconnect'): Promise<boolean> => {
+				if (stopped) return false;
 				stopped = true;
 				stopReason = reason;
 				peerAbort.abort(new Error(`peer ${reason}`));
 				client.abort(new Error(`peer ${reason}`));
 				await peerManager.removeAwait(peerID, reason);
+				return true;
 			};
 			let skippedChunks = 0;
 			let consecutiveNotAvailable = 0;
+			// Whether the peer has served any request on this stream, read when a reply fails; see downloadChunk.
+			let answered = false;
 			// Chunks this peer answered PEER_CHUNK_NOT_FOUND for — never re-request them from
 			// the same peer within this session (they stay in the shared queue for other peers).
 			// Without this, a partial seeder missing ≥10 consecutive chunks ahead of one it HAS
@@ -538,8 +549,9 @@ export class ChunkDownloader {
 							await requeueChunk(chunk, claim);
 							break;
 						}
-						const result = await this.downloadChunk(client, chunk.chunkID, peerID);
+						const result = await this.downloadChunk(client, chunk.chunkID, peerID, () => !answered);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
+						if (result !== 'peer-lost' && result !== 'drop-peer') answered = true;
 						// A sibling stopped the peer while this request was in flight: a non-data answer, or
 						// anything from a banned peer, is discarded and the chunk goes to another peer. Data
 						// from a dropped peer is still verified below and kept — it is already here.
@@ -552,6 +564,16 @@ export class ChunkDownloader {
 						// probes (an unbounded number for a partial seeder) don't accumulate phantom
 						// debt on the shared limiter and starve real transfers.
 						if (typeof result === 'string') downloadLimiter.refund(limiterReservation);
+						if (result === 'peer-lost') {
+							// The connection died, not the peer's willingness to serve: no quarantine, the
+							// Downloader reconnects. Every pipelined request fails at once; one reports it.
+							await requeueChunk(chunk, claim);
+							if (await stopPeer('disconnect')) {
+								console.log(`[DL] Peer ${peerID.slice(0, 12)} connection lost, reconnecting`);
+								this.deps.onPeerConnectionLost?.(peerID);
+							}
+							break;
+						}
 						if (result === 'drop-peer') {
 							// Peer unusable for this session (no LISH / unreachable / invalid / unknown error).
 							// Soft quarantine in droppedPeers \u2014 peer can come back via pubsub 'have' or ~5min cyclic reset.
@@ -788,6 +810,7 @@ export class ChunkDownloader {
 						dataServer.markChunkDownloaded(lishID, chunk.chunkID);
 						dataServer.incrementDownloadedBytes(lishID, data.length);
 						recordDownloadBytes(lishID, peerID, data.length, lish.files?.[chunk.fileIndex]?.path);
+						this.deps.onChunkVerified?.(peerID);
 						downloadedCount++;
 						// A write that started before another peer acquired the recovery pause may
 						// finish while that peer is still retrying. It does not prove the active
@@ -880,6 +903,8 @@ export class ChunkDownloader {
 	 *                          peer for the chunk within the session.
 	 *   - 'skip-chunk'       \u2192 transient failure for THIS chunk (busy / IO). Caller
 	 *                          requeues and counts consecutive skips (10\u00d7 \u2192 droppedPeers).
+	 *   - 'peer-lost'        \u2192 the connection failed (or an `unproven` stream was refused before
+	 *                          our lishnet membership reached the peer); the Downloader reconnects.
 	 *   - 'drop-peer'        \u2192 peer not useful now (no LISH, unreachable, invalid, unknown).
 	 *                          Caller requeues the chunk, moves peer to droppedPeers (soft
 	 *                          quarantine with auto-recovery via pubsub 'have' or the
@@ -887,7 +912,7 @@ export class ChunkDownloader {
 	 * Permanent bans (bannedPeers) are reserved for actively malicious behavior
 	 * (corrupt chunks) and are handled by the caller above.
 	 */
-	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'drop-peer'> {
+	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string, unproven: () => boolean = () => false): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'peer-lost' | 'drop-peer'> {
 		if (this.deps.isDisabled() || this.deps.isDestroyed()) return 'drop-peer';
 		try {
 			const data = await client.requestChunk(this.deps.lishID, chunkID, this.deps.getLish().chunkSize);
@@ -910,9 +935,22 @@ export class ChunkDownloader {
 				}
 				return 'skip-chunk';
 			}
-			// Peer-level \u2014 LISH not shared, stream dead/timeout, malformed response, or unknown error.
-			// Drop into droppedPeers (soft quarantine; peer can come back via 'have' broadcast or 5min reset).
 			const msg = err instanceof Error ? err.message : String(err);
+			// Stream dead or reply timed out: the transport failed, the peer still has the data.
+			if (code === ErrorCodes.PEER_UNREACHABLE) {
+				console.debug(`[DL] connection lost to ${peerID?.slice(0, 12)}: ${msg.slice(0, 80)}`);
+				return 'peer-lost';
+			}
+			// A seeder admits us once a pubsub stream on a direct connection has carried our subscription
+			// to its lishnet. On a stream that has not been answered yet \u2014 a connection just dialed, or
+			// dialed again after a relay circuit hit its limit \u2014 the request can beat that subscription.
+			// Retried through the bounded reconnect; a refusal that persists still ends in quarantine.
+			if (code === ErrorCodes.PEER_LISH_NOT_SHARED && unproven()) {
+				console.debug(`[DL] ${peerID?.slice(0, 12)} refused before our membership reached it, retrying`);
+				return 'peer-lost';
+			}
+			// Peer-level \u2014 LISH not shared, malformed response, or unknown error.
+			// Drop into droppedPeers (soft quarantine; peer can come back via 'have' broadcast or 5min reset).
 			console.debug(`[DL] drop peer ${peerID?.slice(0, 12)}: ${code ?? msg.slice(0, 80)}`);
 			return 'drop-peer';
 		}

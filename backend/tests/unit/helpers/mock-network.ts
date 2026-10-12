@@ -31,6 +31,20 @@ export class MockNetwork {
 		return [];
 	}
 
+	/** Peers the test marks as belonging only to a lishnet we left. */
+	readonly dialSuppressed: Set<string> = new Set<string>();
+
+	isDialSuppressed(peerID: string): boolean {
+		return this.dialSuppressed.has(peerID);
+	}
+
+	/** Peers handed to {@link hangUpIfLeft}, in order. */
+	readonly hungUpIfLeft: string[] = [];
+
+	async hangUpIfLeft(peerID: string): Promise<void> {
+		this.hungUpIfLeft.push(peerID);
+	}
+
 	/** Registered peer-disconnect handlers — invoke {@link emitPeerDisconnect} to simulate a peer dropping. */
 	readonly peerDisconnectHandlers: Set<(peerID: string) => void> = new Set();
 
