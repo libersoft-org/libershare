@@ -38,6 +38,13 @@ export class MockNetwork {
 		return this.dialSuppressed.has(peerID);
 	}
 
+	/** Peers handed to {@link hangUpIfLeft}, in order. */
+	readonly hungUpIfLeft: string[] = [];
+
+	async hangUpIfLeft(peerID: string): Promise<void> {
+		this.hungUpIfLeft.push(peerID);
+	}
+
 	/** Registered peer-disconnect handlers — invoke {@link emitPeerDisconnect} to simulate a peer dropping. */
 	readonly peerDisconnectHandlers: Set<(peerID: string) => void> = new Set();
 

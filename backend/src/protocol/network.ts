@@ -1503,6 +1503,22 @@ export class Network {
 	 * Pure read: quarantine entries expire by time here and are deleted elsewhere
 	 * (peer:connect, the prune at the end of runRedialMaintenance).
 	 */
+	/**
+	 * Hang up a peer whose dial landed after we left its lishnet, unless a joined network still
+	 * needs it (a member, a configured bootstrap, a relay). The same rule as a late discovery dial.
+	 * A dial opens the connection before the protocol stream, so closing just the stream leaves it up.
+	 */
+	async hangUpIfLeft(peerID: string): Promise<void> {
+		const node = this.node;
+		if (!node || !this.isRedialSuppressed(peerID) || this.isPeerNeededByJoinedNetwork(peerID)) return;
+		trace(`[NET] dial landed after leave, hanging up: ${peerID.slice(0, 16)}`);
+		try {
+			await node.hangUp(peerIDFromString(peerID));
+		} catch (err: any) {
+			trace(`[NET] hangUp of late dial failed: ${err?.message ?? err}`);
+		}
+	}
+
 	/** Whether a dial to this peer must not happen now — see {@link dialSuppressionReason}. For callers outside Network that dial by themselves. */
 	isDialSuppressed(peerID: string): boolean {
 		return this.dialSuppressionReason(peerID) !== null;

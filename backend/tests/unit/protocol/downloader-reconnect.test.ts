@@ -155,21 +155,26 @@ describe('Downloader – reconnecting a seeder after a lost connection', () => {
 		expect(peerManager(dl).has('peer-left-net')).toBe(false);
 	});
 
-	it('drops a reconnect whose lishnet was left while the dial ran', async () => {
-		const s = await setup();
-		dl = s.dl;
-		let release!: () => void;
-		s.net.gate = new Promise(r => (release = r));
+	for (const viaHave of [true, false]) {
+		it(`drops a reconnect ${viaHave ? 'by HAVE addresses' : 'by peer ID'} whose lishnet was left while the dial ran, connection included`, async () => {
+			const s = await setup();
+			dl = s.dl;
+			if (viaHave) (dl as any).seederHave.set('peer-left-net', { multiaddrs: [RELAYED], chunks: 'all' });
+			let release!: () => void;
+			s.net.gate = new Promise(r => (release = r));
 
-		lost(dl, 'peer-left-net');
-		await settle(1100);
-		s.net.dialSuppressed.add('peer-left-net');
-		release();
-		await settle(50);
+			lost(dl, 'peer-left-net');
+			await settle(1100);
+			s.net.dialSuppressed.add('peer-left-net');
+			release();
+			await settle(50);
 
-		expect(peerManager(dl).has('peer-left-net')).toBe(false);
-		expect(s.net.aborted).toBe(1);
-	});
+			expect(peerManager(dl).has('peer-left-net')).toBe(false);
+			expect(s.net.aborted).toBe(1);
+			// The stream alone is not enough: the dial opened a connection to the peer as well.
+			expect(s.net.hungUpIfLeft).toEqual(['peer-left-net']);
+		});
+	}
 
 	it('does not let an older reconnect bring back a seeder dropped since', async () => {
 		const s = await setup();

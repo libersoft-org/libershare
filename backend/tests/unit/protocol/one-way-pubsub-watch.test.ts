@@ -79,6 +79,20 @@ describe('Network — one-way pubsub renewal', () => {
 		expect(calls).toEqual([`hangUp ${PEER_A}`]);
 	});
 
+	it('hangs up a late dial to a peer of a left lishnet only when no joined network needs it', async () => {
+		const calls: string[] = [];
+		const network = Object.create(Network.prototype) as Network;
+		(network as any).node = { hangUp: async (id: { toString(): string }) => void calls.push(id.toString()) };
+		(network as any).redialSuppressedByNet = new Map([['left-net', new Set([PEER_A, PEER_B])]]);
+		(network as any).isPeerNeededByJoinedNetwork = (peerID: string) => peerID === PEER_B;
+
+		await network.hangUpIfLeft(PEER_A);
+		await network.hangUpIfLeft(PEER_B);
+		await network.hangUpIfLeft('12D3KooWCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC');
+
+		expect(calls).toEqual([PEER_A]);
+	});
+
 	it('leaves alone a second peer whose pubsub came back while the first was being renewed', async () => {
 		const setup = networkWithOneWayPeer({
 			peers: [PEER_A, PEER_B],

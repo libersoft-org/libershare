@@ -925,6 +925,7 @@ export class Downloader {
 				// Re-checked after the dial: the download or the peer may have been ruled out while it ran.
 				if (this.wantsNoPeers() || this.isPeerRuledOut(peerID) || !this.peerManager.tryAdd(peerID, client, connectionType)) {
 					client.abort(new Error('reconnect not needed'));
+					void this.network.hangUpIfLeft(peerID);
 					return;
 				}
 			}
@@ -1056,6 +1057,8 @@ export class Downloader {
 		// Re-checked after the dial: the download or the peer may have been ruled out while it ran.
 		if (this.wantsNoPeers() || this.isPeerRuledOut(peerID)) {
 			stream.abort(new Error('download no longer wants peers'));
+			// The dial also opened a connection; one to a peer of a lishnet left meanwhile must go too.
+			void this.network.hangUpIfLeft(peerID);
 			return;
 		}
 		const totalChunks = this.dataServer.getAllChunkCount(this.lishID) || 1;
