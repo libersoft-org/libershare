@@ -97,6 +97,32 @@ describe('Network — one-way pubsub renewal', () => {
 		});
 	}
 
+	for (const viaAddrs of [true, false]) {
+		it(`hangs up a connection whose protocol stream failed after leaving the peer's lishnet (${viaAddrs ? 'by addresses' : 'by peer ID'})`, async () => {
+			const calls: string[] = [];
+			const network = Object.create(Network.prototype) as Network;
+			const connection = {
+				remotePeer: { toString: () => PEER_A },
+				remoteAddr: multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_A}`),
+				newStream: async () => {
+					// The lishnet was left while the connection came up; the stream then fails.
+					(network as any).redialSuppressedByNet = new Map([['left-net', new Set([PEER_A, PEER_B])]]);
+					throw new Error('protocol selection failed');
+				},
+			};
+			(network as any).node = { dial: async () => connection, hangUp: async (id: { toString(): string }) => void calls.push(`hangUp ${id.toString()}`) };
+			(network as any).dcutrPeers = new Set();
+			(network as any).redialSuppressedByNet = new Map();
+			(network as any).isPeerNeededByJoinedNetwork = () => false;
+
+			const dial = viaAddrs ? network.dialProtocol([multiaddr(`/ip4/192.0.2.1/tcp/9090/p2p/${PEER_A}`)], '/lish/test') : network.dialProtocolByPeerId(PEER_A, '/lish/test');
+			await expect(dial).rejects.toThrow('protocol selection failed');
+			await Bun.sleep(0);
+
+			expect(calls).toEqual([`hangUp ${PEER_A}`]);
+		});
+	}
+
 	it('hangs up a late dial to a peer of a left lishnet only when no joined network needs it', async () => {
 		const calls: string[] = [];
 		const network = Object.create(Network.prototype) as Network;

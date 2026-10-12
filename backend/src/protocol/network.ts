@@ -3886,12 +3886,25 @@ export class Network {
 
 	async dialProtocol(multiaddrs: any[], protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol, signal);
+		try {
+			return await dialProtocolFn(this.node, this.dcutrPeers, multiaddrs, protocol, signal);
+		} catch (err) {
+			const peerID = multiaddrs[0]?.getPeerId?.();
+			if (peerID) void this.hangUpIfLeft(peerID);
+			throw err;
+		}
 	}
 
 	async dialProtocolByPeerId(peerID: string, protocol: string, signal?: AbortSignal): Promise<IDialResult> {
 		if (!this.node) throw new CodedError(ErrorCodes.NETWORK_NOT_STARTED);
-		return dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol, signal);
+		try {
+			return await dialProtocolByPeerIdFn(this.node, this.dcutrPeers, peerID, protocol, signal);
+		} catch (err) {
+			// The connection can be up even though the protocol stream on it failed; one to a peer of a
+			// lishnet left meanwhile must not outlive the attempt.
+			void this.hangUpIfLeft(peerID);
+			throw err;
+		}
 	}
 
 	/**
