@@ -79,8 +79,8 @@ class FakeDataServer {
 	}
 }
 
-/** Scripted responses: payload → success, 'nf' → PEER_CHUNK_NOT_FOUND, 'busy' → PEER_BUSY, 'gone' → PEER_UNREACHABLE. */
-type Reply = Uint8Array | 'nf' | 'busy' | 'gone';
+/** Scripted responses: payload → success, 'nf' → PEER_CHUNK_NOT_FOUND, 'busy' → PEER_BUSY, 'gone' → PEER_UNREACHABLE, 'refuse' → PEER_LISH_NOT_SHARED. */
+type Reply = Uint8Array | 'nf' | 'busy' | 'gone' | 'refuse';
 
 class ScriptedClient {
 	requests: ChunkID[] = [];
@@ -120,6 +120,7 @@ class ScriptedClient {
 		if (reply === 'nf') throw new CodedError(ErrorCodes.PEER_CHUNK_NOT_FOUND, 'not found');
 		if (reply === 'busy') throw new CodedError(ErrorCodes.PEER_BUSY, 'busy');
 		if (reply === 'gone') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, 'gone');
+		if (reply === 'refuse') throw new CodedError(ErrorCodes.PEER_LISH_NOT_SHARED, 'not shared');
 		return reply;
 	}
 	abortCalls = 0;
@@ -901,19 +902,42 @@ describe('ChunkDownloader peerLoop — a lost connection', () => {
 		}, 15000);
 	}
 
-	it('still quarantines a peer that refuses the LISH', async () => {
-		const { missing } = makeChunks(2);
-		const client = new GatedClient(new Map());
-		client.gate(missing[0]!.chunkID, ErrorCodes.PEER_LISH_NOT_SHARED);
-		client.open(missing[0]!.chunkID);
-		const ds = new FakeDataServer(missing.slice(0, 1));
+	it('retries a fresh stream refused before our membership reached the seeder, without quarantine', async () => {
+		// Every pipelined request on the new stream is refused at once; the peer is reported once.
+		const { missing } = makeChunks(4);
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'refuse' as Reply])));
+		const ds = new FakeDataServer(missing);
 		const pm = new PeerManager();
 		const lost: string[] = [];
-		const cd = lossDownloader(ds, pm, 1, lost);
+		const cd = lossDownloader(ds, pm, 4, lost);
+		pm.tryAdd('peer-not-synced', client as never, 'RELAY');
+
+		await cd.run();
+
+		expect(lost).toEqual(['peer-not-synced']);
+		expect(pm.isDropped('peer-not-synced')).toBe(false);
+	}, 15000);
+
+	it('still quarantines a peer that refuses the LISH after it has served this stream', async () => {
+		const { missing, data } = makeChunks(2);
+		const [served, refused] = [missing[0]!.chunkID, missing[1]!.chunkID];
+		const client = new ScriptedClient(
+			new Map<ChunkID, Reply>([
+				[served, data.get(served)!],
+				[refused, 'refuse'],
+			])
+		);
+		// The refusal arrives after the first answer, as when the peer left our lishnet mid-transfer.
+		client.delayByChunk.set(refused, 200);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 2, lost);
 		pm.tryAdd('peer-not-shared', client as never, 'DIRECT');
 
 		await cd.run();
 
+		expect(ds.downloadedChunks.has(served)).toBe(true);
 		expect(lost).toEqual([]);
 		expect(pm.isDropped('peer-not-shared')).toBe(true);
 	}, 15000);

@@ -425,6 +425,8 @@ export class ChunkDownloader {
 			};
 			let skippedChunks = 0;
 			let consecutiveNotAvailable = 0;
+			// Whether the peer has served any request on this stream, read when a reply fails; see downloadChunk.
+			let answered = false;
 			// Chunks this peer answered PEER_CHUNK_NOT_FOUND for — never re-request them from
 			// the same peer within this session (they stay in the shared queue for other peers).
 			// Without this, a partial seeder missing ≥10 consecutive chunks ahead of one it HAS
@@ -547,8 +549,9 @@ export class ChunkDownloader {
 							await requeueChunk(chunk, claim);
 							break;
 						}
-						const result = await this.downloadChunk(client, chunk.chunkID, peerID);
+						const result = await this.downloadChunk(client, chunk.chunkID, peerID, () => !answered);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
+						if (result !== 'peer-lost' && result !== 'drop-peer') answered = true;
 						// A sibling stopped the peer while this request was in flight: a non-data answer, or
 						// anything from a banned peer, is discarded and the chunk goes to another peer. Data
 						// from a dropped peer is still verified below and kept — it is already here.
@@ -900,6 +903,8 @@ export class ChunkDownloader {
 	 *                          peer for the chunk within the session.
 	 *   - 'skip-chunk'       \u2192 transient failure for THIS chunk (busy / IO). Caller
 	 *                          requeues and counts consecutive skips (10\u00d7 \u2192 droppedPeers).
+	 *   - 'peer-lost'        \u2192 the connection failed (or an `unproven` stream was refused before
+	 *                          our lishnet membership reached the peer); the Downloader reconnects.
 	 *   - 'drop-peer'        \u2192 peer not useful now (no LISH, unreachable, invalid, unknown).
 	 *                          Caller requeues the chunk, moves peer to droppedPeers (soft
 	 *                          quarantine with auto-recovery via pubsub 'have' or the
@@ -907,7 +912,7 @@ export class ChunkDownloader {
 	 * Permanent bans (bannedPeers) are reserved for actively malicious behavior
 	 * (corrupt chunks) and are handled by the caller above.
 	 */
-	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'peer-lost' | 'drop-peer'> {
+	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string, unproven: () => boolean = () => false): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'peer-lost' | 'drop-peer'> {
 		if (this.deps.isDisabled() || this.deps.isDestroyed()) return 'drop-peer';
 		try {
 			const data = await client.requestChunk(this.deps.lishID, chunkID, this.deps.getLish().chunkSize);
@@ -934,6 +939,14 @@ export class ChunkDownloader {
 			// Stream dead or reply timed out: the transport failed, the peer still has the data.
 			if (code === ErrorCodes.PEER_UNREACHABLE) {
 				console.debug(`[DL] connection lost to ${peerID?.slice(0, 12)}: ${msg.slice(0, 80)}`);
+				return 'peer-lost';
+			}
+			// A seeder admits us once a pubsub stream on a direct connection has carried our subscription
+			// to its lishnet. On a stream that has not been answered yet \u2014 a connection just dialed, or
+			// dialed again after a relay circuit hit its limit \u2014 the request can beat that subscription.
+			// Retried through the bounded reconnect; a refusal that persists still ends in quarantine.
+			if (code === ErrorCodes.PEER_LISH_NOT_SHARED && unproven()) {
+				console.debug(`[DL] ${peerID?.slice(0, 12)} refused before our membership reached it, retrying`);
 				return 'peer-lost';
 			}
 			// Peer-level \u2014 LISH not shared, malformed response, or unknown error.
