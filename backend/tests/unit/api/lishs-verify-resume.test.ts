@@ -6,6 +6,7 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
+import { initDownloadState, setEnableDownloadFn } from '../../../src/api/transfer.ts';
 
 /**
  * A verification interrupted by a crash or shutdown used to be forgotten: after the restart
@@ -69,13 +70,20 @@ async function setup(name: string, extraIDs: string[] = []) {
 	return { run: () => run, id, hold, failing, settle, restart, cleanup };
 }
 
-test('a verification that failed on a data error is finished after the restart', async () => {
+test('a verification that failed on a data error resumes no download and is finished after the restart', async () => {
 	const { run, id, failing, settle, restart, cleanup } = await setup('failed');
+	initDownloadState(new Set([id]), () => {});
+	let resumed = 0;
+	setEnableDownloadFn(async () => {
+		resumed++;
+		return { success: true };
+	});
 	try {
 		failing.add(id);
 		await run().handlers.verify({ lishID: id });
 		await settle();
 		expect(run().data.getVerifyPendingLishs()).toEqual([id]);
+		expect(resumed).toBe(0);
 
 		failing.delete(id);
 		await restart();
@@ -84,7 +92,10 @@ test('a verification that failed on a data error is finished after the restart',
 
 		expect(run().data.getDetail(id)?.verifiedChunks).toBe(1);
 		expect(run().data.getVerifyPendingLishs()).toEqual([]);
+		expect(resumed).toBe(1);
 	} finally {
+		initDownloadState(new Set(), () => {});
+		setEnableDownloadFn(async () => ({ success: false }));
 		await cleanup();
 	}
 });

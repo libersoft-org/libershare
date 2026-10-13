@@ -560,7 +560,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 					currentVerification = null;
 				}
 				// Resume download if enabled — no-op if download not enabled or LISH deleted.
-				if (isOwner && !unsafe && !ac.signal.aborted && !mutationAdmission.isClosed) restartDownloadIfEnabled(lishID);
+				if (isOwner && !unsafe && !failed && !ac.signal.aborted && !mutationAdmission.isClosed) restartDownloadIfEnabled(lishID);
 				if (!mutationAdmission.isClosed) processVerificationQueue();
 			});
 		activeVerificationRuns.add(run);
