@@ -44,6 +44,11 @@ export function setVerifyPending(db: Database, lishID: LISHid, pending: boolean)
 	db.run('UPDATE lishs SET verify_pending = ? WHERE lish_id = ?', [pending ? 1 : 0, lishID]);
 }
 
+/** Forgets every pending verification, as when the user stops them all. */
+export function clearAllVerifyPending(db: Database): void {
+	db.run('UPDATE lishs SET verify_pending = FALSE WHERE verify_pending = TRUE');
+}
+
 /** Returns the LISHids whose verification was interrupted (stop, crash) before it finished. */
 export function getVerifyPendingLishs(db: Database): string[] {
 	return db

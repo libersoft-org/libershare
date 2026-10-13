@@ -62,6 +62,17 @@ test('a shutdown leaves the started verification pending for the next start', as
 	}
 });
 
+test('verifications the user stopped all at once are not resumed', async () => {
+	const { data, handlers, id, cleanup } = await setup('user-stop-all');
+	try {
+		await handlers.verify({ lishID: id });
+		await handlers.cancelVerifyAll();
+		expect(data.getVerifyPendingLishs()).toEqual([]);
+	} finally {
+		await cleanup();
+	}
+});
+
 test('a verification the user stopped is not resumed', async () => {
 	const { data, handlers, id, cleanup } = await setup('user-stop');
 	try {

@@ -500,7 +500,7 @@ export class APIServer {
 			'lishs.verify': _lishs.verify,
 			'lishs.verifyAll': _lishs.verifyAll,
 			'lishs.stopVerify': _lishs.stopVerify,
-			'lishs.stopVerifyAll': _lishs.stopVerifyAll,
+			'lishs.stopVerifyAll': _lishs.cancelVerifyAll,
 			'lishs.stopCreate': _lishs.stopCreate,
 			'lishs.move': _lishs.move,
 			// Transfer

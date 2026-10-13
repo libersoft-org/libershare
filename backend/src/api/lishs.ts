@@ -88,6 +88,8 @@ interface LISHsHandlers {
 	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	stopVerifyAll: () => Promise<SuccessResponse>;
+	/** The user's stop of every verification: also forgets them, so a restart does not resume them. */
+	cancelVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: (p?: unknown, client?: unknown) => Promise<SuccessResponse>;
 	/** As {@link LISHsHandlers.stopCreate}, but for every creation at once — maintenance only. */
 	stopAllCreates: () => Promise<SuccessResponse>;
@@ -651,6 +653,16 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { success: true };
 	}
 
+	/**
+	 * The user's "stop all": unlike the shutdown and factory-reset path through {@link stopVerifyAll},
+	 * which leaves the stopped verifications pending for the next start, it forgets them.
+	 */
+	async function cancelVerifyAll(): Promise<SuccessResponse> {
+		const result = await stopVerifyAll();
+		dataServer.clearAllVerifyPending();
+		return result;
+	}
+
 	async function stopCreate(_p?: unknown, client?: unknown): Promise<SuccessResponse> {
 		// The public cancel button: the creation this client is on, and nothing else. Another
 		// window's work is not this button's to stop, and a repeated cancel — the progress view
@@ -852,5 +864,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

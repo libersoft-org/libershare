@@ -7,7 +7,7 @@ import type { DatasetEntryInfo, DatasetFileHandle } from './safe-dataset-types.t
 import { getDatasetRoot as dbGetDatasetRoot, setDatasetRoot as dbSetDatasetRoot, addDataset as dbAddDataset, relocateDataset as dbRelocateDataset } from '../db/lishs-roots.ts';
 import { getDatasetLinkBindings as dbGetDatasetLinkBindings, type DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { clearLishData, clearLishnetData } from '../db/database.ts';
-import { getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, getVerifyPendingLishs as dbGetVerifyPendingLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled, setVerifyPending as dbSetVerifyPending } from '../db/lishs.ts';
+import { clearAllVerifyPending as dbClearAllVerifyPending, getDownloadEnabledLishs as dbGetDownloadEnabledLishs, getUploadEnabledLishs as dbGetUploadEnabledLishs, getVerifyPendingLishs as dbGetVerifyPendingLishs, setDownloadEnabled as dbSetDownloadEnabled, setUploadEnabled as dbSetUploadEnabled, setVerifyPending as dbSetVerifyPending } from '../db/lishs.ts';
 import { type ILISH, type IStoredLISH, type ILISHSummary, type ILISHDetail, type LISHid, type ChunkID, type LISHSortField, type SortOrder, CodedError, ErrorCodes } from '@shared';
 import { type MissingChunk, type VerificationProgress, type FileVerificationProgress, type ChunkSlot, type FileForVerification, type TransferStats, getLISH, getLISHMeta, addLISH, deleteLISH as dbDeleteLISH, updateLISHDirectory as dbUpdateLISHDirectory, updateLISHFinalDirectory as dbUpdateLISHFinalDirectory, listLISHSummaries, getLISHDetail, listAllStoredLISHs, getDatasets as dbGetDatasets, isChunkDownloaded as dbIsChunkDownloaded, markChunkDownloaded as dbMarkChunkDownloaded, isComplete as dbIsComplete, getHaveChunks as dbGetHaveChunks, getMissingChunks as dbGetMissingChunks, getAllChunkSlots as dbGetAllChunkSlots, findChunkLocation, getVerificationProgress as dbGetVerificationProgress, getFileVerificationProgress as dbGetFileVerificationProgress, markChunkVerified as dbMarkChunkVerified, markChunkFailed as dbMarkChunkFailed, markAllFileChunksFailed as dbMarkAllFileChunksFailed, resetVerification as dbResetVerification, isVerified as dbIsVerified, getFilesForVerification as dbGetFilesForVerification, incrementUploadedBytes as dbIncrementUploadedBytes, incrementDownloadedBytes as dbIncrementDownloadedBytes, getTransferStats as dbGetTransferStats, setLISHError as dbSetLISHError, clearLISHError as dbClearLISHError, resetFileChunks as dbResetFileChunks, getFileInternalID as dbGetFileInternalID } from '../db/lishs.ts';
 
@@ -137,6 +137,11 @@ export class DataServer {
 	/** Marks a LISH whose verification is queued or running, so a restart can finish it. */
 	setVerifyPending(lishID: LISHid, pending: boolean): void {
 		dbSetVerifyPending(this.db, lishID, pending);
+	}
+
+	/** Forgets every pending verification, as when the user stops them all. */
+	clearAllVerifyPending(): void {
+		dbClearAllVerifyPending(this.db);
 	}
 
 	/** LISHs whose verification was interrupted before it finished, oldest first. */
