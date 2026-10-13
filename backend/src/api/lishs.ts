@@ -658,9 +658,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * which leaves the stopped verifications pending for the next start, it forgets them.
 	 */
 	async function cancelVerifyAll(): Promise<SuccessResponse> {
-		const result = await stopVerifyAll();
+		// Cleared before the wait for running verifications: one requested during that wait marks
+		// itself afterwards and must keep its mark.
 		dataServer.clearAllVerifyPending();
-		return result;
+		return stopVerifyAll();
 	}
 
 	async function stopCreate(_p?: unknown, client?: unknown): Promise<SuccessResponse> {
