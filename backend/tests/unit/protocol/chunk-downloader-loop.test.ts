@@ -959,6 +959,8 @@ describe('ChunkDownloader peerLoop — a lost connection', () => {
 		const pm = new PeerManager();
 		const lost: string[] = [];
 		const cd = lossDownloader(ds, pm, 2, lost);
+		// An announced seeder: only the answer it already gave on this stream may decide the quarantine.
+		(cd as any).deps.announcedHave = (): boolean => true;
 		pm.tryAdd('peer-not-shared', client as never, 'DIRECT');
 
 		await cd.run();
