@@ -416,7 +416,6 @@
 		"download": {
 			"directoryDownload": "Finished download directory",
 			"directoryTemp": "Unfinished downloads directory",
-			"completionCopyNotice": "Finishing a download may require space for another copy. The application checks available space in advance and removes the source files only after safely handing the data over to the destination. While copying between filesystems on macOS, other applications must not modify the source files.",
 			"directoryLISH": "Default LISH files directory",
 			"directoryLISHnet": "Default LISHNET files directory",
 			"directoryBackup": "Settings backup directory",

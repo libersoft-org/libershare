@@ -309,14 +309,6 @@
 		max-width: 100%;
 	}
 
-	.completion-copy-notice {
-		margin: 0.5vh 0 1vh;
-		font-size: 2vh;
-		line-height: 1.4;
-		color: var(--secondary-foreground);
-		opacity: 0.85;
-	}
-
 	.row {
 		display: flex;
 		gap: 1vh;
@@ -340,7 +332,6 @@
 				<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={() => openBrowse('temp')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				<Button icon="/img/restart.svg" position={[2, 1]} onConfirm={resetTempPath} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 			</div>
-			<p class="completion-copy-notice">{$t('settings.download.completionCopyNotice')}</p>
 			<div class="row" role="group" data-mouse-activate-area={areaID}>
 				<Input bind:value={lishPathValue} label={$t('settings.download.directoryLISH')} position={[0, 2]} flex />
 				<Button icon="/img/directory.svg" position={[1, 2]} onConfirm={() => openBrowse('lish')} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
