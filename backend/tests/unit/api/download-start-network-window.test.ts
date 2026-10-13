@@ -98,6 +98,7 @@ function makeDataServer(duringInit: () => void = () => {}, directory: string | n
 			fireAt = reads + 1;
 		},
 		clearError: (): void => {},
+		isVerifyPending: () => false,
 		setError: (): void => {},
 		getTransferStats: (): { downloadedBytes: number; uploadedBytes: number } => ({ downloadedBytes: 0, uploadedBytes: 0 }),
 		// A null directory keeps the start on the no-pre-flight path; a real one makes both
@@ -133,6 +134,7 @@ function makeCompleteDataServer(duringCheck: () => void): DataServer & { forget(
 			present = false;
 		},
 		clearError: (): void => {},
+		isVerifyPending: () => false,
 		setError: (): void => {},
 		getTransferStats: (): { downloadedBytes: number; uploadedBytes: number } => ({ downloadedBytes: 0, uploadedBytes: 0 }),
 		// An empty file list keeps the on-disk check trivially satisfied: the branch under

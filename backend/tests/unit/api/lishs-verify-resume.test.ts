@@ -1,4 +1,4 @@
-import { test, expect } from 'bun:test';
+import { test, expect, spyOn } from 'bun:test';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +6,8 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
-import { initDownloadState, setEnableDownloadFn } from '../../../src/api/transfer.ts';
+import { getDownloadEnabledLishs, initDownloadState, initTransferHandlers, setEnableDownloadFn } from '../../../src/api/transfer.ts';
+import { Downloader } from '../../../src/protocol/downloader.ts';
 
 /**
  * A verification interrupted by a crash or shutdown used to be forgotten: after the restart
@@ -69,6 +70,77 @@ async function setup(name: string, extraIDs: string[] = []) {
 	};
 	return { run: () => run, id, hold, failing, settle, restart, cleanup };
 }
+
+test('the start-up download resume leaves a LISH alone while its failed verification is still owed', async () => {
+	const { run, id, failing, settle, cleanup } = await setup('owed');
+	const node = { pauseLISHProtocolHandlersAndDrain: async () => {}, resumeLISHProtocolHandlers: () => {}, onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true };
+	const networks = { getNetwork: () => node, getRunningNetwork: () => node, getEnabled: () => [{ networkID: 'network-a' }], isJoined: (networkID: string) => networkID === 'network-a' } as never;
+	const enabled: string[] = [];
+	run().data.setDownloadEnabled(id, true);
+	initDownloadState(new Set([id]), (lishID, value) => run().data.setDownloadEnabled(lishID, value));
+	const transfer = initTransferHandlers(
+		networks,
+		run().data,
+		join(tmpdir(), 'verify-resume-owed-downloads'),
+		() => {},
+		(event, data) => {
+			if (event === 'transfer.download:enabled') enabled.push(data.lishID);
+		},
+		undefined,
+		run().handlers.startVerification
+	);
+	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async () => {});
+	try {
+		// Left by the previous run, which stopped mid-verification.
+		run().data.setVerifyPending(id, true);
+		failing.add(id);
+		run().handlers.resumePendingVerifications();
+		await settle();
+		// Past the moment the transfer handlers resume every download that was on before the start.
+		await Bun.sleep(3300);
+		expect(run().data.getVerifyPendingLishs()).toEqual([id]);
+		expect(init).not.toHaveBeenCalled();
+		expect(enabled).toEqual([]);
+	} finally {
+		init.mockRestore();
+		await transfer.clearAll();
+		initDownloadState(new Set(), () => {});
+		await cleanup();
+	}
+}, 10_000);
+
+test('a network restart restores no download while a failed verification is still owed', async () => {
+	const { run, id, failing, settle, cleanup } = await setup('owed-restore');
+	const node = { pauseLISHProtocolHandlersAndDrain: async () => {}, resumeLISHProtocolHandlers: () => {}, onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true };
+	const networks = { getNetwork: () => node, getRunningNetwork: () => node, getEnabled: () => [{ networkID: 'network-a' }], isJoined: (networkID: string) => networkID === 'network-a' } as never;
+	run().data.setDownloadEnabled(id, true);
+	initDownloadState(new Set([id]), (lishID, value) => run().data.setDownloadEnabled(lishID, value));
+	const enabled: string[] = [];
+	const transfer = initTransferHandlers(
+		networks,
+		run().data,
+		join(tmpdir(), 'verify-resume-owed-restore'),
+		() => {},
+		(event, data) => {
+			if (event === 'transfer.download:enabled') enabled.push(data.lishID);
+		},
+		undefined,
+		run().handlers.startVerification
+	);
+	try {
+		failing.add(id);
+		await run().handlers.verify({ lishID: id });
+		await settle();
+		await transfer.restoreAll(new Set([id]));
+		expect(enabled).toEqual([]);
+		expect(getDownloadEnabledLishs().has(id)).toBe(true);
+		expect(run().data.getVerifyPendingLishs()).toEqual([id]);
+	} finally {
+		await transfer.clearAll();
+		initDownloadState(new Set(), () => {});
+		await cleanup();
+	}
+});
 
 test('a verification that failed on a data error resumes no download and is finished after the restart', async () => {
 	const { run, id, failing, settle, restart, cleanup } = await setup('failed');

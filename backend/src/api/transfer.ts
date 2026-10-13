@@ -667,6 +667,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * must not stop recovery, which would supersede the very attempt that is running.
 	 */
 	async function enableDownload(p: { lishID: string }, client?: any, manual = true, recoveryAttempt?: () => boolean): Promise<{ success: boolean }> {
+		// A verification that failed before its end stays owed; only the user may start the download over it.
+		if (!manual && dataServer.isVerifyPending(p.lishID)) return { success: false };
 		const leave = transferAdmission.tryEnter();
 		if (!leave) return { success: false };
 		// Recorded BEFORE the gate below can park this call behind an in-flight attempt,
@@ -1184,6 +1186,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		clearAllUploads();
 	}
 
+	/** A verification running now, or one that failed and is still owed: the download waits for it either way. */
+	function verificationOwed(lishID: string): boolean {
+		return getBusyReason(lishID) === 'verifying' || dataServer.isVerifyPending(lishID);
+	}
+
 	/** Restore a batch without rewriting saved intent; retain bindings from its snapshot. */
 	async function restoreAllTransfers(lishIDs: Set<string>, snapshot: TransferRestoreSnapshot = new Map()): Promise<void> {
 		const isJoined = (networkID: string): boolean => networks.isJoined(networkID);
@@ -1191,7 +1198,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			activeCount: () => activeDownloaders.size,
 			plan: async lishID => {
 				const state = snapshot.get(lishID);
-				if (getBusyReason(lishID) === 'verifying') return { kind: 'suspend', networkIDs: state ? (state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs) : getJoinedEnabledNetworkIDs(networks) };
+				if (verificationOwed(lishID)) return { kind: 'suspend', networkIDs: state ? (state.originalNetworkIDs.length > 0 ? state.originalNetworkIDs : state.networkIDs) : getJoinedEnabledNetworkIDs(networks) };
 				if (state) {
 					const restore = planDownloadRestore(state, isJoined);
 					if (restore.kind === 'suspend') return { kind: 'suspend', networkIDs: restore.networkIDs };
@@ -1242,7 +1249,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				}
 			},
 			suspend: (lishID, networkIDs) => {
-				if (getBusyReason(lishID) === 'verifying') downloadEnabledLishs.add(lishID);
+				if (verificationOwed(lishID)) downloadEnabledLishs.add(lishID);
 				else downloadEnabledLishs.delete(lishID);
 				networkSuspended.set(lishID, new Set(networkIDs));
 			},

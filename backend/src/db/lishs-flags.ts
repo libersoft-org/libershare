@@ -44,6 +44,11 @@ export function setVerifyPending(db: Database, lishID: LISHid, pending: boolean)
 	db.run('UPDATE lishs SET verify_pending = ? WHERE lish_id = ?', [pending ? 1 : 0, lishID]);
 }
 
+/** Whether a LISH still owes a verification that has not run to its end. */
+export function isVerifyPending(db: Database, lishID: LISHid): boolean {
+	return db.query<{ verify_pending: number }, [string]>('SELECT verify_pending FROM lishs WHERE lish_id = ?').get(lishID)?.verify_pending === 1;
+}
+
 /** Forgets every pending verification, as when the user stops them all. */
 export function clearAllVerifyPending(db: Database): void {
 	db.run('UPDATE lishs SET verify_pending = FALSE WHERE verify_pending = TRUE');

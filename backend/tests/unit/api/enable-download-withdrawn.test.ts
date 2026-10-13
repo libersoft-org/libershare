@@ -39,6 +39,7 @@ describe('enableDownload — withdrawn while starting', () => {
 		let withdrawn = false;
 		const dataServer: any = {
 			clearError: (): void => {},
+			isVerifyPending: () => false,
 			setError: (): void => {},
 			// `directory: null` keeps the start on the no-pre-flight path, so the only
 			// thing between entry and registration is the downloader init below.
@@ -67,6 +68,7 @@ describe('enableDownload — withdrawn while starting', () => {
 	it('registers the downloader when nothing withdrew the download', async () => {
 		const dataServer: any = {
 			clearError: (): void => {},
+			isVerifyPending: () => false,
 			setError: (): void => {},
 			get: (): any => ({ id: LISH_ID, name: 'x', directory: null, files: [] }),
 			getDatasetRoot: (): null => null,
