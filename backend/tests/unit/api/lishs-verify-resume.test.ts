@@ -26,12 +26,15 @@ async function setup(name: string, extraIDs: string[] = []) {
 		};
 	};
 	/** One run of the backend over the data dir: a fresh database connection, data server and handlers. */
+	// Verifications of a LISH listed here fail in openDataset the way a permission error does.
+	const failing = new Set<string>();
 	const start = async () => {
 		const db = openDatabase(base);
 		const data = new DataServer(db);
 		const openDataset = data.openDataset.bind(data);
 		data.openDataset = (async (lishID: string) => {
 			await held.get(lishID)?.promise;
+			if (failing.has(lishID)) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
 			return openDataset(lishID as never);
 		}) as typeof data.openDataset;
 		const handlers = initLISHsHandlers(
@@ -63,8 +66,28 @@ async function setup(name: string, extraIDs: string[] = []) {
 		run.db.close();
 		await rm(base, { recursive: true, force: true });
 	};
-	return { run: () => run, id, hold, settle, restart, cleanup };
+	return { run: () => run, id, hold, failing, settle, restart, cleanup };
 }
+
+test('a verification that failed on a data error is finished after the restart', async () => {
+	const { run, id, failing, settle, restart, cleanup } = await setup('failed');
+	try {
+		failing.add(id);
+		await run().handlers.verify({ lishID: id });
+		await settle();
+		expect(run().data.getVerifyPendingLishs()).toEqual([id]);
+
+		failing.delete(id);
+		await restart();
+		run().handlers.resumePendingVerifications();
+		await settle();
+
+		expect(run().data.getDetail(id)?.verifiedChunks).toBe(1);
+		expect(run().data.getVerifyPendingLishs()).toEqual([]);
+	} finally {
+		await cleanup();
+	}
+});
 
 test('a verification interrupted by a shutdown is finished after the restart', async () => {
 	const { run, id, hold, settle, restart, cleanup } = await setup('restart');

@@ -527,11 +527,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		setBusy(lishID, 'verifying');
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
 		let unsafe = false;
+		let failed = false;
 		run.promise = runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal)
 			.catch(async error => {
 				if (currentVerification !== run || ac.signal.aborted) return;
 				console.error(`[Verify] ${lishID.slice(0, 8)} failed:`, error);
-				if (error instanceof CodedError && error.code === ErrorCodes.LISH_UNSAFE_PATH) {
+				// An unsafe path is final; any other failure (permissions, disk) may be gone by the next start.
+				if (!(error instanceof CodedError && error.code === ErrorCodes.LISH_UNSAFE_PATH)) {
+					failed = true;
+				} else {
 					unsafe = true;
 					dataServer.setError(lishID, error.code, error.detail);
 					stopRecoveryForLISH(lishID);
@@ -546,9 +550,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				activeVerificationRuns.delete(run);
 				const isOwner = currentVerification === run;
 				if (isOwner) {
-					// Only a run that reached its end settles the LISH; an aborted one (shutdown,
-					// network restart) is finished by the next start.
-					if (!ac.signal.aborted && !verificationQueue.includes(lishID)) dataServer.setVerifyPending(lishID, false);
+					// Only a run that reached its end settles the LISH; an aborted or failed one is
+					// finished by the next start.
+					if (!ac.signal.aborted && !failed && !verificationQueue.includes(lishID)) dataServer.setVerifyPending(lishID, false);
 					if (!verificationQueue.includes(lishID)) {
 						clearBusy(lishID);
 						if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
