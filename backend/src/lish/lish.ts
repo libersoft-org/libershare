@@ -1,5 +1,5 @@
 import * as fsPromises from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, relative, sep } from 'node:path';
 import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
@@ -292,14 +292,20 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 		if (isSymlink) {
 			// Handle symbolic link - read the link target
 			try {
-				// Unfortunately Bun doesn't expose readlink directly, so we use realpath
-				const target = await fsPromises.realpath(fullPath);
-				links.push({
-					path: getRelativePath(fullPath, basePath),
-					target: normalizePath(target),
-					modified: formatTimestamp(new Date(stat.mtime)),
-					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
-				});
+				// Stored relative to the dataset, like a hardlink target: the resolved absolute path
+				// would publish the author's local folders in the manifest, and a target outside the
+				// shared folder is nothing a receiver can resolve anyway.
+				const target = relative(await fsPromises.realpath(basePath), await fsPromises.realpath(fullPath));
+				if (!target || isAbsolute(target) || target === '..' || target.startsWith('..' + sep)) {
+					console.warn(`Warning: skipping symlink ${fullPath}, its target is outside the shared folder`);
+				} else {
+					links.push({
+						path: getRelativePath(fullPath, basePath),
+						target: normalizePath(target),
+						modified: formatTimestamp(new Date(stat.mtime)),
+						created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
+					});
+				}
 			} catch (e) {
 				console.warn(`Warning: Could not read symlink ${fullPath}`);
 			}
