@@ -15,8 +15,10 @@
 		 * (LISH search peer list) — the tree renders display-only there.
 		 */
 		fileRowsBaseY?: number | undefined;
+		/** Set when the manifest carries a signature that did not verify: it is then neither signed nor unsigned. */
+		invalidSignature?: boolean | undefined;
 	}
-	let { detail, fileRowsBaseY = undefined }: Props = $props();
+	let { detail, fileRowsBaseY = undefined, invalidSignature = false }: Props = $props();
 
 	interface TreeNode {
 		name: string;
@@ -134,6 +136,10 @@
 		white-space: pre-wrap;
 	}
 
+	.info-row .value.invalid {
+		color: var(--color-error);
+	}
+
 	/* Mirrors the Table component frame so both render modes look the same. */
 	.file-tree {
 		display: flex;
@@ -191,10 +197,12 @@
 		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
 		<!-- The backend verified this signature over the whole manifest, so "signed by" is earned here. -->
 		<div class="info-row">
-			{#if detail.publisher}
+			{#if invalidSignature}
+				<span class="label">{$t('lish.signature')}:</span> <span class="value invalid">{$t('lish.signatureInvalid')}</span>
+			{:else if detail.publisher}
 				<span class="label">{$t('lish.signedBy')}:</span> <span class="value mono">{detail.publisher}</span>
 			{:else}
-				<span class="label">{$t('lish.unsigned')}</span>
+				<span class="label">{$t('lish.signature')}:</span> <span class="value">{$t('lish.unsigned')}</span>
 			{/if}
 		</div>
 		{#if detail.description}
