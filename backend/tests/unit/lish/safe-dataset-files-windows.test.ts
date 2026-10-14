@@ -1,11 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import { link, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, parse } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
-import { openWindowsDatasetDirectory } from '../../../src/lish/safe-dataset-files-windows.ts';
+import { openWindowsDatasetDirectory, windowsVolumeKey } from '../../../src/lish/safe-dataset-files-windows.ts';
+import { rejection } from '../helpers/rejection.ts';
 
 const windows = process.platform === 'win32' ? describe : describe.skip;
+
+/** `net session` succeeds only in an elevated shell. */
+function isElevated(): boolean {
+	return process.platform === 'win32' && Bun.spawnSync(['net', 'session'], { stdout: 'ignore', stderr: 'ignore' }).exitCode === 0;
+}
+
+function freeDriveLetter(): string {
+	for (const letter of 'ZYXWVUTSRQPONMLKJIHG') if (!existsSync(`${letter}:\\`)) return letter;
+	throw new Error('No free drive letter');
+}
 
 windows('Windows anchored dataset files', () => {
 	test.each(['file', 'directory'] as const)('does not delete a %s replaced after the facade metadata check', async kind => {
@@ -27,7 +39,7 @@ windows('Windows anchored dataset files', () => {
 				else await mkdir(join(path, name));
 				await remove(name, identity);
 			};
-			await expect(dataset[method]('target', expected!.identity)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(dataset[method]('target', expected!.identity))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			expect(intercepted).toBe(true);
 			if (kind === 'file') {
 				expect(await readFile(join(path, 'target'), 'utf8')).toBe('replacement');
@@ -49,7 +61,7 @@ windows('Windows anchored dataset files', () => {
 			const directory = await root.createDirectory('files');
 			const directoryIdentity = (await directory.stat()).identity;
 			try {
-				await expect(root.createDirectory('files')).rejects.toMatchObject({ code: 'EEXIST' });
+				expect(await rejection(root.createDirectory('files'))).toMatchObject({ code: 'EEXIST' });
 				const file = await directory.openFile('part', 'create');
 				const fileIdentity = (await file.stat()).identity;
 				try {
@@ -59,9 +71,9 @@ windows('Windows anchored dataset files', () => {
 					expect(await file.read(bytes, 1)).toBe(3);
 					expect(bytes.toString()).toBe('bXY');
 					expect(await file.read(bytes, 0x100000001)).toBe(0);
-					await expect(file.write(bytes, Number.MAX_SAFE_INTEGER + 1)).rejects.toMatchObject({ code: 'EINVAL' });
+					expect(await rejection(file.write(bytes, Number.MAX_SAFE_INTEGER + 1))).toMatchObject({ code: 'EINVAL' });
 					expect((await file.stat()).size).toBe(6);
-					await expect(directory.openFile('part', 'create')).rejects.toMatchObject({ code: 'EEXIST' });
+					expect(await rejection(directory.openFile('part', 'create'))).toMatchObject({ code: 'EEXIST' });
 					await file.truncate(4);
 				} finally {
 					await file.close();
@@ -71,17 +83,17 @@ windows('Windows anchored dataset files', () => {
 				expect(await readFile(join(path, 'files', 'part'), 'utf8')).toBe('abXY');
 				const reader = await directory.openFile('part', 'read');
 				try {
-					await expect(reader.write(Buffer.from('!'), 0)).rejects.toMatchObject({ code: 'EACCES' });
+					expect(await rejection(reader.write(Buffer.from('!'), 0))).toMatchObject({ code: 'EACCES' });
 				} finally {
 					await reader.close();
 				}
 				await directory.removeFile('part', fileIdentity);
-				await expect(directory.openFile('part', 'read')).rejects.toMatchObject({ code: 'ENOENT' });
+				expect(await rejection(directory.openFile('part', 'read'))).toMatchObject({ code: 'ENOENT' });
 			} finally {
 				await directory.close();
 			}
 			await root.removeDirectory('files', directoryIdentity);
-			await expect(root.openDirectory('files')).rejects.toMatchObject({ code: 'ENOENT' });
+			expect(await rejection(root.openDirectory('files'))).toMatchObject({ code: 'ENOENT' });
 		} finally {
 			await root.close();
 			await rm(path, { recursive: true, force: true });
@@ -94,11 +106,11 @@ windows('Windows anchored dataset files', () => {
 		const child = await root.createDirectory('parent');
 		const file = await child.openFile('part', 'create');
 		try {
-			await expect(rename(join(path, 'parent'), join(path, 'moved'))).rejects.toBeDefined();
+			expect(await rejection(rename(join(path, 'parent'), join(path, 'moved')))).toBeDefined();
 			await child.close();
 			await root.close();
-			await expect(rename(join(path, 'parent'), join(path, 'moved'))).rejects.toBeDefined();
-			await expect(rename(path, `${path}-moved`)).rejects.toBeDefined();
+			expect(await rejection(rename(join(path, 'parent'), join(path, 'moved')))).toBeDefined();
+			expect(await rejection(rename(path, `${path}-moved`))).toBeDefined();
 			await file.write(Buffer.from('anchored'), 0);
 		} finally {
 			await file.close();
@@ -108,7 +120,7 @@ windows('Windows anchored dataset files', () => {
 		try {
 			await rename(join(path, 'parent'), join(path, 'moved'));
 			expect(await readFile(join(path, 'moved', 'part'), 'utf8')).toBe('anchored');
-			await expect(file.stat()).rejects.toMatchObject({ code: 'EBADF' });
+			expect(await rejection(file.stat())).toMatchObject({ code: 'EBADF' });
 		} finally {
 			await rm(path, { recursive: true, force: true });
 		}
@@ -130,7 +142,7 @@ windows('Windows anchored dataset files', () => {
 			expect(first.toString()).toBe('abcd');
 			expect(second.toString()).toBe('EFGH');
 			expect(await readFile(join(path, 'data.bin'), 'utf8')).toBe('abcdEFGH');
-			await expect(file.read(Buffer.alloc(4), 0)).rejects.toMatchObject({ code: 'EBADF' });
+			expect(await rejection(file.read(Buffer.alloc(4), 0))).toMatchObject({ code: 'EBADF' });
 		} finally {
 			await file.close();
 			await root.close();
@@ -170,10 +182,10 @@ windows('Windows anchored dataset files', () => {
 		const root = await openWindowsDatasetDirectory(path);
 		try {
 			await symlink(type === 'file' ? join(outside, 'valuable') : outside, join(path, 'redirect'), type);
-			await expect(root.openDirectory('redirect')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(root.openFile('redirect', 'write')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(root.removeFile('redirect', 'unused')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-			await expect(root.removeDirectory('redirect', 'unused')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.openDirectory('redirect'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.openFile('redirect', 'write'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.removeFile('redirect', 'unused'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(root.removeDirectory('redirect', 'unused'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			expect((await lstat(join(path, 'redirect'))).isSymbolicLink()).toBe(true);
 			expect(await readFile(join(outside, 'valuable'), 'utf8')).toBe('unchanged');
 		} finally {
@@ -209,12 +221,128 @@ windows('Windows anchored dataset files', () => {
 		try {
 			for (const name of ['', '.', '..', '../outside', 'child\\outside', 'part:stream', 'NUL', 'COM1.log', 'part.', 'part ', 'x\0y']) {
 				for (const operation of [() => root.openDirectory(name), () => root.createDirectory(name), () => root.openFile(name, 'read'), () => root.openFile(name, 'write'), () => root.openFile(name, 'create'), () => root.removeFile(name, 'unused'), () => root.removeDirectory(name, 'unused')]) {
-					await expect(operation()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+					expect(await rejection(operation())).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				}
 			}
 		} finally {
 			await root.close();
 			await rm(path, { recursive: true, force: true });
 		}
+	});
+
+	test('opens a drive root as its root directory, not as the volume device', async () => {
+		const root = await openWindowsDatasetDirectory(parse(tmpdir()).root);
+		try {
+			expect((await root.stat()).kind).toBe('directory');
+		} finally {
+			await root.close();
+		}
+	});
+
+	// exFAT rejects the extended information classes with error 87 and gives its root directory a
+	// zero file id: the fallback path on a real volume. Creating one needs an elevated shell.
+	test.skipIf(!isElevated())(
+		'reads identities on exFAT through the fallback, accepting a zero id only for the root',
+		async () => {
+			const work = await mkdtemp(join(tmpdir(), 'lish-exfat-'));
+			const letter = freeDriveLetter();
+			const image = join(work, 'exfat.vhdx');
+			const diskpart = async (lines: string[]): Promise<void> => {
+				const script = join(work, 'diskpart.txt');
+				await writeFile(script, lines.join('\r\n'));
+				const child = Bun.spawn(['diskpart', '/s', script], { stdout: 'pipe', stderr: 'pipe' });
+				const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+				if (code !== 0) throw new Error(output);
+			};
+			try {
+				// The image exists from here on even when a later step fails, so cleanup always detaches it.
+				await diskpart([`create vdisk file="${image}" maximum=64 type=expandable`, `select vdisk file="${image}"`, 'attach vdisk', 'create partition primary', 'format fs=exfat quick', `assign letter=${letter}`]);
+				const volume = `${letter}:\\`;
+				await mkdir(join(volume, 'sub'));
+				await writeFile(join(volume, 'a.bin'), 'a');
+				await writeFile(join(volume, 'sub', 'b.bin'), 'b');
+				const root = await openWindowsDatasetDirectory(volume);
+				try {
+					expect((await root.stat()).kind).toBe('directory');
+					const a = await root.openFile('a.bin', 'read');
+					const sub = await root.openDirectory('sub');
+					try {
+						const b = await sub.openFile('b.bin', 'read');
+						try {
+							const ids = [(await a.stat()).identity, (await sub.stat()).identity, (await b.stat()).identity];
+							for (const id of ids) expect(id.slice(16)).not.toMatch(/^0+$/);
+							expect(new Set(ids).size).toBe(3);
+						} finally {
+							await b.close();
+						}
+					} finally {
+						await sub.close();
+						await a.close();
+					}
+				} finally {
+					await root.close();
+				}
+			} finally {
+				// Cleanup failures are reported but never replace the error that ended the test.
+				if (existsSync(image)) await diskpart([`select vdisk file="${image}"`, 'detach vdisk']).catch(error => console.error(`exFAT test image not detached: ${error}`));
+				await rm(work, { recursive: true, force: true }).catch(error => console.error(`exFAT test directory not removed: ${error}`));
+			}
+		},
+		60_000
+	);
+
+	// A fresh process, so no worker another test left open on the same volume skews the count.
+	test('ends the volume worker once every handle is closed, and after a failed open', async () => {
+		const path = await mkdtemp(join(tmpdir(), 'lish-worker-life-'));
+		const source = `
+			import { join } from 'node:path';
+			import { openWindowsDatasetDirectory, windowsDatasetWorkerCount } from './src/lish/safe-dataset-files-windows.ts';
+			const path = ${JSON.stringify(path)};
+			const counts = [];
+			const root = await openWindowsDatasetDirectory(path);
+			let file;
+			try {
+				file = await root.openFile('part', 'create');
+				await root.close();
+				counts.push(windowsDatasetWorkerCount());
+				await file.close();
+				counts.push(windowsDatasetWorkerCount());
+				await openWindowsDatasetDirectory(join(path, 'missing')).then(() => counts.push('opened'), error => counts.push(error.code));
+				counts.push(windowsDatasetWorkerCount());
+			} finally {
+				await file?.close();
+				await root.close();
+			}
+			console.log(JSON.stringify(counts));
+		`;
+		const child = Bun.spawn([process.execPath, '--eval', source], { cwd: join(import.meta.dir, '../../..'), stdout: 'pipe', stderr: 'pipe' });
+		const timer = setTimeout(() => child.kill(), 20_000);
+		try {
+			const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+			if (code !== 0) throw new Error(error);
+			expect(JSON.parse(output.trim())).toEqual([1, 0, 'ENOENT', 0]);
+		} finally {
+			clearTimeout(timer);
+			if (child.exitCode === null) {
+				child.kill();
+				await child.exited;
+			}
+			await rm(path, { recursive: true, force: true });
+		}
+	}, 30_000);
+});
+
+describe('Windows dataset volume key', () => {
+	test.each([
+		['C:\\data\\file', 'c:'],
+		['c:', 'c:'],
+		['\\\\?\\C:\\data', 'c:'],
+		['\\\\Server\\Share\\data', '\\\\server\\share'],
+		['\\\\?\\UNC\\Server\\Share\\data', '\\\\server\\share'],
+		['\\\\?\\UNC\\Other\\Share\\data', '\\\\other\\share'],
+		['//server/share/data', '\\\\server\\share'],
+		['\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\data', 'volume{0f1e2d3c-0000-0000-0000-000000000000}'],
+	])('%s is on %s', (path, volume) => {
+		expect(windowsVolumeKey(path)).toBe(volume);
 	});
 });

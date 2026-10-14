@@ -16,6 +16,8 @@ function nativeLibraries() {
 			GetLastError: { args: [], returns: FFIType.u32 },
 			GetFileType: { args: [FFIType.u64], returns: FFIType.u32 },
 			GetFileInformationByHandleEx: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+			GetFileInformationByHandle: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
+			GetFinalPathNameByHandleW: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32], returns: FFIType.u32 },
 			SetFileInformationByHandle: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			SetFilePointerEx: { args: [FFIType.u64, FFIType.i64, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 			ReadFile: { args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
@@ -37,6 +39,37 @@ function fail(code, message) {
 }
 function windowsError(operation, number = native().kernel.symbols.GetLastError()) {
 	throw Object.assign(new Error(operation), { operation, number });
+}
+// ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER: what FAT, exFAT and Samba
+// shares answer for information classes they do not implement.
+const UNSUPPORTED_INFO_CLASS = new Set([1, 50, 87]);
+/** Read an extended information class; false when the filesystem does not implement it. */
+function extendedInformation(handle, infoClass, buffer, operation) {
+	const kernel = native().kernel.symbols;
+	if (kernel.GetFileInformationByHandleEx(handle, infoClass, ptr(buffer), buffer.length)) return true;
+	const number = kernel.GetLastError();
+	if (!UNSUPPORTED_INFO_CLASS.has(number)) windowsError(operation, number);
+	return false;
+}
+/** Whether the handle is the root directory of its volume or share. */
+function isVolumeRoot(handle) {
+	const kernel = native().kernel.symbols;
+	// VOLUME_NAME_DOS is `\\?\D:\` for a drive root and `\\?\UNC\server\share` for a share root.
+	let buffer = Buffer.alloc(1024);
+	let length = kernel.GetFinalPathNameByHandleW(handle, ptr(buffer), buffer.length / 2, 0);
+	if (length >= buffer.length / 2) {
+		buffer = Buffer.alloc((length + 1) * 2);
+		length = kernel.GetFinalPathNameByHandleW(handle, ptr(buffer), buffer.length / 2, 0);
+	}
+	if (length === 0 || length >= buffer.length / 2) windowsError('Read final path');
+	const path = buffer.toString('utf16le', 0, length * 2);
+	return /^\\\\\?\\[A-Za-z]:\\$/u.test(path) || /^\\\\\?\\UNC\\[^\\]+\\[^\\]+\\?$/iu.test(path);
+}
+/** BY_HANDLE_FILE_INFORMATION, which every filesystem and SMB server answers. */
+function handleInformation(handle) {
+	const info = Buffer.alloc(52);
+	if (!native().kernel.symbols.GetFileInformationByHandle(handle, ptr(info))) windowsError('Read file information');
+	return info;
 }
 function component(name) {
 	if (!name || name === '.' || name === '..' || /[\x00-\x1f\\/:*?"<>|]/u.test(name) || /[. ]$/u.test(name) || /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\.|$)/iu.test(name)) {
@@ -75,14 +108,24 @@ class WindowsHandle {
 	async stat() {
 		const handle = this.value();
 		const kernel = native().kernel.symbols;
+		let legacy;
 		const attributes = Buffer.alloc(8);
-		if (!kernel.GetFileInformationByHandleEx(handle, 9, ptr(attributes), attributes.length)) windowsError('Read file attributes');
-		if (attributes.readUInt32LE(0) & 0x400) fail('LISH_UNSAFE_PATH', 'Dataset child is a reparse point');
+		const attributeBits = extendedInformation(handle, 9, attributes, 'Read file attributes') ? attributes.readUInt32LE(0) : (legacy ??= handleInformation(handle)).readUInt32LE(0);
+		if (attributeBits & 0x400) fail('LISH_UNSAFE_PATH', 'Dataset child is a reparse point');
 		if (kernel.GetFileType(handle) !== 1) fail('LISH_UNSAFE_PATH', 'Dataset object is not a disk file');
 		const standard = Buffer.alloc(24);
 		if (!kernel.GetFileInformationByHandleEx(handle, 1, ptr(standard), standard.length)) windowsError('Read file metadata');
 		const identity = Buffer.alloc(24);
-		if (!kernel.GetFileInformationByHandleEx(handle, 18, ptr(identity), identity.length)) windowsError('Read file identity');
+		if (!extendedInformation(handle, 18, identity, 'Read file identity')) {
+			// Same FILE_ID_INFO layout: volume serial, then the 64-bit file index as the low half of the id.
+			legacy ??= handleInformation(handle);
+			identity.writeUInt32LE(legacy.readUInt32LE(28), 0);
+			identity.writeUInt32LE(legacy.readUInt32LE(48), 8);
+			identity.writeUInt32LE(legacy.readUInt32LE(44), 12);
+		}
+		// A zero file id would make unrelated objects look identical. FAT gives it to the volume
+		// root directory alone, so it is accepted only there.
+		if (identity.subarray(8).every(byte => byte === 0) && !(standard[21] && isVolumeRoot(handle))) fail('LISH_UNSAFE_PATH', 'Filesystem does not report file identity');
 		const times = Buffer.alloc(40);
 		if (!kernel.GetFileInformationByHandleEx(handle, 0, ptr(times), times.length)) windowsError('Read file timestamps');
 		const size = standard.readBigInt64LE(8);
@@ -196,7 +239,8 @@ class WindowsDirectory extends WindowsHandle {
 	}
 }
 async function openWindowsDatasetDirectory(path) {
-	const resolved = await realpath(path);
+	// realpath('D:\\') answers 'D:', and '\\\\?\\D:' would open the volume device, not its root directory.
+	const resolved = (await realpath(path)).replace(/^([A-Za-z]:)$/u, '$1\\');
 	const extended = resolved.startsWith('\\\\?\\') ? resolved : resolved.startsWith('\\\\') ? `\\\\?\\UNC\\${resolved.slice(2)}` : `\\\\?\\${resolved}`;
 	const encoded = Buffer.from(`${extended}\0`, 'utf16le');
 	// The explicitly selected root may resolve a link once; children never do.

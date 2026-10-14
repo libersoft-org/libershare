@@ -7,6 +7,7 @@ import { addLISH } from '../../../src/db/lishs.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { openDataset } from '../../../src/lish/safe-dataset-files.ts';
 import { type ChunkID, type IStoredLISH, type LISHid } from '@shared';
+import { rejection } from '../helpers/rejection.ts';
 
 const LISH_ID = 'lish-chunk-reader-test' as LISHid;
 const CHUNKS = ['chunk-r-0', 'chunk-r-1', 'chunk-r-2'] as ChunkID[];
@@ -26,6 +27,8 @@ describe('DataServer.createChunkReader', () => {
 	let closeDelayMs = 0;
 	let closeFails = 0;
 	let finished = 0;
+	/** While set, every dataset close waits for it — a close that is provably still in progress. */
+	let closeGate: Promise<void> | undefined;
 	let dataServer: DataServer;
 
 	beforeEach(() => {
@@ -42,6 +45,7 @@ describe('DataServer.createChunkReader', () => {
 		closeDelayMs = 0;
 		closeFails = 0;
 		finished = 0;
+		closeGate = undefined;
 		const counting: typeof openDataset = async (...args) => {
 			opened++;
 			maxOpen = Math.max(maxOpen, opened - closed);
@@ -56,6 +60,7 @@ describe('DataServer.createChunkReader', () => {
 			dataset.close = async () => {
 				closed++;
 				if (closeDelayMs > 0) await Bun.sleep(closeDelayMs);
+				if (closeGate) await closeGate;
 				await close();
 				if (closeFails > 0) {
 					closeFails--;
@@ -74,6 +79,33 @@ describe('DataServer.createChunkReader', () => {
 	});
 
 	const text = (data: unknown): string => new TextDecoder().decode(data as Uint8Array);
+
+	// The close-ordering tests below must not depend on how late a timer fires: a loaded Windows CI
+	// runner fires a 20 ms timer well after 40 ms and stretches a 100 ms sleep past an open.
+	/** Hold every close at a gate until the returned function opens it. */
+	const holdCloses = (): (() => void) => {
+		let open!: () => void;
+		closeGate = new Promise(resolve => (open = resolve));
+		return open;
+	};
+	/** Wait until `condition` holds, polling; fails after `timeoutMs`. */
+	const until = async (condition: () => boolean, timeoutMs = 5000): Promise<void> => {
+		const deadline = performance.now() + timeoutMs;
+		while (!condition()) {
+			if (performance.now() > deadline) throw new Error('condition not met in time');
+			await Bun.sleep(5);
+		}
+	};
+	/** Whether `promise` settles within a short grace period. */
+	const settlesSoon = async (promise: Promise<unknown>): Promise<boolean> => {
+		let settled = false;
+		promise.then(
+			() => (settled = true),
+			() => (settled = true)
+		);
+		await Bun.sleep(30);
+		return settled;
+	};
 
 	it('opens a file once for consecutive chunks of one stream and closes it with the reader', async () => {
 		const reader = dataServer.createChunkReader();
@@ -225,11 +257,13 @@ describe('DataServer.createChunkReader', () => {
 	it('waits for a close the idle timer already started', async () => {
 		const reader = dataServer.createChunkReader(20);
 		await reader.getChunk(LISH_ID, CHUNKS[0]!);
-		closeDelayMs = 100;
-		await Bun.sleep(40);
-		expect(closed).toBe(1);
+		const openCloses = holdCloses();
+		await until(() => closed === 1);
 		expect(finished).toBe(0);
-		const release = await dataServer.holdChunkFiles(LISH_ID);
+		const holding = dataServer.holdChunkFiles(LISH_ID);
+		expect(await settlesSoon(holding)).toBe(false);
+		openCloses();
+		const release = await holding;
 		expect(finished).toBe(1);
 		release();
 		await reader.close();
@@ -241,25 +275,34 @@ describe('DataServer.createChunkReader', () => {
 		addLISH(db, { id: other, name: 'other', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', directory: dir, files: [{ path: 'other.bin', size: 4, checksums: ['chunk-e-0' as ChunkID] }], chunks: ['chunk-e-0' as ChunkID] });
 		const reader = dataServer.createChunkReader(60_000, 1);
 		await reader.getChunk(LISH_ID, CHUNKS[0]!);
-		closeDelayMs = 100;
+		const openCloses = holdCloses();
+		// Reading the other file evicts the first; its close starts and stays at the gate.
 		await reader.getChunk(other, 'chunk-e-0' as ChunkID);
+		expect(closed).toBe(1);
 		expect(finished).toBe(0);
-		const release = await dataServer.holdChunkFiles(LISH_ID);
+		const holding = dataServer.holdChunkFiles(LISH_ID);
+		expect(await settlesSoon(holding)).toBe(false);
+		openCloses();
+		const release = await holding;
 		expect(finished).toBe(1);
 		release();
-		closeDelayMs = 0;
 		await reader.close();
 	});
 
 	it('makes a second hold wait for the same close as the first', async () => {
 		const reader = dataServer.createChunkReader(60_000);
 		await reader.getChunk(LISH_ID, CHUNKS[0]!);
-		closeDelayMs = 100;
+		const openCloses = holdCloses();
 		const first = dataServer.holdChunkFiles(LISH_ID);
-		const second = await dataServer.holdChunkFiles(LISH_ID);
-		expect(finished).toBe(1);
-		second();
+		await until(() => closed === 1);
+		const second = dataServer.holdChunkFiles(LISH_ID);
+		expect(await settlesSoon(second)).toBe(false);
+		openCloses();
+		(await second)();
 		(await first)();
+		// One kept file, one close: the second hold joined the first one's close.
+		expect(closed).toBe(1);
+		expect(finished).toBe(1);
 		await reader.close();
 	});
 
@@ -278,7 +321,7 @@ describe('DataServer.createChunkReader', () => {
 		const reader = dataServer.createChunkReader(60_000);
 		await reader.getChunk(LISH_ID, CHUNKS[0]!);
 		closeFails = 1;
-		await expect(dataServer.holdChunkFiles(LISH_ID)).rejects.toThrow('close failed');
+		expect((await rejection(dataServer.holdChunkFiles(LISH_ID))).message).toBe('close failed');
 		// The failed hold is released: the next read is kept again.
 		await reader.getChunk(LISH_ID, CHUNKS[1]!);
 		expect(opened - closed).toBe(1);

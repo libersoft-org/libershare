@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { CodedError, type IStoredLISH } from '@shared';
 import { createDataset, openDataset, type SafeDataset } from '../../../src/lish/safe-dataset-files.ts';
 import { FileAllocator } from '../../../src/protocol/file-allocator.ts';
+import { rejection } from '../helpers/rejection.ts';
 
 async function fixture(run: (dataset: SafeDataset, path: string, outer: string) => Promise<void>): Promise<void> {
 	const outer = await mkdtemp(join(tmpdir(), 'lish-safe-files-'));
@@ -47,7 +48,7 @@ describe('safe dataset namespace', () => {
 					await dataset.assertPathBinding();
 					await rename(base, join(outer, 'renamed'));
 					await mkdir(join(base, 'root'), { recursive: true });
-					await expect(dataset.assertPathBinding()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+					expect(await rejection(dataset.assertPathBinding())).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				} finally {
 					await dataset.close();
 				}
@@ -62,7 +63,7 @@ describe('safe dataset namespace', () => {
 			const dataset = await openDataset(root);
 			try {
 				await rename(root, join(outer, 'renamed'));
-				await expect(dataset.assertPathBinding()).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				expect(await rejection(dataset.assertPathBinding())).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			} finally {
 				await dataset.close();
 			}
@@ -72,7 +73,7 @@ describe('safe dataset namespace', () => {
 	test('rejects absolute and traversal paths independently of the host platform', async () => {
 		await fixture(async (dataset, path) => {
 			for (const entry of ['C:/outside', 'C:outside', '/absolute', '../outside', 'a\\b', 'a//b']) {
-				await expect(dataset.prepare(manifest([{ path: entry, size: 1 }]), { reserve: true })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				expect(await rejection(dataset.prepare(manifest([{ path: entry, size: 1 }]), { reserve: true }))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			}
 			expect(await readdir(path)).toEqual([]);
 		});
@@ -98,7 +99,7 @@ describe('safe dataset namespace', () => {
 				['same', 'same'],
 				['parent', 'parent/child'],
 			]) {
-				await expect(dataset.prepare(manifest(paths.map(path => ({ path, size: 1 }))), { reserve: true })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				expect(await rejection(dataset.prepare(manifest(paths.map(path => ({ path, size: 1 }))), { reserve: true }))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				expect(await readdir(path)).toEqual([]);
 			}
 		});
@@ -107,11 +108,11 @@ describe('safe dataset namespace', () => {
 	test('requires complete preparation before a write and detects a replaced file', async () => {
 		await fixture(async (dataset, path) => {
 			await writeFile(join(path, 'data'), 'old');
-			await expect(dataset.openFile('data', 'write')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(dataset.openFile('data', 'write'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			await dataset.prepare(manifest([{ path: 'data', size: 3 }]));
 			await rename(join(path, 'data'), join(path, 'original'));
 			await writeFile(join(path, 'data'), 'replacement');
-			await expect(dataset.openFile('data', 'write')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(dataset.openFile('data', 'write'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			expect(await readFile(join(path, 'data'), 'utf8')).toBe('replacement');
 		});
 	});
@@ -136,9 +137,9 @@ describe('safe dataset namespace', () => {
 	test('a derived root refuses a junction but an explicit user root may resolve it', async () => {
 		await fixture(async (_dataset, path, outer) => {
 			await symlink(path, join(outer, 'selected'), process.platform === 'win32' ? 'junction' : 'dir');
-			await expect(openDataset({ kind: 'derived', base: outer, component: 'selected' }, true)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(openDataset({ kind: 'derived', base: outer, component: 'selected' }, true))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			await (await openDataset({ kind: 'explicit', path: join(outer, 'selected') })).close();
-			await expect(createDataset({ kind: 'derived', base: outer, component: 'dataset' })).rejects.toMatchObject({ code: 'EEXIST' });
+			expect(await rejection(createDataset({ kind: 'derived', base: outer, component: 'dataset' }))).toMatchObject({ code: 'EEXIST' });
 		});
 	});
 
@@ -154,7 +155,7 @@ describe('safe dataset namespace', () => {
 			} finally {
 				await file.close();
 			}
-			await expect(dataset.prepare(lish)).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			expect(await rejection(dataset.prepare(lish))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		});
 	});
 
@@ -162,15 +163,17 @@ describe('safe dataset namespace', () => {
 		for (const exists of [false, true])
 			await fixture(async (dataset, path) => {
 				if (exists) await writeFile(join(path, 'File.bin'), 'KEEP');
-				await expect(
-					dataset.prepare(
-						manifest([
-							{ path: 'File.bin', size: 2 },
-							{ path: 'file.bin', size: 2 },
-						]),
-						{ reserve: true }
+				expect(
+					await rejection(
+						dataset.prepare(
+							manifest([
+								{ path: 'File.bin', size: 2 },
+								{ path: 'file.bin', size: 2 },
+							]),
+							{ reserve: true }
+						)
 					)
-				).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				if (exists) expect(await readFile(join(path, 'File.bin'), 'utf8')).toBe('KEEP');
 				else expect(await readdir(path)).toEqual([]);
 			});
@@ -179,15 +182,17 @@ describe('safe dataset namespace', () => {
 	test.skipIf(process.platform !== 'win32')('detects actual directory aliases before writing their different files', async () => {
 		await fixture(async (dataset, path) => {
 			await mkdir(join(path, 'Folder'));
-			await expect(
-				dataset.prepare(
-					manifest([
-						{ path: 'Folder/a', size: 1 },
-						{ path: 'folder/b', size: 1 },
-					]),
-					{ reserve: true }
+			expect(
+				await rejection(
+					dataset.prepare(
+						manifest([
+							{ path: 'Folder/a', size: 1 },
+							{ path: 'folder/b', size: 1 },
+						]),
+						{ reserve: true }
+					)
 				)
-			).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+			).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 			expect(await readdir(join(path, 'Folder'))).toEqual([]);
 		});
 	});
@@ -197,7 +202,7 @@ describe('safe dataset namespace', () => {
 			const dataset = await createDataset({ kind: 'derived', base: outer, component: 'new' });
 			try {
 				await dataset.prepare(manifest([{ path: 'file', size: 0 }]), { reserve: true });
-				await expect(dataset.removeFile('file', 'wrong')).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				expect(await rejection(dataset.removeFile('file', 'wrong'))).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				await dataset.removeFile('file', (await dataset.statFile('file'))!.identity);
 				await dataset.removeDirectory('', (await dataset.statDirectory())!.identity);
 			} finally {
@@ -221,7 +226,7 @@ describe('allocator whole namespace protection', () => {
 				]);
 				const allocator = new FileAllocator(path);
 				const result = operation === 'allocateStructure' ? allocator.allocateStructure(lish) : operation === 'allocateFiles' ? allocator.allocateFiles(lish, [0]) : allocator.allocateFile(lish, 0);
-				await expect(result).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+				expect(await rejection(result)).toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 				expect(await readFile(join(path, 'first'), 'utf8')).toBe('FIRST');
 				expect(await readFile(join(outer, 'outside'), 'utf8')).toBe('KEEP');
 			});
