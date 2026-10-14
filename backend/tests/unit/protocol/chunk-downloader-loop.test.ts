@@ -918,12 +918,30 @@ describe('ChunkDownloader peerLoop — a lost connection', () => {
 		const pm = new PeerManager();
 		const lost: string[] = [];
 		const cd = lossDownloader(ds, pm, 4, lost);
+		(cd as any).deps.announcedHave = (peerID: string): boolean => peerID === 'peer-not-synced';
 		pm.tryAdd('peer-not-synced', client as never, 'RELAY');
 
 		await cd.run();
 
 		expect(lost).toEqual(['peer-not-synced']);
 		expect(pm.isDropped('peer-not-synced')).toBe(false);
+	}, 15000);
+
+	it('quarantines a probed peer that never announced the LISH on its first refusal', async () => {
+		// The same answer means "I do not have it" from a lishnet member found by probing.
+		const { missing } = makeChunks(4);
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'refuse' as Reply])));
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const lost: string[] = [];
+		const cd = lossDownloader(ds, pm, 4, lost);
+		(cd as any).deps.announcedHave = (): boolean => false;
+		pm.tryAdd('peer-probed', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(lost).toEqual([]);
+		expect(pm.isDropped('peer-probed')).toBe(true);
 	}, 15000);
 
 	it('still quarantines a peer that refuses the LISH after it has served this stream', async () => {
@@ -941,6 +959,8 @@ describe('ChunkDownloader peerLoop — a lost connection', () => {
 		const pm = new PeerManager();
 		const lost: string[] = [];
 		const cd = lossDownloader(ds, pm, 2, lost);
+		// An announced seeder: only the answer it already gave on this stream may decide the quarantine.
+		(cd as any).deps.announcedHave = (): boolean => true;
 		pm.tryAdd('peer-not-shared', client as never, 'DIRECT');
 
 		await cd.run();

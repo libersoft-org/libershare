@@ -93,11 +93,15 @@ interface LISHsHandlers {
 	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	stopVerifyAll: () => Promise<SuccessResponse>;
+	/** The user's stop of every verification: also forgets them, so a restart does not resume them. */
+	cancelVerifyAll: () => Promise<SuccessResponse>;
 	stopCreate: (p?: unknown, client?: unknown) => Promise<SuccessResponse>;
 	/** As {@link LISHsHandlers.stopCreate}, but for every creation at once — maintenance only. */
 	stopAllCreates: () => Promise<SuccessResponse>;
 	move: (p: MoveParams) => Promise<SuccessResponse>;
 	startVerification: (lishID: string) => void;
+	/** Re-queue the verifications a stop or crash interrupted; called once at startup. */
+	resumePendingVerifications: () => void;
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
 	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
 	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
@@ -582,6 +586,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (currentVerification?.lishID === lishID) return;
 		if (verificationQueue.includes(lishID)) return;
 		setBusy(lishID, 'verifying');
+		dataServer.setVerifyPending(lishID, true);
 		verificationQueue.push(lishID);
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, queued: true });
 		processVerificationQueue();
@@ -596,11 +601,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		setBusy(lishID, 'verifying');
 		broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, started: true });
 		let unsafe = false;
+		let failed = false;
 		run.promise = runVerification(dataServer, lishID, progress => broadcast('lishs:verify', progress), ac.signal)
 			.catch(async error => {
 				if (currentVerification !== run || ac.signal.aborted) return;
 				console.error(`[Verify] ${lishID.slice(0, 8)} failed:`, error);
-				if (error instanceof CodedError && error.code === ErrorCodes.LISH_UNSAFE_PATH) {
+				// An unsafe path is final; any other failure (permissions, disk) may be gone by the next start.
+				if (!(error instanceof CodedError && error.code === ErrorCodes.LISH_UNSAFE_PATH)) {
+					failed = true;
+				} else {
 					unsafe = true;
 					dataServer.setError(lishID, error.code, error.detail);
 					stopRecoveryForLISH(lishID);
@@ -615,6 +624,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				activeVerificationRuns.delete(run);
 				const isOwner = currentVerification === run;
 				if (isOwner) {
+					// Only a run that reached its end settles the LISH; an aborted or failed one is
+					// finished by the next start.
+					if (!ac.signal.aborted && !failed && !verificationQueue.includes(lishID)) dataServer.setVerifyPending(lishID, false);
 					if (!verificationQueue.includes(lishID)) {
 						clearBusy(lishID);
 						if (ac.signal.aborted) broadcast('lishs:verify', { lishID, filePath: '', verifiedChunks: 0, done: true });
@@ -622,7 +634,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 					currentVerification = null;
 				}
 				// Resume download if enabled — no-op if download not enabled or LISH deleted.
-				if (isOwner && !unsafe && !ac.signal.aborted && !mutationAdmission.isClosed) restartDownloadIfEnabled(lishID);
+				if (isOwner && !unsafe && !failed && !ac.signal.aborted && !mutationAdmission.isClosed) restartDownloadIfEnabled(lishID);
 				if (!mutationAdmission.isClosed) processVerificationQueue();
 			});
 		activeVerificationRuns.add(run);
@@ -635,6 +647,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			enqueueVerification(lishID);
 		} finally {
 			leave();
+		}
+	}
+
+	function resumePendingVerifications(): void {
+		for (const lishID of dataServer.getVerifyPendingLishs()) {
+			console.log(`[Verify] ${lishID.slice(0, 8)}: resuming verification interrupted before restart`);
+			startVerification(lishID);
 		}
 	}
 
@@ -681,6 +700,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['lishID']);
 		moveRecoveryTokens.delete(p.lishID);
 		clearBusy(p.lishID);
+		dataServer.setVerifyPending(p.lishID, false);
 		// Stop if currently running
 		if (currentVerification?.lishID === p.lishID) currentVerification.ac.abort();
 		// Remove from queue if pending
@@ -709,6 +729,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		stoppingAllVerifications = false;
 		if (!mutationAdmission.isClosed) processVerificationQueue();
 		return { success: true };
+	}
+
+	/**
+	 * The user's "stop all": unlike the shutdown and factory-reset path through {@link stopVerifyAll},
+	 * which leaves the stopped verifications pending for the next start, it forgets them.
+	 */
+	async function cancelVerifyAll(): Promise<SuccessResponse> {
+		// Cleared before the wait for running verifications: one requested during that wait marks
+		// itself afterwards and must keep its mark.
+		dataServer.clearAllVerifyPending();
+		return stopVerifyAll();
 	}
 
 	async function stopCreate(_p?: unknown, client?: unknown): Promise<SuccessResponse> {
@@ -912,5 +943,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

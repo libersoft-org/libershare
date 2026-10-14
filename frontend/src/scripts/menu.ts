@@ -192,13 +192,6 @@ export const menuStructure = derived(t, (): MenuStructure => ({
 					component: SettingsSystem,
 				},
 				{
-					// Not `network` — a top-level `network` item (LISH network browsing) already exists.
-					id: 'network-interfaces',
-					label: tt('settings.network.title'),
-					icon: '/img/ethernet.svg',
-					component: SettingsNetwork,
-				},
-				{
 					id: 'download',
 					label: tt('downloads.title'),
 					icon: '/img/download.svg',
@@ -435,6 +428,13 @@ export const menuStructure = derived(t, (): MenuStructure => ({
 							action: 'back' as const,
 						},
 					],
+				},
+				{
+					// Not `network` — a top-level `network` item (LISH network browsing) already exists.
+					id: 'network-interfaces',
+					label: tt('settings.network.title'),
+					icon: '/img/ethernet.svg',
+					component: SettingsNetwork,
 				},
 				{
 					id: 'audio',

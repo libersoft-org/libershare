@@ -857,6 +857,7 @@ describe('buildFactoryResetHandler — failed restore through the real transfer 
 		// A is an ordinary unfinished download; B's LISH has gone.
 		const transferData = {
 			clearError: () => {},
+			isVerifyPending: () => false,
 			setError: () => {},
 			getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
 			get: (lishID: string): any => (lishID === 'lish-a' ? { id: 'lish-a', name: 'a', directory: null, files: [] } : null),

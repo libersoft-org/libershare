@@ -22,6 +22,7 @@ const MISSING_DIR = join(tmpdir(), 'libershare-test-missing', 'nope-does-not-exi
 function makeDataServer(): DataServer {
 	return {
 		clearError: (): void => {},
+		isVerifyPending: () => false,
 		setError: (): void => {},
 		get: (): any => ({ directory: MISSING_DIR, files: [{ path: 'a.bin', size: 1 }] }),
 		getMissingChunks: (): string[] => ['chunk-0'],

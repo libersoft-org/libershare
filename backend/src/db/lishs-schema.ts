@@ -12,6 +12,7 @@ const LISHS_ADDED_COLUMNS: ReadonlyArray<readonly [string, string]> = [
 	['final_directory', 'TEXT DEFAULT NULL'],
 	['publisher', 'TEXT DEFAULT NULL'],
 	['signature', 'TEXT DEFAULT NULL'],
+	['verify_pending', 'BOOL NOT NULL DEFAULT FALSE'],
 ];
 
 /**
