@@ -268,7 +268,7 @@
 			"showAdvanced": "Show advanced settings",
 			"hideAdvanced": "Hide advanced settings",
 			"sign": "Sign with my identity",
-			"signHint": "The signature publicly links this item to your node ID.",
+			"signHint": "Others can check that your node created this item and that nobody has changed it. The signature also publicly links it to your node ID.",
 			"progress": {
 				"title": "Creating",
 				"creating": "Creating LISH ...",

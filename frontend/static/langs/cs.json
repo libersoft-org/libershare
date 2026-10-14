@@ -268,7 +268,7 @@
 			"showAdvanced": "Zobrazit pokročilá nastavení",
 			"hideAdvanced": "Skrýt pokročilá nastavení",
 			"sign": "Podepsat mou identitou",
-			"signHint": "Podpis veřejně spojí tuto položku s ID vašeho uzlu.",
+			"signHint": "Ostatní si ověří, že tuto položku vytvořil váš uzel a že ji nikdo nezměnil. Podpis ji ale veřejně spojí s ID vašeho uzlu.",
 			"progress": {
 				"title": "Vytváření",
 				"creating": "Vytváření LISHe ...",
