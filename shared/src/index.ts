@@ -191,6 +191,16 @@ export interface IPeerLishDetail {
 	publisher?: string | undefined;
 }
 
+/** One manifest from a .lish / .lishs file, with the outcome of checking it. */
+export interface ILISHFileInspection {
+	/** `invalid`: the manifest or its signature was refused, see {@link error}. */
+	signature: 'valid' | 'unsigned' | 'invalid';
+	/** Summary of the manifest; absent when its structure is invalid. `publisher` is set only for a valid signature. */
+	detail?: IPeerLishDetail | undefined;
+	/** Code of the refusal when {@link signature} is `invalid`. */
+	error?: string | undefined;
+}
+
 // LISH Network definition (pure network parameters)
 export interface LISHNetworkDefinition {
 	networkID: string;

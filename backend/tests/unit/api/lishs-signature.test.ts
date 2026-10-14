@@ -277,6 +277,26 @@ describe('create with sign', () => {
 	});
 });
 
+describe('inspecting a .lish file', () => {
+	it('reports each manifest with its signature state instead of failing the whole file', async () => {
+		const signed = await sign(manifest(), keyA);
+		const forged = { ...signed, name: 'Forged' };
+		const unsigned = manifest({ id: 'd0000000-0000-4000-8000-000000000005' });
+		const broken = manifest({ id: 'd0000000-0000-4000-8000-000000000006', files: [{ path: 'a.bin', size: 1024, checksums: [] }] });
+		const file = join(await tempDir('lish-inspect-'), 'many.lishs');
+		await writeFile(file, JSON.stringify([signed, forged, unsigned, broken]));
+
+		const [valid, invalid, plain, malformed] = await handlers().inspectFile({ filePath: file });
+
+		expect(valid).toMatchObject({ signature: 'valid', detail: { name: 'Signed', publisher: A } });
+		expect(invalid).toMatchObject({ signature: 'invalid', error: ErrorCodes.LISH_INVALID_SIGNATURE, detail: { name: 'Forged' } });
+		expect(invalid!.detail!.publisher).toBeUndefined();
+		expect(plain).toMatchObject({ signature: 'unsigned', detail: { id: unsigned.id } });
+		expect(malformed).toEqual({ signature: 'invalid', error: ErrorCodes.LISH_INVALID_MANIFEST });
+		expect(dataServer.list()).toHaveLength(0);
+	});
+});
+
 describe('create without files', () => {
 	it('refuses a folder holding only empty subfolders and stores nothing', async () => {
 		const source = await tempDir('lish-empty-src-');

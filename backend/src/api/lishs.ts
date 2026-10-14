@@ -1,7 +1,7 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHFileInspection, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification, summarizeManifest } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
@@ -88,6 +88,7 @@ interface LISHsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
 	parseFromJSON: (p: { json: string }) => Promise<ILISH[]>;
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
+	inspectFile: (p: { filePath: string }) => Promise<ILISHFileInspection[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
@@ -533,6 +534,34 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return verifiedPreview(parseLISHFromJSON(content));
 	}
 
+	/**
+	 * Unlike {@link parseFromFile}, a refused manifest is reported per item instead of failing the
+	 * whole file, so the user sees what the file claims next to why it does not hold.
+	 */
+	async function inspectFile(p: { filePath: string }): Promise<ILISHFileInspection[]> {
+		assert(p, ['filePath']);
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		return Promise.all(
+			(await importLISHFromFile(Utils.expandHome(p.filePath))).map(async (lish): Promise<ILISHFileInspection> => {
+				try {
+					validateLISHStructure(lish, maxChunkSize);
+				} catch (error) {
+					if (error instanceof CodedError) return { signature: 'invalid', error: error.code };
+					throw error;
+				}
+				const { publisher: _claimed, ...withoutPublisher } = lish;
+				try {
+					const state = await verifyManifestSignature(lish);
+					return state.signed ? { signature: 'valid', detail: summarizeManifest(lish) } : { signature: 'unsigned', detail: summarizeManifest(withoutPublisher) };
+				} catch (error) {
+					// The body is structurally sound, so show it; only the publisher claim is withheld.
+					if (error instanceof CodedError) return { signature: 'invalid', error: error.code, detail: summarizeManifest(withoutPublisher) };
+					throw error;
+				}
+			})
+		);
+	}
+
 	// Verification queue — only one verification runs at a time during normal use.
 	// Superseded runs remain tracked until their Promise settles so reset can drain them.
 	interface VerificationRun {
@@ -883,5 +912,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, verify, verifyAll, stopVerify, stopVerifyAll, stopCreate, stopAllCreates, move, startVerification, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }
