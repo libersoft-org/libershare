@@ -194,6 +194,29 @@ test('a verification interrupted by a shutdown is finished after the restart', a
 	}
 });
 
+test('a running and a queued verification are both finished after the restart', async () => {
+	const other = 'verify-resume-several-b';
+	const { run, id, hold, settle, restart, cleanup } = await setup('several', [other]);
+	try {
+		const release = hold(id);
+		await run().handlers.verify({ lishID: id });
+		await run().handlers.verify({ lishID: other });
+		const stopping = restart();
+		release();
+		await stopping;
+		expect(run().data.getVerifyPendingLishs()).toEqual([id, other]);
+
+		run().handlers.resumePendingVerifications();
+		await settle();
+
+		expect(run().data.getDetail(id)?.verifiedChunks).toBe(1);
+		expect(run().data.getDetail(other)?.verifiedChunks).toBe(1);
+		expect(run().data.getVerifyPendingLishs()).toEqual([]);
+	} finally {
+		await cleanup();
+	}
+});
+
 test('a shutdown leaves the started verification pending for the next start', async () => {
 	const { run, id, cleanup } = await setup('shutdown');
 	try {
