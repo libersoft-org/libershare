@@ -64,4 +64,15 @@ describe('requestManifest checks signature and expected publisher', () => {
 		await expect(client(signed).requestManifest(ID, undefined, null)).rejects.toMatchObject(peerFault);
 		expect((await client(stripped).requestManifest(ID, undefined, null)).publisher).toBeUndefined();
 	});
+
+	it('blames the peer for an over-limit chunk size it forged into a signed manifest', async () => {
+		const huge = DEFAULT_MAX_CHUNK_SIZE * 2;
+		const signed = await sign(manifest(), keyA);
+		const forged = { ...signed, chunkSize: huge, files: [{ path: 'a.txt', size: huge, checksums: [CHECKSUM] }] };
+		await expect(client(forged).requestManifest(ID)).rejects.toMatchObject(peerFault);
+		await expect(client(manifest({ chunkSize: huge, files: [{ path: 'a.txt', size: huge, checksums: [CHECKSUM] }] })).requestManifest(ID, undefined, A)).rejects.toMatchObject(peerFault);
+		// Signed by the publisher itself, the over-limit size is a property of the LISH.
+		const authentic = await sign(manifest({ chunkSize: huge, files: [{ path: 'a.txt', size: huge, checksums: [CHECKSUM] }] }), keyA);
+		await expect(client(authentic).requestManifest(ID, undefined, A)).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
+	});
 });

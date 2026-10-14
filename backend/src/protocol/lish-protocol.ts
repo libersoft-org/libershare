@@ -325,28 +325,32 @@ export class LISHClient {
 				// Summarize peer-controlled input without coercing a large binary value or
 				// allowing control characters to forge additional log lines.
 				if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${formatUntrustedValue(response.manifest?.id)})`);
+				// Any peer can relay a signed manifest, so a changed body, a stripped signature or
+				// another publisher's signature under this ID is a fault of the peer that sent it.
+				const checkPublisher = async (): Promise<void> => {
+					try {
+						assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
+					} catch (e) {
+						if (!(e instanceof CodedError)) throw e;
+						// Logged here: callers only see the peer-fault code and move on to the next peer.
+						console.warn(`[PROTO] getLish ${safeLishID}: manifest refused, ${e.code} ${e.detail ?? ''}`.trim());
+						throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim());
+					}
+				};
 				// A manifest from the network is untrusted input — validate chunk-size bounds and
 				// manifest consistency before it can reach any caller (DB persist / import / probe).
 				try {
 					validateLISHStructure(response.manifest, getMaxChunkSize());
 				} catch (e) {
 					// A structurally malformed manifest is this peer's fault — surface it as a peer
-					// protocol error so fallback loops move on to the next peer. An over-limit
-					// chunkSize is a property of the LISH itself (every honest peer serves the same
-					// manifest), so it stays a terminal local error.
+					// protocol error so fallback loops move on to the next peer.
 					if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`);
+					// An over-limit chunk size is reported as a property of the LISH only when the
+					// manifest is not caught forging its publisher; a changed signed body is the peer's fault.
+					if (e instanceof CodedError) await checkPublisher();
 					throw e;
 				}
-				// Any peer can relay a signed manifest, so a changed body, a stripped signature or
-				// another publisher's signature under this ID is a fault of the peer that sent it.
-				try {
-					assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
-				} catch (e) {
-					if (!(e instanceof CodedError)) throw e;
-					// Logged here: callers only see the peer-fault code and move on to the next peer.
-					console.warn(`[PROTO] getLish ${safeLishID}: manifest refused, ${e.code} ${e.detail ?? ''}`.trim());
-					throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim());
-				}
+				await checkPublisher();
 				// Emitted only after validation passes — a rejected manifest must not flash a full bar.
 				if (total > 0) safeEmit(total, total);
 				// Sanitize the peer-supplied manifest: a malicious or outdated peer could embed
