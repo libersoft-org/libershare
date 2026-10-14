@@ -334,7 +334,8 @@ export class LISHClient {
 						if (!(e instanceof CodedError)) throw e;
 						// Logged here: callers only see the peer-fault code and move on to the next peer.
 						console.warn(`[PROTO] getLish ${safeLishID}: manifest refused, ${e.code} ${e.detail ?? ''}`.trim());
-						throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim());
+						// The cause keeps the real reason for callers that show it to the user.
+						throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim(), { cause: e });
 					}
 				};
 				// A manifest from the network is untrusted input — validate chunk-size bounds and

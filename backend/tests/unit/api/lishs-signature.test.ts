@@ -304,21 +304,29 @@ describe('add from a peer checks the expected publisher', () => {
 		return initLISHnetsHandlers(peerServing(served), dataServer, () => {}, settings, lishs.importManifestAdmitted, lishs.runMutation, new AbortController().signal);
 	}
 
+	// The user sees why this node refused the manifest, not a generic "peer rejected the request".
 	it('refuses another publisher than the row the user picked', async () => {
 		const lishnets = lishnetsOver(await sign(manifest(), keyQ));
-		await expect(lishnets.addPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: A })).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		await expect(lishnets.addPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: A })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 		expect(dataServer.get(ID)).toBeFalsy();
 	});
 
 	it('refuses a signed manifest for an unsigned row', async () => {
 		const lishnets = lishnetsOver(await sign(manifest(), keyA));
-		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: null })).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: null })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+	});
+
+	it('refuses a signed manifest changed on the way, in the preview and when adding', async () => {
+		const forged = { ...(await sign(manifest(), keyA)), name: 'Forged' };
+		await expect(lishnetsOver(forged).getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
+		await expect(lishnetsOver(forged).addPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
+		expect(dataServer.get(ID)).toBeFalsy();
 	});
 
 	it('without a picked row, expects the publisher already stored under the ID', async () => {
 		await handlers().importManifest(await sign(manifest(), keyA), downloadDir);
 		const lishnets = lishnetsOver(manifest({ name: 'stripped' }));
-		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.PEER_INVALID_REQUEST });
+		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 	});
 
 	it('shows the verified publisher in the preview', async () => {

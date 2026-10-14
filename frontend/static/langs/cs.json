@@ -323,8 +323,8 @@
 		"reportedPublisher": "Uváděný vydavatel",
 		"publishersDiffer": "Pod stejným ID nabízejí různí vydavatelé",
 		"otherPublisherOnPeer": "Tento uzel nabízí pod stejným ID jiného vydavatele",
-		"errorInvalidSignature": "Neplatný podpis manifestu: {detail}",
-		"errorPublisherMismatch": "Manifest je od jiného vydavatele, než se očekávalo: {detail}",
+		"errorInvalidSignature": "Podpis manifestu nesedí. Obsah se po podepsání změnil, nebo ho uvedený vydavatel nepodepsal.",
+		"errorPublisherMismatch": "Vydavatel tohoto LISHe není ten, kterého aplikace čekala.",
 		"errorSigningUnsupportedKey": "Identita tohoto uzlu neumí podepisovat (je potřeba klíč Ed25519)"
 	},
 	"import": {

@@ -323,8 +323,8 @@
 		"reportedPublisher": "Reported publisher",
 		"publishersDiffer": "Different publishers offer items under the same ID",
 		"otherPublisherOnPeer": "This node offers a different publisher under the same ID",
-		"errorInvalidSignature": "Invalid manifest signature: {detail}",
-		"errorPublisherMismatch": "The manifest is from a different publisher than expected: {detail}",
+		"errorInvalidSignature": "The manifest signature does not match. The content changed after signing, or the stated publisher did not sign it.",
+		"errorPublisherMismatch": "The publisher of this LISH is not the one the app expected.",
 		"errorSigningUnsupportedKey": "This node identity cannot sign (an Ed25519 key is required)"
 	},
 	"import": {

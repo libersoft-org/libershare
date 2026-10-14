@@ -268,6 +268,10 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const stored = dataServer.get(p.lishID);
 		return stored ? (stored.publisher ?? null) : undefined;
 	}
+	/** A manifest this node refused over its signature or publisher: report that reason, not a generic peer fault. */
+	function refusalReason(error: CodedError): CodedError {
+		return error.code === ErrorCodes.PEER_INVALID_REQUEST && error.cause instanceof CodedError ? error.cause : error;
+	}
 
 	async function getPeerLish(p: PeerLishParams): Promise<IPeerLishDetail> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
@@ -302,7 +306,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			};
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
-			if (error instanceof CodedError) throw error;
+			if (error instanceof CodedError) throw refusalReason(error);
 			console.error(`[Peers] Failed to get LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}
@@ -320,7 +324,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher));
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
-			if (error instanceof CodedError) throw error;
+			if (error instanceof CodedError) throw refusalReason(error);
 			console.error(`[Peers] Failed to add LISH ${p.lishID.slice(0, 8)} from ${p.peerID.slice(0, 12)}:`, error.message?.slice(0, 120) ?? error);
 			throw new CodedError(ErrorCodes.PEER_UNREACHABLE, p.peerID);
 		}

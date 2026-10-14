@@ -144,9 +144,12 @@ export const ErrorCodes: { [K in ErrorCode]: K } = Object.fromEntries(errorCodes
 export class CodedError extends Error {
 	readonly code: ErrorCode;
 	readonly detail?: string | undefined;
+	/** The error this one stands for, when it is reported under a different code. */
+	declare readonly cause?: unknown;
 
-	constructor(code: ErrorCode, detail?: string) {
+	constructor(code: ErrorCode, detail?: string, options?: { cause?: unknown }) {
 		super(detail ? `${code}: ${detail}` : code);
+		if (options && 'cause' in options) Object.defineProperty(this, 'cause', { value: options.cause, enumerable: false, configurable: true, writable: true });
 		this.code = code;
 		this.detail = detail;
 	}
