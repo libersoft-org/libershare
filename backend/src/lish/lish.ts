@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
+import { dirname, isAbsolute, relative, sep } from 'node:path';
+import { type HashAlgorithm, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -40,7 +40,8 @@ function formatTimestamp(date: Date): string {
 }
 
 // Helper to extract permission bits from mode and format as octal string (remove file type bits)
-function getPermissions(mode: number): string {
+/** Octal permission bits of a file mode, without leading zeros (`0o044` gives `"44"`). */
+export function getPermissions(mode: number): string {
 	const perms = mode & 0o777; // Keep only the last 9 bits (rwxrwxrwx)
 	return perms.toString(8); // Convert to octal string
 }
@@ -291,14 +292,20 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 		if (isSymlink) {
 			// Handle symbolic link - read the link target
 			try {
-				// Unfortunately Bun doesn't expose readlink directly, so we use realpath
-				const target = await fsPromises.realpath(fullPath);
-				links.push({
-					path: getRelativePath(fullPath, basePath),
-					target: normalizePath(target),
-					modified: formatTimestamp(new Date(stat.mtime)),
-					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
-				});
+				// Stored relative to the dataset, like a hardlink target: the resolved absolute path
+				// would publish the author's local folders in the manifest, and a target outside the
+				// shared folder is nothing a receiver can resolve anyway.
+				const target = relative(await fsPromises.realpath(basePath), await fsPromises.realpath(fullPath));
+				if (!target || isAbsolute(target) || target === '..' || target.startsWith('..' + sep)) {
+					console.warn(`Warning: skipping symlink ${fullPath}, its target is outside the shared folder`);
+				} else {
+					links.push({
+						path: getRelativePath(fullPath, basePath),
+						target: normalizePath(target),
+						modified: formatTimestamp(new Date(stat.mtime)),
+						created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
+					});
+				}
 			} catch (e) {
 				console.warn(`Warning: Could not read symlink ${fullPath}`);
 			}
@@ -480,6 +487,35 @@ export function parseLISHFromJSON(json: string): ILISH[] {
 	const data = Utils.safeJSONParse(json, 'JSON input');
 	if (Array.isArray(data)) return data.map(item => validateImportedLISH(item));
 	return [validateImportedLISH(data)];
+}
+
+/**
+ * Summary of a structurally valid manifest for display: files without their checksums, totals.
+ * Carries `publisher` as given — callers pass a manifest whose signature they verified, or strip it.
+ */
+export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
+	const files = (manifest.files ?? []).map(f => {
+		const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
+		if (f.permissions !== undefined) entry.permissions = f.permissions;
+		if (f.modified !== undefined) entry.modified = f.modified;
+		if (f.created !== undefined) entry.created = f.created;
+		return entry;
+	});
+	return {
+		id: manifest.id,
+		name: manifest.name,
+		description: manifest.description,
+		created: manifest.created,
+		chunkSize: manifest.chunkSize,
+		checksumAlgo: manifest.checksumAlgo,
+		totalSize: files.reduce((sum, f) => sum + f.size, 0),
+		fileCount: files.length,
+		directoryCount: (manifest.directories ?? []).length,
+		files,
+		directories: manifest.directories ?? [],
+		links: manifest.links ?? [],
+		...(manifest.publisher ? { publisher: manifest.publisher } : {}),
+	};
 }
 
 export interface VerifyFileProgress {

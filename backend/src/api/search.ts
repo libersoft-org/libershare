@@ -4,7 +4,7 @@ import { type Settings } from '../settings.ts';
 import { lishTopic, MAX_SEARCH_QUERY_LENGTH } from '../protocol/constants.ts';
 import { trace } from '../logger.ts';
 import { LISH_PROTOCOL, LISHClient, registerSearchResultHandler, unregisterSearchResultHandler, type SearchResultAnnouncement } from '../protocol/lish-protocol.ts';
-import { CodedError, ErrorCodes, type LishSearchResult } from '@shared';
+import { CodedError, ErrorCodes, isPublisherShape, type LishSearchResult } from '@shared';
 
 /**
  * Concurrency cap for the unicast `getLishs` fallback. Each fan-out opens a
@@ -191,15 +191,20 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		const updates: LishSearchResult[] = [];
 		for (const lish of ann.lishs) {
 			if (typeof lish.id !== 'string' || lish.id.length === 0) continue;
-			let row = session.results.get(lish.id);
+			if (lish.publisher !== undefined && !isPublisherShape(lish.publisher)) continue;
+			// One row per (id, publisher): a peer reporting another publisher under the same ID
+			// must stay visible as a separate offer, not merge into the original publisher's row.
+			const key = `${lish.id}\u0000${lish.publisher ?? ''}`;
+			let row = session.results.get(key);
 			if (!row) {
 				row = {
 					id: lish.id,
 					...(lish.name !== undefined ? { name: lish.name } : {}),
 					...(lish.totalSize !== undefined ? { totalSize: lish.totalSize } : {}),
+					...(lish.publisher !== undefined ? { publisher: lish.publisher } : {}),
 					peers: [],
 				};
-				session.results.set(lish.id, row);
+				session.results.set(key, row);
 			}
 			// Avoid duplicate peer entries for the same LISH (same peer responding twice via mesh paths).
 			if (!row.peers.some(p => p.peerID === ann.peerID)) {

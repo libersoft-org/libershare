@@ -1,4 +1,4 @@
-import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, isPublisherShape, type IStoredLISH } from '@shared';
 import { encode, decode } from './codec.ts';
 import { MAX_LIST_RESPONSE_SIZE } from './constants.ts';
 import { readRemoteError } from './lish-response.ts';
@@ -7,6 +7,8 @@ export interface LISHListEntry {
 	id: string;
 	name?: string;
 	totalSize?: number;
+	/** Reported publisher of a signed item; the signature is checked only with the manifest. */
+	publisher?: string;
 }
 
 export interface LISHListRequest {
@@ -40,6 +42,7 @@ function entries(list: readonly IStoredLISH[], query: string | undefined, advert
 			id: lish.id,
 			...(lish.name !== undefined ? { name: lish.name } : {}),
 			totalSize: (lish.files ?? []).reduce((sum, file) => sum + file.size, 0),
+			...(lish.publisher !== undefined ? { publisher: lish.publisher } : {}),
 		}));
 }
 
@@ -174,7 +177,9 @@ export async function receiveLISHList(query: string | undefined, exchange: (requ
 		for (const entry of page) {
 			if (ids.has(entry.id)) throw invalid();
 			ids.add(entry.id);
-			result.push(entry);
+			// A malformed publisher drops only its row, after the page itself was judged: the page
+			// still counts for progress, so one bad row never ends the listing.
+			if (entry.publisher === undefined || isPublisherShape(entry.publisher)) result.push(entry);
 		}
 		if (reply['nextCursor'] === undefined) return result;
 		cursor = reply['nextCursor'] as string;

@@ -20,6 +20,7 @@
 		"@libp2p/identify": "^4.1.14",
 		"@libp2p/interface": "^3.3.0",
 		"@libp2p/mdns": "^12.0.32",
+		"@libp2p/peer-id": "^6.0.15",
 		"@libp2p/ping": "^3.1.13",
 		"@libp2p/simple-metrics": "^2.0.21",
 		"@libp2p/tcp": "^11.0.28",

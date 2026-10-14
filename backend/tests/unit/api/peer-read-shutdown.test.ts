@@ -34,7 +34,7 @@ function silentStream(): { stream: any; sent: () => number; aborted: () => boole
 function handlersOver(network: any, shutdown: AbortController) {
 	return initLISHnetsHandlers(
 		{ getRunningNetwork: () => network } as never,
-		{} as never,
+		{ get: () => undefined } as never,
 		() => {},
 		{} as never,
 		async () => ({ lishID: 'unused' }) as never,

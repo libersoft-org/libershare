@@ -241,15 +241,16 @@ export class LISHServingHandlers {
 		const entry: SeenSearch = { at: Date.now(), networks: arrivedOver, wasDirect };
 		this.deps.seenSearchIDs.set(dedupKey, entry);
 		const q = data.query.toLowerCase();
-		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
+		const matches: Array<{ id: string; name?: string; totalSize?: number; publisher?: string }> = [];
 		for (const lish of this.deps.dataServer.list()) {
 			if (!isSearchAdvertisableLish(lish)) continue;
 			const idLower = lish.id.toLowerCase();
 			const nameLower = lish.name?.toLowerCase() ?? '';
 			if (!idLower.includes(q) && !nameLower.includes(q)) continue;
 			const totalSize = (lish.files ?? []).reduce((sum: number, f: { size: number }) => sum + f.size, 0);
-			const entry: { id: string; name?: string; totalSize?: number } = { id: lish.id, totalSize };
+			const entry: { id: string; name?: string; totalSize?: number; publisher?: string } = { id: lish.id, totalSize };
 			if (lish.name !== undefined) entry.name = lish.name;
+			if (lish.publisher !== undefined) entry.publisher = lish.publisher;
 			matches.push(entry);
 		}
 		if (matches.length === 0) return;

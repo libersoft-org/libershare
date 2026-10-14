@@ -85,6 +85,7 @@ export function isCompressed(filePath: string): boolean {
 
 // LISH types
 export * from './lish.ts';
+export * from './lish-signature.ts';
 
 // API client
 export { API, type IRpcClient, type IWsClient } from './api.ts';
@@ -139,12 +140,15 @@ export interface PeerLishEntry {
 	id: string;
 	name?: string | undefined;
 	totalSize?: number | undefined;
+	/** Publisher the peer reports for the item; nobody has checked its signature yet. */
+	publisher?: string | undefined;
 }
 
 /**
  * Network-wide LISH search result row (Browse network → LISHs tab).
- * Aggregated by `id`: when the same LISH is offered by multiple peers,
- * `peers` accumulates one entry per offering peer.
+ * Aggregated by `(id, publisher)`: when the same LISH is offered by multiple peers,
+ * `peers` accumulates one entry per offering peer. Peers reporting different publishers
+ * under one ID give separate rows. `publisher` is only reported, never verified here.
  * `name` / `totalSize` come from the first responder; subsequent responders
  * may report identical or slightly different values — we keep the first to keep the row stable.
  */
@@ -152,6 +156,7 @@ export interface LishSearchResult {
 	id: string;
 	name?: string | undefined;
 	totalSize?: number | undefined;
+	publisher?: string | undefined;
 	peers: Array<{ peerID: string; networkID: string }>;
 }
 
@@ -182,6 +187,18 @@ export interface IPeerLishDetail {
 	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string }>;
 	directories: import('./lish.ts').IDirectoryEntry[];
 	links: import('./lish.ts').ILinkEntry[];
+	/** Peer ID whose signature over the whole manifest was verified; absent when unsigned. */
+	publisher?: string | undefined;
+}
+
+/** One manifest from a .lish / .lishs file, with the outcome of checking it. */
+export interface ILISHFileInspection {
+	/** `invalid`: the manifest or its signature was refused, see {@link error}. */
+	signature: 'valid' | 'unsigned' | 'invalid';
+	/** Summary of the manifest; absent when its structure is invalid. `publisher` is set only for a valid signature. */
+	detail?: IPeerLishDetail | undefined;
+	/** Code of the refusal when {@link signature} is `invalid`. */
+	error?: string | undefined;
 }
 
 // LISH Network definition (pure network parameters)
@@ -374,6 +391,8 @@ export interface ISettingsImportResult {
 export interface CreateLISHResponse {
 	lishID: string;
 	lishFile?: string | undefined;
+	/** Publisher of the new manifest when it was signed. */
+	publisher?: string | undefined;
 }
 
 export interface ImportLISHResponse {

@@ -1,5 +1,6 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
+import { assertExpectedPublisher, verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
 import { type Stream } from '@libp2p/interface';
 import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure, minMessageSizeFor, formatUntrustedValue } from '@shared';
 import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE, networkSetting } from '../settings.ts';
@@ -87,7 +88,7 @@ export interface LISHAnnounceHaveRequest {
 export interface LISHSearchResultRequest {
 	type: 'searchResult';
 	searchID: string;
-	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
+	lishs: Array<{ id: string; name?: string; totalSize?: number; publisher?: string }>;
 }
 // Discriminated responses: always exactly one of { data | manifest | lishs } OR { error }.
 export type LISHGetChunkResponse =
@@ -134,7 +135,7 @@ export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAn
 export interface SearchResultAnnouncement {
 	searchID: string;
 	peerID: string;
-	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
+	lishs: Array<{ id: string; name?: string; totalSize?: number; publisher?: string }>;
 }
 type SearchResultHandler = (ann: SearchResultAnnouncement) => void;
 const searchResultHandlers = new Map<string, SearchResultHandler>();
@@ -275,7 +276,12 @@ export class LISHClient {
 	// stream — the final (total, total) is emitted on SUCCESS only, so neither a failed
 	// transfer nor a counted-through error response can flash a full bar. A throwing
 	// callback never breaks the transfer or poisons the shared decoder.
-	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void): Promise<import('@shared').IStoredLISH> {
+	/**
+	 * Fetch a manifest and admit it only if its optional publisher signature is valid and matches
+	 * `expectedPublisher` (a Peer ID, `null` for an expected unsigned manifest, `undefined` when the
+	 * caller knows nothing). Any such failure is this peer's fault, so callers move to the next one.
+	 */
+	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void, expectedPublisher?: ExpectedPublisher): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
 		const safeLishID = formatUntrustedValue(lishID);
 		const safeEmit = (r: number, t: number): void => {
@@ -319,18 +325,33 @@ export class LISHClient {
 				// Summarize peer-controlled input without coercing a large binary value or
 				// allowing control characters to forge additional log lines.
 				if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${formatUntrustedValue(response.manifest?.id)})`);
+				// Any peer can relay a signed manifest, so a changed body, a stripped signature or
+				// another publisher's signature under this ID is a fault of the peer that sent it.
+				const checkPublisher = async (): Promise<void> => {
+					try {
+						assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
+					} catch (e) {
+						if (!(e instanceof CodedError)) throw e;
+						// Logged here: callers only see the peer-fault code and move on to the next peer.
+						console.warn(`[PROTO] getLish ${safeLishID}: manifest refused, ${e.code} ${e.detail ?? ''}`.trim());
+						// The cause keeps the real reason for callers that show it to the user.
+						throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.code} ${e.detail ?? ''}`.trim(), { cause: e });
+					}
+				};
 				// A manifest from the network is untrusted input — validate chunk-size bounds and
 				// manifest consistency before it can reach any caller (DB persist / import / probe).
 				try {
 					validateLISHStructure(response.manifest, getMaxChunkSize());
 				} catch (e) {
 					// A structurally malformed manifest is this peer's fault — surface it as a peer
-					// protocol error so fallback loops move on to the next peer. An over-limit
-					// chunkSize is a property of the LISH itself (every honest peer serves the same
-					// manifest), so it stays a terminal local error.
+					// protocol error so fallback loops move on to the next peer.
 					if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`);
+					// An over-limit chunk size is reported as a property of the LISH only when the
+					// manifest is not caught forging its publisher; a changed signed body is the peer's fault.
+					if (e instanceof CodedError) await checkPublisher();
 					throw e;
 				}
+				await checkPublisher();
 				// Emitted only after validation passes — a rejected manifest must not flash a full bar.
 				if (total > 0) safeEmit(total, total);
 				// Sanitize the peer-supplied manifest: a malicious or outdated peer could embed

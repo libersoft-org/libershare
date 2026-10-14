@@ -267,6 +267,8 @@
 			"dataPathNotFound": "The specified data path does not exist.",
 			"showAdvanced": "Show advanced settings",
 			"hideAdvanced": "Hide advanced settings",
+			"sign": "Sign with my identity",
+			"signHint": "Others can check that your node created this item and that nobody has changed it. The signature also publicly links it to your node ID.",
 			"progress": {
 				"title": "Creating",
 				"creating": "Creating LISH ...",
@@ -314,7 +316,19 @@
 		"errorDiskSpaceUnavailable": "Cannot check available disk space. Check access to the download and destination folders, then try again.",
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
-		"errorDownload": "Download failed: {detail}"
+		"errorDownload": "Download failed: {detail}",
+		"signature": "Signature",
+		"signedBy": "Signed by",
+		"unsigned": "Unsigned",
+		"signatureInvalid": "Does not match",
+		"signatureVerified": "The signature matches. The node shown below created this LISH and nobody has changed it since signing.",
+		"fileInfo": "LISH info",
+		"reportedPublisher": "Reported publisher",
+		"publishersDiffer": "Different publishers offer items under the same ID",
+		"otherPublisherOnPeer": "This node offers a different publisher under the same ID",
+		"errorInvalidSignature": "The manifest signature does not match. The content changed after signing, or the stated publisher did not sign it.",
+		"errorPublisherMismatch": "The publisher of this LISH is not the one the app expected.",
+		"errorSigningUnsupportedKey": "This node identity cannot sign (an Ed25519 key is required)"
 	},
 	"import": {
 		"uploadFromLocal": "Upload from local computer",

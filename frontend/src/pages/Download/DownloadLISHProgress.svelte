@@ -46,6 +46,7 @@
 	let status = $state<Status>('creating');
 	let resultLISHID = $state('');
 	let resultLISHFile = $state('');
+	let resultPublisher = $state('');
 	let errorText = $state('');
 
 	// File list with per-file progress
@@ -97,9 +98,10 @@
 		await api.subscribe('lishs.create:progress');
 
 		try {
-			const result = await api.lishs.create(params['dataPath'], params['lishFile'], params['addToSharing'], params['addToDownloading'], params['name'], params['description'], params['algorithm'], params['chunkSize'], params['threads'], params['minifyJSON'], params['compress'], params['compressionAlgorithm']);
+			const result = await api.lishs.create(params['dataPath'], params['lishFile'], params['addToSharing'], params['addToDownloading'], params['name'], params['description'], params['algorithm'], params['chunkSize'], params['threads'], params['minifyJSON'], params['compress'], params['compressionAlgorithm'], params['sign']);
 			resultLISHID = result.lishID;
 			resultLISHFile = result.lishFile || '';
+			resultPublisher = result.publisher ?? '';
 			status = 'done';
 			onComplete?.();
 		} catch (err: any) {
@@ -191,6 +193,9 @@
 			<Alert type="info" message={$t('lish.create.progress.done')} />
 			<div class="done-info">
 				<div>LISH ID: <span class="lish-id">{resultLISHID}</span></div>
+				{#if resultPublisher}
+					<div>{$t('lish.signedBy')}: <span class="lish-id">{resultPublisher}</span></div>
+				{/if}
 				{#if resultLISHFile}
 					<div>{$t('common.file')}: <span class="lish-id">{resultLISHFile}</span></div>
 				{/if}

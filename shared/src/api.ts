@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISHFileInspection, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 import { toNetworkMutationResponse, type NetworkMutationResponse } from './network-mutation.ts';
 
 type EventCallback = (data: any) => void;
@@ -380,12 +380,13 @@ class LISHnetsAPI {
 		return this.client.call<{ lishs: PeerLishEntry[] | null }>('lishnets.getPeerLishs', { peerID, networkID });
 	}
 
-	getPeerLish(lishID: string, peerID: string, networkID: string): Promise<IPeerLishDetail | null> {
-		return this.client.call<IPeerLishDetail | null>('lishnets.getPeerLish', { lishID, peerID, networkID });
+	/** `expectedPublisher`: Peer ID of the row the user picked, `null` for an unsigned row, omitted when unknown. */
+	getPeerLish(lishID: string, peerID: string, networkID: string, expectedPublisher?: string | null): Promise<IPeerLishDetail | null> {
+		return this.client.call<IPeerLishDetail | null>('lishnets.getPeerLish', { lishID, peerID, networkID, ...(expectedPublisher !== undefined ? { expectedPublisher } : {}) });
 	}
 
-	addPeerLish(lishID: string, peerID: string, networkID: string): Promise<{ lishID: string }> {
-		return this.client.call<{ lishID: string }>('lishnets.addPeerLish', { lishID, peerID, networkID });
+	addPeerLish(lishID: string, peerID: string, networkID: string, expectedPublisher?: string | null): Promise<{ lishID: string }> {
+		return this.client.call<{ lishID: string }>('lishnets.addPeerLish', { lishID, peerID, networkID, ...(expectedPublisher !== undefined ? { expectedPublisher } : {}) });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {
@@ -470,7 +471,7 @@ class LISHsAPI {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm, sign?: boolean): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -484,6 +485,7 @@ class LISHsAPI {
 			minifyJSON,
 			compress,
 			compressionAlgorithm,
+			sign,
 		});
 	}
 
@@ -505,6 +507,11 @@ class LISHsAPI {
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
 		return this.client.call<ILISH[]>('lishs.parseFromFile', { filePath });
+	}
+
+	/** What a .lish / .lishs file holds and whether each signature verifies; a bad signature is reported, not thrown. */
+	inspectFile(filePath: string): Promise<ILISHFileInspection[]> {
+		return this.client.call<ILISHFileInspection[]>('lishs.inspectFile', { filePath });
 	}
 
 	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */

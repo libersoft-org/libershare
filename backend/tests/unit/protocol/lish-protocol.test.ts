@@ -96,6 +96,12 @@ describe('lish-protocol – upload state', () => {
 		resetUploadState();
 	});
 
+	// The upload state is process-wide: entries seeded here must not reach later test files,
+	// which read it through getActiveTransfers().
+	afterEach(() => {
+		resetUploadState();
+	});
+
 	// ---- disableUpload / enableUpload / isUploadDisabled ----------------------
 
 	it('disableUpload adds lishID to pausedUploads', () => {
