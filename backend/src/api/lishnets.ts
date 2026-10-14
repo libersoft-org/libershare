@@ -1,6 +1,7 @@
 import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { summarizeManifest } from '../lish/lish.ts';
 import { type Settings } from '../settings.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, type NetworkMutationOutcome, CodedError, ErrorCodes, productName } from '@shared';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -280,30 +281,8 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
 			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher));
 			shutdownSignal.throwIfAborted();
-			// Strip checksums from files and compute summary
-			const files = (manifest.files ?? []).map(f => {
-				const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
-				if (f.permissions !== undefined) entry.permissions = f.permissions;
-				if (f.modified !== undefined) entry.modified = f.modified;
-				if (f.created !== undefined) entry.created = f.created;
-				return entry;
-			});
-			const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-			return {
-				id: manifest.id,
-				name: manifest.name,
-				description: manifest.description,
-				created: manifest.created,
-				chunkSize: manifest.chunkSize,
-				checksumAlgo: manifest.checksumAlgo,
-				totalSize,
-				fileCount: files.length,
-				directoryCount: (manifest.directories ?? []).length,
-				files,
-				directories: manifest.directories ?? [],
-				links: manifest.links ?? [],
-				...(manifest.publisher ? { publisher: manifest.publisher } : {}),
-			};
+			// requestManifest verified the signature, so the publisher it carries is earned.
+			return summarizeManifest(manifest);
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw refusalReason(error);
