@@ -49,6 +49,7 @@ for (const batch of [false, true])
 				isCompleteLISH: () => false,
 				getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
 				clearError: () => {},
+				isVerifyPending: () => false,
 				setError: () => {},
 			} as unknown as DataServer;
 			const originalInit = Downloader.prototype.initFromManifest;

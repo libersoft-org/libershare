@@ -341,6 +341,8 @@ export class APIServer {
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation, this.peerReadAbort.signal);
 		const _identity = initIdentityHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
+		// After the transfer handlers: a finished verification resumes the LISH's download through them.
+		_lishs.resumePendingVerifications();
 		const hasSubscribers = (event: string): boolean => {
 			for (const client of this.clients) {
 				if (client.data.subscribedEvents.has(event) || client.data.subscribedEvents.has('*')) return true;
@@ -498,7 +500,7 @@ export class APIServer {
 			'lishs.verify': _lishs.verify,
 			'lishs.verifyAll': _lishs.verifyAll,
 			'lishs.stopVerify': _lishs.stopVerify,
-			'lishs.stopVerifyAll': _lishs.stopVerifyAll,
+			'lishs.stopVerifyAll': _lishs.cancelVerifyAll,
 			'lishs.stopCreate': _lishs.stopCreate,
 			'lishs.move': _lishs.move,
 			// Transfer

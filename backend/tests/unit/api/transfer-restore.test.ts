@@ -94,6 +94,7 @@ describe('restoreAll through the real transfer handlers', () => {
 		// A is an ordinary unfinished download; B's LISH is gone.
 		const dataServer = {
 			clearError: () => {},
+			isVerifyPending: () => false,
 			setError: () => {},
 			getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
 			get: (lishID: string): any => (lishID === A ? { id: A, name: 'a', directory: null, files: [] } : null),

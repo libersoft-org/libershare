@@ -416,7 +416,6 @@
 		"download": {
 			"directoryDownload": "Adresář pro dokončená stahování",
 			"directoryTemp": "Adresář pro nedokončená stahování",
-			"completionCopyNotice": "Dokončení stahování může potřebovat místo pro další kopii. Aplikace dostupné místo kontroluje předem. Původní soubory odstraní až po bezpečném předání dat do cíle. Při kopírování mezi disky na macOS nesmějí jiné aplikace zdrojové soubory měnit.",
 			"directoryLISH": "Výchozí adresář pro LISH soubory",
 			"directoryLISHnet": "Výchozí adresář pro LISHNET soubory",
 			"directoryBackup": "Adresář pro zálohy nastavení",
