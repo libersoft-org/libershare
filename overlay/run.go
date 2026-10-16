@@ -29,6 +29,7 @@ const (
 	headerTimeout = 10 * time.Second
 	dialTimeout   = 20 * time.Second
 	maxHeader     = 256
+	orphanSweeps  = 10 // seconds after a reload during which dead tunnels' connections are closed
 )
 
 // bridge connects the overlay to the backend over loopback TCP. Every connection starts with one header line
@@ -313,12 +314,15 @@ func (b *bridge) controlHandler() http.Handler {
 	// dropping tunnels, and with pki.disconnect_invalid a revoked member is cut off at once.
 	mux.HandleFunc("POST /reload", func(w http.ResponseWriter, r *http.Request) {
 		b.cfg.ReloadConfig()
-		// disconnect_invalid closes a revoked peer's tunnels during the reload; its bridged TCP connections would
-		// otherwise hang until a timeout, because nothing inside the dead tunnel can reset them.
+		// disconnect_invalid closes a revoked peer's tunnels on the connection manager's next check, a second or
+		// two after the reload; its bridged TCP connections would otherwise hang until a timeout, because nothing
+		// inside the dead tunnel can reset them.
 		go func() {
-			time.Sleep(time.Second)
-			if n := b.closeOrphans(); n > 0 {
-				b.log.Info("closed bridged connections without a tunnel", "count", n)
+			for range orphanSweeps {
+				time.Sleep(time.Second)
+				if n := b.closeOrphans(); n > 0 {
+					b.log.Info("closed bridged connections without a tunnel", "count", n)
+				}
 			}
 		}()
 		reply(w, map[string]bool{"ok": true})
