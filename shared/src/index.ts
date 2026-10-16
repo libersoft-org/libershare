@@ -96,6 +96,8 @@ export { RpcClient, type RpcSession, type RpcState, type RpcTransport } from './
 
 // Error codes
 export { ErrorCodes, CodedError, type ErrorCode } from './errors.ts';
+import { type LISHOverlayDefinition } from './overlay.ts';
+export * from './overlay.ts';
 
 // Network types
 
@@ -191,6 +193,8 @@ export interface LISHNetworkDefinition {
 	description: string;
 	bootstrapPeers: string[];
 	created: string;
+	/** Present for a protected lishnet: it runs inside its own overlay instead of on the public node. */
+	overlay?: LISHOverlayDefinition;
 }
 
 // LISH Network config (stored network with enabled state)
@@ -392,6 +396,7 @@ export interface ILISHNetwork {
 	description?: string;
 	bootstrapPeers: string[];
 	created?: string;
+	overlay?: LISHOverlayDefinition;
 }
 
 // System metrics
