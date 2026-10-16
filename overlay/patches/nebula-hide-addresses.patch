@@ -1,0 +1,100 @@
+diff --git a/lighthouse.go b/lighthouse.go
+index bbd5ad49..978136ea 100644
+--- a/lighthouse.go
++++ b/lighthouse.go
+@@ -68,6 +68,8 @@ type LightHouse struct {
+ 	lighthouses atomic.Pointer[[]netip.Addr]
+ 
+ 	interval     atomic.Int64
++	// hideAddresses: answer queries with relays only (LAN addresses only to a querier behind the same public address)
++	hideAddresses atomic.Bool
+ 	updateCancel context.CancelFunc
+ 	ifce         EncWriter
+ 	nebulaPort   uint32 // 32 bits because protobuf does not have a uint16
+@@ -184,6 +186,7 @@ func (lh *LightHouse) GetUpdateInterval() int64 {
+ }
+ 
+ func (lh *LightHouse) reload(c *config.C, initial bool) error {
++	lh.hideAddresses.Store(c.GetBool("lighthouse.hide_addresses", false))
+ 	if initial || c.HasChanged("lighthouse.advertise_addrs") {
+ 		rawAdvAddrs := c.GetStringSlice("lighthouse.advertise_addrs", []string{})
+ 		advAddrs := make([]netip.AddrPort, 0)
+@@ -1185,7 +1188,9 @@ func (lhh *LightHouseHandler) handleHostQuery(n *NebulaMeta, fromVpnAddrs []neti
+ 		return
+ 	}
+ 
++	sameNat := false
+ 	found, ln, err := lhh.lh.queryAndPrepMessage(queryVpnAddr, func(c *cache) (int, error) {
++		sameNat = c.v4 != nil && c.v4.learned != nil && protoV4AddrPortToNetAddrPort(c.v4.learned).Addr() == addr.Addr()
+ 		n = lhh.resetMeta()
+ 		n.Type = NebulaMeta_HostQueryReply
+ 		if useVersion == cert.Version1 {
+@@ -1195,7 +1200,7 @@ func (lhh *LightHouseHandler) handleHostQuery(n *NebulaMeta, fromVpnAddrs []neti
+ 			n.Details.VpnAddr = netAddrToProtoAddr(queryVpnAddr)
+ 		}
+ 
+-		lhh.coalesceAnswers(useVersion, c, n)
++		lhh.coalesceAnswers(useVersion, c, n, sameNat)
+ 
+ 		return n.MarshalTo(lhh.pb)
+ 	})
+@@ -1215,11 +1220,13 @@ func (lhh *LightHouseHandler) handleHostQuery(n *NebulaMeta, fromVpnAddrs []neti
+ 	lhh.lh.metricTx(NebulaMeta_HostQueryReply, 1)
+ 	w.SendMessageToVpnAddr(header.LightHouse, 0, fromVpnAddrs[0], lhh.pb[:ln], lhh.nb, lhh.out[:0])
+ 
+-	lhh.sendHostPunchNotification(n, fromVpnAddrs, queryVpnAddr, w)
++	if !lhh.lh.hideAddresses.Load() || sameNat {
++		lhh.sendHostPunchNotification(n, fromVpnAddrs, queryVpnAddr, w, sameNat)
++	}
+ }
+ 
+ // sendHostPunchNotification signals the other side to punch some zero byte udp packets
+-func (lhh *LightHouseHandler) sendHostPunchNotification(n *NebulaMeta, fromVpnAddrs []netip.Addr, punchNotifDest netip.Addr, w EncWriter) {
++func (lhh *LightHouseHandler) sendHostPunchNotification(n *NebulaMeta, fromVpnAddrs []netip.Addr, punchNotifDest netip.Addr, w EncWriter, sameNat bool) {
+ 	whereToPunch := fromVpnAddrs[0]
+ 	found, ln, err := lhh.lh.queryAndPrepMessage(whereToPunch, func(c *cache) (int, error) {
+ 		n = lhh.resetMeta()
+@@ -1255,7 +1262,7 @@ func (lhh *LightHouseHandler) sendHostPunchNotification(n *NebulaMeta, fromVpnAd
+ 		} else {
+ 			return 0, errors.New("unsupported version")
+ 		}
+-		lhh.coalesceAnswers(useVersion, c, n)
++		lhh.coalesceAnswers(useVersion, c, n, sameNat)
+ 
+ 		return n.MarshalTo(lhh.pb)
+ 	})
+@@ -1276,7 +1283,23 @@ func (lhh *LightHouseHandler) sendHostPunchNotification(n *NebulaMeta, fromVpnAd
+ 	w.SendMessageToVpnAddr(header.LightHouse, 0, punchNotifDest, lhh.pb[:ln], lhh.nb, lhh.out[:0])
+ }
+ 
+-func (lhh *LightHouseHandler) coalesceAnswers(v cert.Version, c *cache, n *NebulaMeta) {
++func (lhh *LightHouseHandler) coalesceAnswers(v cert.Version, c *cache, n *NebulaMeta, sameNat bool) {
++	if lhh.lh.hideAddresses.Load() {
++		// relays only; LAN addresses (never a public one) for a querier behind the same public address
++		if sameNat && c.v4 != nil {
++			for _, r := range c.v4.reported {
++				if protoV4AddrPortToNetAddrPort(r).Addr().IsPrivate() {
++					n.Details.V4AddrPorts = append(n.Details.V4AddrPorts, r)
++				}
++			}
++		}
++	} else {
++		lhh.appendAddrs(c, n)
++	}
++	lhh.appendRelays(v, c, n)
++}
++
++func (lhh *LightHouseHandler) appendAddrs(c *cache, n *NebulaMeta) {
+ 	if c.v4 != nil {
+ 		if c.v4.learned != nil {
+ 			n.Details.V4AddrPorts = append(n.Details.V4AddrPorts, c.v4.learned)
+@@ -1294,7 +1317,9 @@ func (lhh *LightHouseHandler) coalesceAnswers(v cert.Version, c *cache, n *Nebul
+ 			n.Details.V6AddrPorts = append(n.Details.V6AddrPorts, c.v6.reported...)
+ 		}
+ 	}
++}
+ 
++func (lhh *LightHouseHandler) appendRelays(v cert.Version, c *cache, n *NebulaMeta) {
+ 	if c.relay != nil {
+ 		if v == cert.Version1 {
+ 			b := [4]byte{}
