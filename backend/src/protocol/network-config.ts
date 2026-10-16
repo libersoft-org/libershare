@@ -228,7 +228,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		//      instance for the relay widget; only the interval matters for that path.
 		// 5 s sample interval is sufficient for both: the leak monitor is anyway
 		// downsampled, and the relay widget refreshes far less often than 1 Hz.
-		metrics: withConnectionLiveness(simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }), params.connectionLiveness),
+		// The memory trace keeps one libp2p snapshot; only the public node feeds it, so protected nodes cannot overwrite it.
+		metrics: withConnectionLiveness(simpleMetrics({ intervalMs: 5000, onMetrics: overlay ? () => {} : onLibp2pMetrics }), params.connectionLiveness),
 		transports,
 		connectionEncrypters: [noise({ crypto: noiseCrypto })],
 		streamMuxers: [yamux()],
