@@ -39,6 +39,8 @@
 	let requestJSON = $derived(status?.request ? JSON.stringify(status.request) : '');
 	let relayed = $derived(status?.peers.filter(p => p.path === 'relay').length ?? 0);
 	let direct = $derived(status?.peers.filter(p => p.path === 'direct').length ?? 0);
+	/** Running is not enough: without a lighthouse or relay reachable the node is cut off. */
+	let online = $derived(!!status?.running && status.hosts.some(h => h.connected));
 
 	async function load(): Promise<void> {
 		try {
@@ -193,7 +195,7 @@
 						</TableRow>
 						<TableRow>
 							<TableCell><span class="label">{$t('settings.lishNetwork.protected.connection')}</span></TableCell>
-							<TableCell><span class="value">{status.running ? $t('settings.lishNetwork.protected.running') : $t('settings.lishNetwork.protected.notRunning')} · {tt('settings.lishNetwork.protected.peers', { relay: String(relayed), direct: String(direct) })}</span></TableCell>
+							<TableCell><span class="value">{online ? $t('settings.lishNetwork.protected.running') : $t('settings.lishNetwork.protected.notRunning')} · {tt('settings.lishNetwork.protected.peers', { relay: String(relayed), direct: String(direct) })}</span></TableCell>
 						</TableRow>
 					{/if}
 					<TableRow>
@@ -205,7 +207,10 @@
 							{#each status.hosts as host (host.role + host.vpnIP)}
 								<div class="host">
 									<Icon img={host.connected ? '/img/check.svg' : '/img/cross.svg'} size="2vh" padding="0" colorVariable={host.connected ? '--color-success' : '--secondary-foreground'} alt={host.connected ? $t('settings.lishNetwork.protected.hostConnected') : $t('settings.lishNetwork.protected.hostDisconnected')} />
-									<span class="value">{$t(`settings.lishNetwork.protected.${host.role}`)}: <span class="mono">{host.addr}</span> ({host.vpnIP})</span>
+									<span class="value"
+										>{$t(`settings.lishNetwork.protected.${host.role}`)}: <span class="mono">{host.addr}</span> ({host.vpnIP}){#if host.self}
+											· {$t('settings.lishNetwork.protected.self')}{/if}</span
+									>
 								</div>
 							{/each}
 						</TableCell>
@@ -221,7 +226,7 @@
 					<ButtonBar basePosition={[0, 3]}>
 						<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.requestAccess')} disabled={busy} onConfirm={requestAccess} />
 					</ButtonBar>
-				{:else}
+				{:else if !founder}
 					{#if requestJSON}
 						<div role="group" data-mouse-activate-area={areaID}>
 							<Input value={requestJSON} label={$t('settings.lishNetwork.protected.requestText')} multiline rows={4} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 1]} />

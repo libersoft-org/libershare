@@ -38,7 +38,7 @@
 	const confirmPage = createSubPage(navHandle, () => areaID);
 
 	function askRevoke(member: OverlayMember): void {
-		if (member.revoked) return;
+		if (member.revoked || member.founder) return;
 		revoking = member;
 		confirmPage.enter(`${member.name} - ${$t('settings.lishNetwork.protected.revoke')}`, () => void closeConfirm());
 	}
@@ -62,7 +62,9 @@
 	}
 
 	function roles(member: OverlayMember): string {
-		return member.roles.map(r => $t(`settings.lishNetwork.protected.${r}`)).join(', ') || '—';
+		const names = member.roles.map(r => $t(`settings.lishNetwork.protected.${r}`));
+		if (member.founder) names.unshift($t('settings.lishNetwork.protected.roleFounder'));
+		return names.join(', ') || '—';
 	}
 
 	const offs: Array<(() => void) | void> = [];
@@ -130,7 +132,7 @@
 							<TableCell>{new Date(member.notAfter).toLocaleDateString()}</TableCell>
 							<TableCell>{roles(member)}</TableCell>
 							<TableCell>
-								{#if member.revoked}<span class="revoked">{$t('settings.lishNetwork.protected.revokedBadge')}</span>{:else}{$t('settings.lishNetwork.protected.revoke')}{/if}
+								{#if member.revoked}<span class="revoked">{$t('settings.lishNetwork.protected.revokedBadge')}</span>{:else if !member.founder}{$t('settings.lishNetwork.protected.revoke')}{/if}
 							</TableCell>
 						</TableRow>
 					{/each}

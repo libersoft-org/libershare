@@ -569,6 +569,8 @@
 				"hostConnected": "Connected",
 				"hostDisconnected": "Not connected",
 				"noHosts": "The network has no lighthouse yet.",
+				"self": "This computer",
+				"waitingCertificate": "The network waits for your certificate. Open Access and ask the founder for it.",
 				"peers": "Members: {relay} through a relay, {direct} directly",
 				"yourName": "Your name in the network",
 				"infraAddr": "Offer this computer as lighthouse and relay (public host:port, optional)",

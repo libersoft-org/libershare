@@ -206,7 +206,7 @@
 			{#if requests.length === 0}
 				<Alert type="info" message={$t('settings.lishNetwork.protected.noRequests')} />
 			{:else}
-				<Table columns="1fr 1fr 1fr" columnsMobile="1fr 1fr">
+				<Table columns="1fr 1fr 1fr" columnsMobile="1fr 1fr 1fr">
 					<TableHeader>
 						<TableCell>{$t('settings.lishNetwork.protected.colName')}</TableCell>
 						<TableCell>{$t('settings.lishNetwork.protected.colPeer')}</TableCell>

@@ -569,6 +569,8 @@
 				"hostConnected": "Připojeno",
 				"hostDisconnected": "Nepřipojeno",
 				"noHosts": "Síť zatím nemá žádnou vrátnici.",
+				"self": "Tento počítač",
+				"waitingCertificate": "Síť čeká na tvůj certifikát. Otevři Přístup a požádej o něj zakladatele.",
 				"peers": "Členové: {relay} přes relay, {direct} napřímo",
 				"yourName": "Tvoje jméno v síti",
 				"infraAddr": "Nabídnout tento počítač jako vrátnici a relay (veřejný host:port, nepovinné)",

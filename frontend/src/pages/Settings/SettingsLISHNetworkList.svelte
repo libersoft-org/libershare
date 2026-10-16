@@ -430,6 +430,9 @@
 									{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}
 								</div>
 							{/if}
+							{#if network.overlay && network.enabled && $peerCounts[network.networkID] === undefined}
+								<Alert type="info" message={$t('settings.lishNetwork.protected.waitingCertificate')} />
+							{/if}
 							{#if networkErrors[network.networkID]}
 								<Alert type="error" message={networkErrors[network.networkID]!} />
 							{/if}
