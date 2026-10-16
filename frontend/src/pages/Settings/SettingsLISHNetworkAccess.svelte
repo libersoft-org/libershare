@@ -207,10 +207,7 @@
 							{#each status.hosts as host (host.role + host.vpnIP)}
 								<div class="host">
 									<Icon img={host.connected ? '/img/check.svg' : '/img/cross.svg'} size="2vh" padding="0" colorVariable={host.connected ? '--color-success' : '--secondary-foreground'} alt={host.connected ? $t('settings.lishNetwork.protected.hostConnected') : $t('settings.lishNetwork.protected.hostDisconnected')} />
-									<span class="value"
-										>{$t(`settings.lishNetwork.protected.${host.role}`)}: <span class="mono">{host.addr}</span> ({host.vpnIP}){#if host.self}
-											· {$t('settings.lishNetwork.protected.self')}{/if}</span
-									>
+									<span class="value">{$t(`settings.lishNetwork.protected.${host.role}`)}: <span class="mono">{host.addr}</span> ({host.vpnIP}){host.self ? ` · ${$t('settings.lishNetwork.protected.self')}` : ''}</span>
 								</div>
 							{/each}
 						</TableCell>
