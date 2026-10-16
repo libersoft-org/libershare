@@ -9,6 +9,7 @@ import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOA
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
+import { initOverlayHandlers } from './overlay.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
@@ -340,6 +341,7 @@ export class APIServer {
 		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation, this.peerReadAbort.signal);
 		const _identity = initIdentityHandlers(this.networks);
+		const _overlay = initOverlayHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
 		// After the transfer handlers: a finished verification resumes the LISH's download through them.
 		_lishs.resumePendingVerifications();
@@ -479,6 +481,21 @@ export class APIServer {
 			'lishnets.getBootstrapStatus': _lishnets.getBootstrapStatus,
 			'lishnets.getAllBootstrapStatuses': _lishnets.getAllBootstrapStatuses,
 			'lishnets.updateBootstrapPeers': _lishnets.updateBootstrapPeers,
+			// Protected lishnets
+			'overlay.create': _overlay.create,
+			'overlay.requestAccess': _overlay.requestAccess,
+			'overlay.importRequest': _overlay.importRequest,
+			'overlay.listRequests': _overlay.listRequests,
+			'overlay.rejectRequest': _overlay.rejectRequest,
+			'overlay.approve': _overlay.approve,
+			'overlay.issue': _overlay.issue,
+			'overlay.listMembers': _overlay.listMembers,
+			'overlay.revoke': _overlay.revoke,
+			'overlay.setHosts': _overlay.setHosts,
+			'overlay.importCertificate': _overlay.importCertificate,
+			'overlay.exportCA': _overlay.exportCA,
+			'overlay.importCA': _overlay.importCA,
+			'overlay.status': _overlay.status,
 			// Browse network — LISH search
 			'search.startSearch': _search.startSearch,
 			'search.cancelSearch': _search.cancelSearch,
@@ -593,6 +610,7 @@ export class APIServer {
 		this.networks.onPeerCountChange = counts => {
 			for (const client of this.clients) this.emit(client, 'peers:count', counts);
 		};
+		this.networks.onOverlayEvent = (event, data) => this.broadcast(event, data);
 		this.networks.onBootstrapStatusChange = (networkID, status) => {
 			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
 		};

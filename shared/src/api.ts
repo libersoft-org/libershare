@@ -1,4 +1,5 @@
 import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from './overlay.ts';
 import { toNetworkMutationResponse, type NetworkMutationResponse } from './network-mutation.ts';
 
 type EventCallback = (data: any) => void;
@@ -29,6 +30,7 @@ export class API {
 	readonly transfer: TransferAPI;
 	readonly search: SearchAPI;
 	readonly upload: UploadAPI;
+	readonly overlay: OverlayAPI;
 
 	constructor(client: IWsClient) {
 		this.client = client;
@@ -41,6 +43,7 @@ export class API {
 		this.transfer = new TransferAPI(client);
 		this.search = new SearchAPI(client);
 		this.upload = new UploadAPI(client);
+		this.overlay = new OverlayAPI(client);
 	}
 
 	// Raw call access. `timeoutMs` is forwarded to the client, which arms a timer only
@@ -64,6 +67,74 @@ export class API {
 
 	unsubscribe(...events: string[]): Promise<boolean> {
 		return this.client.call<boolean>('events.unsubscribe', { events });
+	}
+}
+
+/**
+ * Protected lishnets: founding one, asking for access, and the founder's approvals and revocations. An external
+ * service with the API token can drive the founder side the same way: listen to `overlay:request`, then call
+ * {@link OverlayAPI.issue} or {@link OverlayAPI.approve}.
+ */
+class OverlayAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	create(p: { name: string; description?: string; subnet?: string; lighthouseAddr?: string; lanDirect?: boolean; enabled?: boolean }): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('overlay.create', p);
+	}
+
+	requestAccess(networkID: string, name: string, infraAddr?: string): Promise<OverlayAccessRequest> {
+		return this.client.call<OverlayAccessRequest>('overlay.requestAccess', { networkID, name, ...(infraAddr ? { infraAddr } : {}) });
+	}
+
+	importRequest(request: OverlayAccessRequest): Promise<OverlayPendingRequest> {
+		return this.client.call<OverlayPendingRequest>('overlay.importRequest', { request });
+	}
+
+	listRequests(networkID: string): Promise<OverlayPendingRequest[]> {
+		return this.client.call<OverlayPendingRequest[]>('overlay.listRequests', { networkID });
+	}
+
+	rejectRequest(networkID: string, requestID: string): Promise<boolean> {
+		return this.client.call<boolean>('overlay.rejectRequest', { networkID, requestID });
+	}
+
+	approve(networkID: string, requestID: string, options: { validUntil?: string; roles?: OverlayRole[] } = {}): Promise<OverlayCertificateBundle> {
+		return this.client.call<OverlayCertificateBundle>('overlay.approve', { networkID, requestID, ...options });
+	}
+
+	issue(request: OverlayAccessRequest, options: { validUntil?: string; roles?: OverlayRole[] } = {}): Promise<OverlayCertificateBundle> {
+		return this.client.call<OverlayCertificateBundle>('overlay.issue', { request, ...options });
+	}
+
+	listMembers(networkID: string): Promise<OverlayMember[]> {
+		return this.client.call<OverlayMember[]>('overlay.listMembers', { networkID });
+	}
+
+	revoke(networkID: string, fingerprint: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('overlay.revoke', { networkID, fingerprint });
+	}
+
+	setHosts(networkID: string, lighthouses: LISHOverlayHost[], relays: LISHOverlayHost[]): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('overlay.setHosts', { networkID, lighthouses, relays });
+	}
+
+	importCertificate(certificate: OverlayCertificateBundle): Promise<OverlayStatus> {
+		return this.client.call<OverlayStatus>('overlay.importCertificate', { certificate });
+	}
+
+	exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
+		return this.client.call<{ networkID: string; caKey: string }>('overlay.exportCA', { networkID });
+	}
+
+	importCA(networkID: string, caKey: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('overlay.importCA', { networkID, caKey });
+	}
+
+	status(networkID: string): Promise<OverlayStatus> {
+		return this.client.call<OverlayStatus>('overlay.status', { networkID });
 	}
 }
 
