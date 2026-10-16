@@ -13,7 +13,7 @@ import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
-import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.ts';
+import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS, type OverlayNodeOptions } from './network-config.ts';
 import { effectiveNetworkConfig, type EffectiveNetworkConfig } from './network-settings.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
@@ -635,9 +635,12 @@ export class Network {
 	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
 
 	private readonly settings: Settings;
+	/** Set for the node of a protected lishnet: it then lives inside that network's overlay only. */
+	private readonly overlay: OverlayNodeOptions | undefined;
 
-	constructor(dataDir: string, dataServer: DataServer, settings: Settings) {
+	constructor(dataDir: string, dataServer: DataServer, settings: Settings, options: { overlay?: OverlayNodeOptions } = {}) {
 		this.dataDir = dataDir;
+		this.overlay = options.overlay;
 
 		this.dataServer = dataServer;
 		this.settings = settings;
@@ -909,6 +912,7 @@ export class Network {
 			bootstrapPeers,
 			myPeerID: privateKey.publicKey.toString(),
 			connectionLiveness: this.connectionLiveness,
+			...(this.overlay ? { overlay: this.overlay } : {}),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		// Aliased, not copied. The dial-gater bypass and the PX appSpecificScore close over
