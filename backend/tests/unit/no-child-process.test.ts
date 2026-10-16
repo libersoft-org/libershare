@@ -7,6 +7,9 @@ const root = resolve(import.meta.dir, '../../src');
 const allowed = new Map([
 	['network-helper-client.ts:runTrackedHelper', 'spawn'],
 	['native/linux/time-access-probe.ts:probeNativeTimeServiceAccess', 'Bun.spawn'],
+	// The protected-lishnet helper: one long-running process per joined lishnet and its one-shot key commands.
+	['overlay/overlay-binary.ts:spawnOverlayHelper', 'Bun.spawn'],
+	['overlay/overlay-binary.ts:runOverlayCommand', 'Bun.spawn'],
 ]);
 
 function owner(node: ts.Node): string {

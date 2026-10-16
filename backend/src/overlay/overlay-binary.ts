@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { type Subprocess } from 'bun';
 import { dirname, join } from 'node:path';
 import { CodedError, ErrorCodes } from '@shared';
 
@@ -28,6 +29,19 @@ export interface CertificateInfo {
 	issuer: string;
 	fingerprint: string;
 	publicKey: string;
+}
+
+/**
+ * Start `lish-overlay run` for one lishnet. Its stdin stays a pipe the backend holds: the helper exits as soon as
+ * that pipe closes, so it cannot outlive the backend. The token travels in the environment, never on the command line.
+ */
+export function spawnOverlayHelper(configPath: string, port: number, token: string): Subprocess<'pipe', 'pipe', 'pipe'> {
+	return Bun.spawn([overlayBinaryPath(), 'run', '--config', configPath, '--port', String(port)], {
+		stdin: 'pipe',
+		stdout: 'pipe',
+		stderr: 'pipe',
+		env: { ...process.env, LISH_OVERLAY_TOKEN: token },
+	});
 }
 
 /**

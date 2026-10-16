@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { type Subprocess } from 'bun';
 import { CodedError, ErrorCodes } from '@shared';
-import { overlayBinaryPath } from './overlay-binary.ts';
+import { spawnOverlayHelper } from './overlay-binary.ts';
 
 /** Nebula needs a moment to bind its socket and reach the first lighthouse; anything longer is a broken start. */
 const READY_TIMEOUT_MS = 30_000;
@@ -46,12 +46,7 @@ export class OverlayHelper {
 	 */
 	static async start(opts: { configPath: string; port: number; tag: string; onExit: (code: number | null) => void }): Promise<OverlayHelper> {
 		const helper = new OverlayHelper(opts.tag);
-		const proc = Bun.spawn([overlayBinaryPath(), 'run', '--config', opts.configPath, '--port', String(opts.port)], {
-			stdin: 'pipe',
-			stdout: 'pipe',
-			stderr: 'pipe',
-			env: { ...process.env, LISH_OVERLAY_TOKEN: helper.token },
-		});
+		const proc = spawnOverlayHelper(opts.configPath, opts.port, helper.token);
 		helper.proc = proc;
 		const recent: string[] = [];
 		void helper.pumpLog(proc.stderr, line => {
