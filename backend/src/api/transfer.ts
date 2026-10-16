@@ -1,6 +1,7 @@
 import { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 export { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
+import { type Network } from '../protocol/network.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
@@ -482,7 +483,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function downloadAdmitted(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
-		const network = networks.getRunningNetwork();
+		const network = networks.networkFor(p.networkID);
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
 		await downloader.init(p.lishPath);
@@ -599,6 +600,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return launchPreparedDownloader(lishID, await prepareStoredDownloader(lishID, networkIDs, originalNetworkIDs, disabled, requireEnabled, scheduledAt), disabled, client);
 	}
 
+	/**
+	 * The node a stored download runs on. A downloader takes its peers from one node, and a protected lishnet's
+	 * peers are reachable only through its own node, so a LISH known in a protected lishnet downloads there; the
+	 * public lishnets it also belongs to simply contribute no peers on that node.
+	 */
+	function nodeForNetworks(networkIDs: string[]): Network {
+		const protectedID = networkIDs.find(id => networks.get(id)?.overlay);
+		return protectedID ? networks.networkFor(protectedID) : networks.getRunningNetwork();
+	}
+
 	/** Prepared candidates retain the request epoch across the handoff and batch preparation. */
 	async function prepareStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<PreparedStoredDownloader> {
 		const lish = dataServer.get(lishID);
@@ -609,7 +620,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			await access(hasChunks ? downloadDir : dirname(downloadDir), constants.R_OK | constants.W_OK);
 		}
 
-		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
+		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), nodeForNetworks(networkIDs), dataServer, networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
 		const prepared = { downloader, requireEnabled, scheduledAt, destroy: () => downloader.destroy() };
 		const refusal = storedStartRefusal(lishID, prepared, disabled);
@@ -1134,10 +1145,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * then wait for every operation already past either gate.
 	 */
 	async function pauseAllTransfers(): Promise<void> {
-		const network = networks.getNetwork();
+		// Every node serves the same shared data, protected lishnets' nodes included.
+		const nodes = new Set([networks.getNetwork(), ...networks.runningNodes()]);
 		// An admitted retry restores download and upload before this gate can close.
 		await recovery.pauseAllAndDrain();
-		await Promise.all([transferAdmission.closeAndDrain(), network.pauseLISHProtocolHandlersAndDrain()]);
+		await Promise.all([transferAdmission.closeAndDrain(), ...[...nodes].map(node => node.pauseLISHProtocolHandlersAndDrain())]);
 		if (pendingDownloaderCleanups.size > 0) await Promise.allSettled([...pendingDownloaderCleanups]);
 	}
 
@@ -1261,7 +1273,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	function resumeAllTransfers(): void {
-		networks.getNetwork().resumeLISHProtocolHandlers();
+		for (const node of new Set([networks.getNetwork(), ...networks.runningNodes()])) node.resumeLISHProtocolHandlers();
 		transferAdmission.open();
 		recovery.resumeAll();
 	}

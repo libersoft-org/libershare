@@ -68,8 +68,9 @@ export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEn
  * shutdown does not wait out a peer that answered the dial and then never sent the manifest.
  */
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifestAdmitted: ImportManifestFn, runLISHMutation: RunLISHMutationFn, shutdownSignal: AbortSignal): LISHnetsHandlers {
-	function withPeerClient<T>(peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
-		return withLISHClient(networks.getRunningNetwork(), peerID, shutdownSignal, request);
+	/** A peer of a lishnet is reached through that lishnet's node: its own for a protected lishnet. */
+	function withPeerClient<T>(networkID: string, peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
+		return withLISHClient(networks.networkFor(networkID), peerID, shutdownSignal, request);
 	}
 
 	function list(): LISHNetworkConfig[] {
@@ -238,7 +239,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function getPeerLishsOnce(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
 		try {
-			const lishs = await withPeerClient(p.peerID, client => client.requestList());
+			const lishs = await withPeerClient(p.networkID, p.peerID, client => client.requestList());
 			shutdownSignal.throwIfAborted();
 			return { lishs };
 		} catch (error: any) {
@@ -252,7 +253,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			const manifest = await withPeerClient(p.networkID, p.peerID, client => client.requestManifest(p.lishID, onProgress));
 			shutdownSignal.throwIfAborted();
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
@@ -293,7 +294,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		let manifest;
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			manifest = await withPeerClient(p.networkID, p.peerID, client => client.requestManifest(p.lishID, onProgress));
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw error;
@@ -320,7 +321,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	function getStatus(p: { networkID: string }): NetworkStatus {
 		assert(p, ['networkID']);
-		const network = networks.getRunningNetwork();
+		const network = networks.networkFor(p.networkID);
 		const allPeers = network.getPeers();
 		const topicPeers = networks.getTopicPeers(p.networkID);
 		return {
@@ -353,9 +354,11 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const result: NetworkInfo[] = [];
 		for (const config of configs) {
 			const info: NetworkInfo = { ...config };
-			if (config.enabled && nodeInfo) {
-				info.peerID = nodeInfo.peerID;
-				info.addresses = nodeInfo.addresses;
+			// A protected lishnet has its own identity and overlay addresses, and none while it is not running.
+			const node = config.overlay ? (networks.isJoined(config.networkID) ? networks.networkFor(config.networkID).getNodeInfo() : null) : nodeInfo;
+			if (config.enabled && node) {
+				info.peerID = node.peerID;
+				info.addresses = node.addresses;
 				const topicPeers = networks.getTopicPeers(config.networkID);
 				info.connected = topicPeers.length;
 				info.connectedPeers = topicPeers;
