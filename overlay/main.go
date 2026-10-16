@@ -1,10 +1,14 @@
 // Command lish-overlay runs one LiberShare protected network: a Nebula node in user space (gVisor netstack, no
-// TUN adapter, no administrator rights) bridged to the backend over loopback TCP. The backend starts one per
-// protected network.
+// TUN adapter, no administrator rights) bridged to the backend over loopback TCP. It also holds the key and
+// certificate commands, so the cryptography stays inside the Nebula library.
 //
 //	lish-overlay run --config nebula.yml --port 9090        (token in LISH_OVERLAY_TOKEN)
+//	lish-overlay ca --name N --network 100.64.0.0/16 --out-crt ca.crt --out-key ca.key
+//	lish-overlay keygen --out-key member.key
+//	lish-overlay sign --ca-crt ca.crt --ca-key ca.key --public-key member.pub --name N --ip 100.64.0.2/16 --out-crt member.crt
+//	lish-overlay print --crt member.crt
 //
-// version prints one JSON object on stdout.
+// Every command except run prints exactly one JSON object on stdout.
 package main
 
 import (
@@ -19,7 +23,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
-		fail(fmt.Errorf("usage: lish-overlay run|version [flags]"))
+		fail(fmt.Errorf("usage: lish-overlay run|ca|keygen|sign|print|version [flags]"))
 	}
 	var out any
 	var err error
@@ -27,6 +31,14 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = cmdRun(args)
+	case "ca":
+		out, err = cmdCA(args)
+	case "keygen":
+		out, err = cmdKeygen(args)
+	case "sign":
+		out, err = cmdSign(args)
+	case "print":
+		out, err = cmdPrint(args)
 	case "version":
 		out = map[string]string{"version": version}
 	default:
