@@ -104,5 +104,6 @@ Bootstrap peers are initial connection points for discovering other peers in the
 - At least one bootstrap peer must be provided
 - All timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-20T14:30:00.000Z")
 - A protected network keeps its CA: importing a definition with the same `networkID` and a different `caCert` is refused
+- Once stored, a protected network's lighthouses and relays change only through the founder's signed state; importing its definition again does not replace them
 
 
