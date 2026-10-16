@@ -35,7 +35,7 @@ jobs:
       - name: Overlay helper (build, Go tests)
         working-directory: overlay
         run: |
-          ./build.sh
+          bun build.ts
           go vet ./...
           go test ./...
       - name: Backend (typecheck, unit, e2e)

@@ -75,7 +75,7 @@ describe('protected lishnet on loopback', () => {
 	const nodes = (): Node[] => [founder, alice, bob].filter(Boolean);
 
 	beforeAll(async () => {
-		overlayBinaryPath(); // fails loudly when the helper is not built (overlay/build.sh)
+		overlayBinaryPath(); // fails loudly when the helper is not built (bun overlay/build.ts)
 		root = await mkdtemp(join(tmpdir(), 'lish-overlay-e2e-'));
 		const started = await Promise.all(['founder', 'alice', 'bob'].map(n => startNode(root, n)));
 		[founder, alice, bob] = [started[0]!, started[1]!, started[2]!];
