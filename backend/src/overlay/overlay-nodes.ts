@@ -291,8 +291,22 @@ export class OverlayNodes {
 		if (failures.length > 0) throw new AggregateError(failures, `${failures.length} protected lishnet(s) could not be stopped`);
 	}
 
-	/** Re-read the lishnet's row and apply it to a running node: new hosts and revocations, no restart. */
+	/**
+	 * Re-read the lishnet's row and apply it to a running node: new hosts, revocations and a renewed certificate, no
+	 * restart. A certificate for another overlay address (a member approved again after a revocation) restarts the
+	 * helper and the node: Nebula keeps the old certificate on reload, and the node listens on the old address.
+	 */
 	async reconfigure(networkID: string): Promise<void> {
+		const entry = this.running.get(networkID);
+		const row = this.deps.getRow(networkID);
+		if (entry && row?.overlay) {
+			const cert = await this.ownCertificate(entry.store, row.overlay.caCert);
+			if (cert && cert.networks[0]!.split('/')[0] !== entry.vpnIP) {
+				await this.leave(networkID);
+				await this.join(row);
+				return;
+			}
+		}
 		await this.lock(networkID).runExclusive(async () => {
 			const entry = this.running.get(networkID);
 			const row = this.deps.getRow(networkID);

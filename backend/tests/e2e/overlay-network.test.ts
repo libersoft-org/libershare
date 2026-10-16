@@ -170,4 +170,17 @@ describe('protected lishnet on loopback', () => {
 		});
 		expect(after.peers.some(p => p.vpnIP === bobStatus.certificate!.vpnIP)).toBe(false);
 	}, 120_000);
+
+	it('a revoked member approved again rejoins under its new address', async () => {
+		const old = (await bob.api.overlay.status(network.networkID)).certificate!;
+		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		const request = await bob.api.overlay.requestAccess(network.networkID, 'Bob');
+		const status = await bob.api.overlay.importCertificate(await founder.api.overlay.issue(request, {}));
+		// A revoked address is not handed out again, so the node has to move to the new one.
+		expect(status.certificate!.vpnIP).not.toBe(old.vpnIP);
+		expect(status.certificate!.revoked).toBe(false);
+		await until('alice sees bob again', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
+		const info = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!;
+		for (const addr of info.addresses!) expect(addr).toContain(`/ip4/${status.certificate!.vpnIP}/`);
+	}, 150_000);
 });
