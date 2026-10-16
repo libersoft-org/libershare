@@ -26,6 +26,7 @@ it('stops relay polling before waiting for accepted API requests', async () => {
 		const networks = {
 			getLibp2pNode: () => { reads++; return { getConnections: () => [] }; },
 			getNetwork: () => ({ cancelRunOperations() {}, pauseLISHProtocolHandlersAndDrain: async () => {} }),
+			runningNodes: () => [],
 			prepareMaintenance: async () => ({ drain: async () => {}, release() {} }),
 			stopAllNetworks: async () => {},
 		};

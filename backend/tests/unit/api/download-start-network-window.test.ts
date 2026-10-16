@@ -49,6 +49,8 @@ function makeNetworks(enabled: string[], joined: string[] = enabled): NetworksSt
 		}),
 		getEnabled: (): any[] => enabled.map(networkID => ({ networkID })),
 		isJoined: (id: string): boolean => joinedSet.has(id),
+		// Public lishnets only: no row carries an overlay, so every download runs on the public node.
+		get: (): undefined => undefined,
 		set onNetworkLeft(cb: unknown) {
 			leftHandler = cb as (id: string) => void;
 		},
