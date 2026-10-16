@@ -140,7 +140,7 @@ export class OverlayAccess {
 			const cert = await this.issueCertificate(store, { publicKey, peerID }, vpnIP, parsed.bits, ['member', 'founder', ...roles], ca.notAfter);
 			await store.writeText('member.crt', cert.cert);
 			const host: LISHOverlayHost[] = p.lighthouseAddr ? [{ vpnIP, addr: p.lighthouseAddr, peerID }] : [];
-			const founder: FounderData = { nextHost: 2, members: [{ name, peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false }], requests: [] };
+			const founder: FounderData = { nextHost: 2, members: [{ name, founder: true, peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false }], requests: [] };
 			await store.writeJSON('founder.json', founder);
 			const config: LISHNetworkConfig = {
 				networkID,
@@ -354,6 +354,7 @@ export class OverlayAccess {
 		const tunnels = new Map((helper?.hosts ?? []).map(h => [h.vpnAddrs[0] ?? '', h]));
 		const infra = new Set([...overlay.lighthouses, ...overlay.relays].map(h => h.vpnIP));
 		const request = cert ? null : await store.readRequest();
+		const ownIP = cert?.networks[0]?.split('/')[0];
 		return {
 			networkID,
 			role: store.has('ca.key') ? 'founder' : cert ? 'member' : 'none',
@@ -361,7 +362,7 @@ export class OverlayAccess {
 			...(request ? { request } : {}),
 			running: nodes.isRunning(networkID),
 			stateVersion: state?.version ?? overlay.version,
-			hosts: [...overlay.lighthouses.map(h => ({ ...h, role: 'lighthouse' as const })), ...overlay.relays.map(h => ({ ...h, role: 'relay' as const }))].map(h => ({ ...h, connected: tunnels.has(h.vpnIP) })),
+			hosts: [...overlay.lighthouses.map(h => ({ ...h, role: 'lighthouse' as const })), ...overlay.relays.map(h => ({ ...h, role: 'relay' as const }))].map(h => (h.vpnIP === ownIP ? { ...h, connected: true, self: true } : { ...h, connected: tunnels.has(h.vpnIP) })),
 			peers: [...tunnels.values()].filter(h => !infra.has(h.vpnAddrs[0] ?? '')).map(h => ({ vpnIP: h.vpnAddrs[0] ?? '', name: h.name, path: h.relayedVia.length > 0 ? 'relay' : 'direct' })),
 		};
 	}

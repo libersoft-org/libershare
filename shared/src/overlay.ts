@@ -76,6 +76,8 @@ export interface OverlayPendingRequest extends OverlayAccessRequest {
 /** A certificate the founder issued. */
 export interface OverlayMember {
 	name: string;
+	/** The founder's own node: the lishnet's authority, which cannot be revoked. */
+	founder?: boolean;
 	peerID: string;
 	vpnIP: string;
 	roles: OverlayRole[];
@@ -90,8 +92,10 @@ export type OverlayRole = 'lighthouse' | 'relay';
 
 export interface OverlayHostStatus extends LISHOverlayHost {
 	role: OverlayRole;
-	/** A tunnel to the host exists right now. */
+	/** A tunnel to the host exists right now (always true for {@link self}). */
 	connected: boolean;
+	/** This node is that host. */
+	self?: boolean;
 }
 
 export interface OverlayPeerStatus {
