@@ -51,8 +51,8 @@ func startNode(t *testing.T, dir, name, vpnIP string, extra m) *nebula.Control {
 	t.Helper()
 	crt, key := issue(t, dir, name, vpnIP)
 	cfg := m{
-		"pki":      m{"ca": filepath.Join(dir, "ca.crt"), "cert": crt, "key": key},
-		"firewall": m{"outbound": []m{{"port": "any", "proto": "any", "host": "any"}}, "inbound": []m{{"port": "any", "proto": "any", "host": "any"}}},
+		"pki":        m{"ca": filepath.Join(dir, "ca.crt"), "cert": crt, "key": key},
+		"firewall":   m{"outbound": []m{{"port": "any", "proto": "any", "host": "any"}}, "inbound": []m{{"port": "any", "proto": "any", "host": "any"}}},
 		"handshakes": m{"try_interval": "200ms"},
 		"logging":    m{"level": "error"},
 	}

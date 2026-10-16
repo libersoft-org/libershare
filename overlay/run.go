@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +45,39 @@ type bridge struct {
 	// inbound is the backend's loopback port for connections arriving from the overlay; 0 refuses them.
 	inbound atomic.Int32
 	stop    chan struct{}
+
+	mu sync.Mutex
+	// conns holds every bridged connection by its remote overlay address, so the connections of a peer whose tunnel
+	// is gone (a revoked certificate) can be closed at once instead of waiting for a TCP timeout.
+	conns map[net.Conn]netip.Addr
+}
+
+// track registers a bridged pair; the returned function forgets it.
+func (b *bridge) track(remote netip.Addr, local, overlayConn net.Conn) func() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.conns[local] = remote
+	b.conns[overlayConn] = remote
+	return func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		delete(b.conns, local)
+		delete(b.conns, overlayConn)
+	}
+}
+
+// closeOrphans closes every bridged connection to a peer that no longer has a tunnel.
+func (b *bridge) closeOrphans() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	closed := 0
+	for c, remote := range b.conns {
+		if b.control.GetHostInfoByVpnAddr(remote, false) == nil {
+			c.Close()
+			closed++
+		}
+	}
+	return closed
 }
 
 func cmdRun(args []string) error {
@@ -72,7 +106,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	b := &bridge{token: token, control: control, cfg: &c, log: log, stop: make(chan struct{})}
+	b := &bridge{token: token, control: control, cfg: &c, log: log, stop: make(chan struct{}), conns: map[net.Conn]netip.Addr{}}
 	b.ns, err = newNetstack(control, uint16(*port), b.forwardInbound)
 	if err != nil {
 		return err
@@ -178,6 +212,7 @@ func (b *bridge) handleDial(local net.Conn) {
 		remote.Close()
 		return
 	}
+	defer b.track(to.Addr(), local, remote)()
 	pipe(local, remote)
 }
 
@@ -197,6 +232,9 @@ func (b *bridge) forwardInbound(remote net.Conn) {
 		local.Close()
 		remote.Close()
 		return
+	}
+	if from, err := netip.ParseAddrPort(remote.RemoteAddr().String()); err == nil {
+		defer b.track(from.Addr(), local, remote)()
 	}
 	pipe(local, remote)
 }
@@ -271,6 +309,14 @@ func (b *bridge) controlHandler() http.Handler {
 	// dropping tunnels, and with pki.disconnect_invalid a revoked member is cut off at once.
 	mux.HandleFunc("POST /reload", func(w http.ResponseWriter, r *http.Request) {
 		b.cfg.ReloadConfig()
+		// disconnect_invalid closes a revoked peer's tunnels during the reload; its bridged TCP connections would
+		// otherwise hang until a timeout, because nothing inside the dead tunnel can reset them.
+		go func() {
+			time.Sleep(time.Second)
+			if n := b.closeOrphans(); n > 0 {
+				b.log.Info("closed bridged connections without a tunnel", "count", n)
+			}
+		}()
 		reply(w, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("POST /stop", func(w http.ResponseWriter, r *http.Request) {
