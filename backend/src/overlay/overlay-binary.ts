@@ -40,6 +40,8 @@ export function spawnOverlayHelper(configPath: string, port: number, token: stri
 		stdin: 'pipe',
 		stdout: 'pipe',
 		stderr: 'pipe',
+		// The installed backend has no console on Windows; a console child would open a window of its own.
+		windowsHide: true,
 		env: { ...process.env, LISH_OVERLAY_TOKEN: token },
 	});
 }
@@ -49,7 +51,7 @@ export function spawnOverlayHelper(configPath: string, port: number, token: stri
  * message, which never contains key material (the helper reads keys from files and prints public data only).
  */
 export async function runOverlayCommand<T>(args: string[], code: (typeof ErrorCodes)[keyof typeof ErrorCodes] = ErrorCodes.OVERLAY_CERTIFICATE_INVALID): Promise<T> {
-	const proc = Bun.spawn([overlayBinaryPath(), ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+	const proc = Bun.spawn([overlayBinaryPath(), ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', windowsHide: true });
 	const timer = setTimeout(() => proc.kill(), COMMAND_TIMEOUT_MS);
 	try {
 		const [stdout, stderr, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
