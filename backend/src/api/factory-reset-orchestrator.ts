@@ -190,7 +190,14 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 					},
 					// Table-level wipes (cascade clears children).
 					downloads: wipeDownloads ? () => dataServer.clearLishs() : undefined,
-					networks: wipeNetworks ? () => dataServer.clearLishnets() : undefined,
+					// Protected lishnets keep keys (a CA key among them) beside the table; they go first, so a failed
+					// removal leaves the catalog that still names them.
+					networks: wipeNetworks
+						? async () => {
+								await networks.clearOverlayData();
+								dataServer.clearLishnets();
+							}
+						: undefined,
 					peers: wipePeers ? () => networks.getNetwork().clearPeerstore() : undefined,
 					// Identity and discovered peers are separate UI/API categories. Regenerating
 					// the private key must not silently wipe the peerstore when peers=false.
