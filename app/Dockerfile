@@ -134,6 +134,13 @@ RUN curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh \
 	&& rm /tmp/bun-install.sh
 ENV PATH="/root/.bun/bin:${PATH}"
 
+# Install Go for the protected-lishnet helper (overlay/); go.mod pins the toolchain it then uses
+RUN ARCH=$(dpkg --print-architecture) \
+	&& curl -fsSL "https://go.dev/dl/go1.26.0.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz \
+	&& tar -C /usr/local -xzf /tmp/go.tar.gz \
+	&& rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 # AppImage: disable FUSE requirement (not available in Docker)
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 
