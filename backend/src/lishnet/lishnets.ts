@@ -402,10 +402,9 @@ export class Networks {
 		await this.overlayNodes.removeAllData();
 	}
 
-	/** Every running node: the public one and those of the joined protected lishnets. */
-	runningNodes(): Network[] {
-		const nodes = this.overlayNodes.runningIDs().map(id => this.overlayNodes.network(id)!);
-		return this.network.isRunning() ? [this.network, ...nodes] : nodes;
+	/** The running nodes of the joined protected lishnets; the public node is {@link getNetwork}. */
+	protectedNodes(): Network[] {
+		return this.overlayNodes.runningIDs().map(id => this.overlayNodes.network(id)!);
 	}
 
 	/**
@@ -1634,7 +1633,7 @@ export class Networks {
 
 	/** Return per-peer bootstrap status for every network that has any tracked dials. */
 	getAllBootstrapStatuses(): BootstrapStatus[] {
-		return this.runningNodes().flatMap(node => node.getAllBootstrapStatuses());
+		return [this.network, ...this.protectedNodes()].flatMap(node => node.getAllBootstrapStatuses());
 	}
 
 	/**

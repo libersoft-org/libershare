@@ -222,9 +222,12 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	 * (peer is reachable on a different network or already disconnected — FE shows it but dial may fail).
 	 */
 	function findNetworkForPeer(peerID: string): string {
+		const network = networks.getNetwork();
 		for (const config of networks.list()) {
 			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
-			if (networks.getTopicPeers(config.networkID).includes(peerID)) return config.networkID;
+			// A protected lishnet's members are on its own node, not on the public one.
+			const node = config.overlay ? networks.networkFor(config.networkID) : network;
+			if (node.isRunning() && node.getTopicPeers(config.networkID).includes(peerID)) return config.networkID;
 		}
 		return '';
 	}
@@ -238,8 +241,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		if (query.length > MAX_SEARCH_QUERY_LENGTH) throw new CodedError(ErrorCodes.SEARCH_QUERY_TOO_LONG, String(query.length));
 		const searchID = randomUUID();
 		const timeoutMs = settings.get('network.searchTimeout') ?? 30_000;
-		const nodes = networks.runningNodes();
-		if (nodes.length === 0) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+		const network = networks.getRunningNetwork();
+		const nodes = [network, ...networks.protectedNodes()];
 		const selfPeerIDs = new Set(nodes.map(node => node.getNodeInfo()?.peerID ?? ''));
 		const queried: Queried = new Set();
 		const peerNodes = new Map<string, Network>();
@@ -295,7 +298,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		for (const config of networks.list()) {
 			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
 			try {
-				await networks.networkFor(config.networkID).broadcast(lishTopic(config.networkID), message);
+				await (config.overlay ? networks.networkFor(config.networkID) : network).broadcast(lishTopic(config.networkID), message);
 			} catch (err: any) {
 				console.warn(`[Search] broadcast on ${config.networkID.slice(0, 8)} failed: ${err?.message ?? err}`);
 			}
@@ -323,7 +326,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	 */
 	async function runUnicastFallback(session: SearchSession): Promise<void> {
 		const { searchID, query, queried } = session;
-		const nodes = networks.runningNodes();
+		const nodes = [networks.getRunningNetwork(), ...networks.protectedNodes()];
 		const selfPeerIDs = new Set(nodes.map(node => node.getNodeInfo()?.peerID ?? ''));
 		// `getPeers()` is the libp2p-connection peer set, NOT the gossipsub
 		// subscriber set. Includes peers freshly dialed via mDNS for whom

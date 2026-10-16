@@ -1146,10 +1146,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 */
 	async function pauseAllTransfers(): Promise<void> {
 		// Every node serves the same shared data, protected lishnets' nodes included.
-		const nodes = new Set([networks.getNetwork(), ...networks.runningNodes()]);
+		const nodes = [networks.getNetwork(), ...networks.protectedNodes()];
 		// An admitted retry restores download and upload before this gate can close.
 		await recovery.pauseAllAndDrain();
-		await Promise.all([transferAdmission.closeAndDrain(), ...[...nodes].map(node => node.pauseLISHProtocolHandlersAndDrain())]);
+		await Promise.all([transferAdmission.closeAndDrain(), ...nodes.map(node => node.pauseLISHProtocolHandlersAndDrain())]);
 		if (pendingDownloaderCleanups.size > 0) await Promise.allSettled([...pendingDownloaderCleanups]);
 	}
 
@@ -1273,7 +1273,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	function resumeAllTransfers(): void {
-		for (const node of new Set([networks.getNetwork(), ...networks.runningNodes()])) node.resumeLISHProtocolHandlers();
+		for (const node of [networks.getNetwork(), ...networks.protectedNodes()]) node.resumeLISHProtocolHandlers();
 		transferAdmission.open();
 		recovery.resumeAll();
 	}
