@@ -271,6 +271,8 @@ export class OverlayAccess {
 	async revoke(networkID: string, fingerprint: string): Promise<void> {
 		const { overlay, store } = this.founderOf(networkID);
 		if (!FINGERPRINT.test(fingerprint)) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'fingerprint must be 64 hex characters');
+		// The founder's own node is the lishnet's authority (and usually its lighthouse): revoking it locks everyone out.
+		if ((await this.deps.nodes.ownCertificate(store, overlay.caCert))?.fingerprint === fingerprint) throw new CodedError(ErrorCodes.NETWORK_INVALID, "the founder's own certificate cannot be revoked");
 		const member = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
 			const member = data.members.find(m => m.fingerprint === fingerprint);
