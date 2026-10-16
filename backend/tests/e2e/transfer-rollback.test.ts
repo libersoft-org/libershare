@@ -40,6 +40,8 @@ describe('download startup persistence', () => {
 	function handlers(joined: boolean): ReturnType<typeof initTransferHandlers> {
 		const networks = {
 			getEnabled: () => (joined ? [{ id: 'test-network' }] : []),
+			// Public lishnets only: no row carries an overlay.
+			get: () => undefined,
 			isJoined: () => joined,
 			getRunningNetwork: () => {
 				networkReads++;
