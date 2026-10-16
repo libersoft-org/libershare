@@ -41,6 +41,11 @@ function heldStream(): { stream: any; deliver: () => void } {
 
 function makeHandlers(gate: LISHMutationGate, importManifest: (...args: any[]) => Promise<any>, stream: any): ReturnType<typeof initLISHnetsHandlers> {
 	const networks = {
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
 		getRunningNetwork: () => ({
 			dialProtocolByPeerId: async () => ({ stream }),
 		}),

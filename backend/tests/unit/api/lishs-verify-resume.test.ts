@@ -74,7 +74,17 @@ async function setup(name: string, extraIDs: string[] = []) {
 test('the start-up download resume leaves a LISH alone while its failed verification is still owed', async () => {
 	const { run, id, failing, settle, cleanup } = await setup('owed');
 	const node = { pauseLISHProtocolHandlersAndDrain: async () => {}, resumeLISHProtocolHandlers: () => {}, onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true };
-	const networks = { getNetwork: () => node, getRunningNetwork: () => node, getEnabled: () => [{ networkID: 'network-a' }], isJoined: (networkID: string) => networkID === 'network-a' } as never;
+	const networks = {
+		getNetwork: () => node,
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
+		getRunningNetwork: () => node,
+		getEnabled: () => [{ networkID: 'network-a' }],
+		isJoined: (networkID: string) => networkID === 'network-a',
+	} as never;
 	const enabled: string[] = [];
 	run().data.setDownloadEnabled(id, true);
 	initDownloadState(new Set([id]), (lishID, value) => run().data.setDownloadEnabled(lishID, value));
@@ -112,7 +122,17 @@ test('the start-up download resume leaves a LISH alone while its failed verifica
 test('a network restart restores no download while a failed verification is still owed', async () => {
 	const { run, id, failing, settle, cleanup } = await setup('owed-restore');
 	const node = { pauseLISHProtocolHandlersAndDrain: async () => {}, resumeLISHProtocolHandlers: () => {}, onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true };
-	const networks = { getNetwork: () => node, getRunningNetwork: () => node, getEnabled: () => [{ networkID: 'network-a' }], isJoined: (networkID: string) => networkID === 'network-a' } as never;
+	const networks = {
+		getNetwork: () => node,
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
+		getRunningNetwork: () => node,
+		getEnabled: () => [{ networkID: 'network-a' }],
+		isJoined: (networkID: string) => networkID === 'network-a',
+	} as never;
 	run().data.setDownloadEnabled(id, true);
 	initDownloadState(new Set([id]), (lishID, value) => run().data.setDownloadEnabled(lishID, value));
 	const enabled: string[] = [];

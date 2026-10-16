@@ -98,6 +98,11 @@ function buildManager(answers: unknown[][], holdFirst = false) {
 	};
 	const networks = {
 		getNetwork: () => network,
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
 		getRunningNetwork: () => network,
 		list: () => [{ networkID: NETWORK_ID, enabled: true }],
 		isJoined: () => true,
@@ -322,7 +327,17 @@ describe('search unicast retry after a listing refusal', () => {
 				throw new Error('unreachable');
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		silent.manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => silent.events.push({ event, data }));
 
 		await silent.manager.startSearch({ query: LISH_ID.slice(0, 8) });
@@ -400,7 +415,17 @@ describe('search unicast retry after a listing refusal', () => {
 				};
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
 
 		searchID = (await manager.startSearch({ query: LISH_ID.slice(0, 8) })).searchID;
@@ -560,7 +585,17 @@ describe('search dial concurrency', () => {
 				};
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => events.push({ event, data }));
 		const retryDials = (): number => [...dialsPerPeer.values()].filter(n => n > 1).length;
 		return {
@@ -622,7 +657,17 @@ describe('search dial concurrency', () => {
 				});
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
 
 		const { searchID } = await manager.startSearch({ query: 'first' });
@@ -677,7 +722,17 @@ describe('search dial concurrency', () => {
 				};
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
 
 		await manager.startSearch({ query: LISH_ID.slice(0, 8) });
@@ -726,7 +781,17 @@ describe('search dial concurrency', () => {
 				};
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
 
 		const { searchID } = await manager.startSearch({ query: 'first' });
@@ -784,7 +849,17 @@ describe('search dial concurrency', () => {
 				};
 			},
 		};
-		const networks = { getNetwork: () => network, getRunningNetwork: () => network, list: () => [{ networkID: NETWORK_ID, enabled: true }], isJoined: () => true };
+		const networks = {
+			getNetwork: () => network,
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
+			getRunningNetwork: () => network,
+			list: () => [{ networkID: NETWORK_ID, enabled: true }],
+			isJoined: () => true,
+		};
 		const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
 
 		const { searchID } = await manager.startSearch({ query: 'first' });

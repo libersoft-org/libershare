@@ -85,6 +85,11 @@ describe('restoreAll through the real transfer handlers', () => {
 
 	it('starts none of the batch and writes no intent when one download cannot come back', async () => {
 		const networks = {
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
 			getRunningNetwork: (): any => ({ onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true }),
 			getEnabled: (): any[] => [{ networkID: NET }],
 			isJoined: (id: string): boolean => id === NET,

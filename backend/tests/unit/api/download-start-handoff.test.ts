@@ -21,6 +21,11 @@ for (const batch of [false, true])
 			let left: (networkID: string) => unknown = () => {};
 			let interrupted: Promise<unknown> | undefined;
 			const networks = {
+				get: () => undefined,
+				networkFor(this: any) {
+					return this.getRunningNetwork();
+				},
+				protectedNodes: () => [],
 				getRunningNetwork: () => ({ onPeerDisconnect: () => () => {} }),
 				getEnabled: () => [{ networkID: 'net-a' }],
 				isJoined: () => {
