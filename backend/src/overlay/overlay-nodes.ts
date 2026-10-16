@@ -345,8 +345,9 @@ export class OverlayNodes {
 		}
 		console.log(`[Overlay ${networkID.slice(0, 8)}] accepted network state v${incoming.version} (${incoming.lighthouses.length} lighthouse(s), ${incoming.relays.length} relay(s), ${incoming.revoked.length} revoked)`);
 		this.deps.onStateChange(networkID, incoming);
+		// Passed on at once and past the rate limit: a revocation must not wait for the next periodic send.
+		void this.publishState(networkID, true);
 		await this.reconfigure(networkID);
-		void this.publishState(networkID, false);
 		return true;
 	}
 
@@ -364,12 +365,15 @@ export class OverlayNodes {
 		return state;
 	}
 
-	/** Publish the newest state on the lishnet's state topic. `periodic` skips the rate limit of event-driven sends. */
-	async publishState(networkID: string, periodic: boolean): Promise<void> {
+	/**
+	 * Publish the newest state on the lishnet's state topic. Sends triggered by peers (a subscription, a stale state)
+	 * are rate limited; `force` (a new state, the periodic send) is not.
+	 */
+	async publishState(networkID: string, force: boolean): Promise<void> {
 		const entry = this.running.get(networkID);
 		if (!entry) return;
 		const now = Date.now();
-		if (!periodic && now - entry.lastPublish < STATE_PUBLISH_MIN_GAP_MS) return;
+		if (!force && now - entry.lastPublish < STATE_PUBLISH_MIN_GAP_MS) return;
 		const signed = await entry.store.readState();
 		if (!signed) return;
 		entry.lastPublish = now;
