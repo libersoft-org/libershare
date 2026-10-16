@@ -1202,7 +1202,9 @@ export class Networks {
 			// what keeps waiting for them from presenting as a frozen shutdown.
 			this.network.cancelRunOperations();
 			await this.drainReconciles();
-			await this.overlayNodes.stopAll();
+			// A protected node that fails to stop must not keep the public node running: its helper still exits with
+			// this process, and the next start builds every protected node from scratch.
+			await this.overlayNodes.stopAll().catch(err => console.error('[Networks] stopping the protected lishnets failed:', err?.message ?? err));
 			// Cleared only once the node is provably down. Discarding the membership first
 			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
 			// still left this layer claiming it was in no lishnet and had announced nothing.
