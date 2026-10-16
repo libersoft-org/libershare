@@ -30,6 +30,14 @@ jobs:
           (cd cli && bun install --frozen-lockfile)
       - name: Formatting
         run: ./prettier-all.sh --check
+      # The backend's protected-lishnet e2e test runs the real helper, so it is built first. The runner's Go
+      # fetches the toolchain go.mod asks for (GOTOOLCHAIN=auto).
+      - name: Overlay helper (build, Go tests)
+        working-directory: overlay
+        run: |
+          ./build.sh
+          go vet ./...
+          go test ./...
       - name: Backend (typecheck, unit, e2e)
         run: ./test-be.sh
       - name: Frontend (svelte-check, unit)
