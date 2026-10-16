@@ -274,6 +274,10 @@ type hostStatus struct {
 func (b *bridge) status() map[string]any {
 	hosts := []hostStatus{}
 	for _, h := range b.control.ListHostmapHosts(false) {
+		// A tunnel whose relay dropped it (e.g. after this node was revoked) lingers with no path until it times out.
+		if !h.CurrentRemote.IsValid() && len(h.CurrentRelaysToMe) == 0 {
+			continue
+		}
 		hs := hostStatus{Name: h.Cert.Name(), RelayedVia: []string{}}
 		for _, a := range h.VpnAddrs {
 			hs.VpnAddrs = append(hs.VpnAddrs, a.String())
