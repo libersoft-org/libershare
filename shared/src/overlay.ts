@@ -168,7 +168,8 @@ export function isHostPort(addr: unknown): addr is string {
 	return ipv4ToInt(host) !== null || /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(host);
 }
 
-function validateHosts(value: unknown, subnet: string, what: string): LISHOverlayHost[] {
+/** Validate an untrusted list of lighthouses or relays of a lishnet with this subnet. Throws NETWORK_INVALID. */
+export function validateOverlayHosts(value: unknown, subnet: string, what: string): LISHOverlayHost[] {
 	if (!Array.isArray(value)) throw invalid(`${what} must be a list`);
 	if (value.length > MAX_HOSTS) throw invalid(`at most ${MAX_HOSTS} ${what}`);
 	return value.map(h => {
@@ -194,7 +195,7 @@ export function validateOverlayDefinition(value: unknown): LISHOverlayDefinition
 	if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 0) throw invalid('overlay version must be a non-negative integer');
 	const lanDirect = o['lanDirect'] ?? false;
 	if (typeof lanDirect !== 'boolean') throw invalid('overlay lanDirect must be a boolean');
-	return { type: 'nebula', caCert, subnet, lighthouses: validateHosts(o['lighthouses'] ?? [], subnet, 'lighthouses'), relays: validateHosts(o['relays'] ?? [], subnet, 'relays'), lanDirect, version };
+	return { type: 'nebula', caCert, subnet, lighthouses: validateOverlayHosts(o['lighthouses'] ?? [], subnet, 'lighthouses'), relays: validateOverlayHosts(o['relays'] ?? [], subnet, 'relays'), lanDirect, version };
 }
 
 /** Validate an untrusted access request. Throws NETWORK_INVALID. */
