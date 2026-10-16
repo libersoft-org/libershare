@@ -665,7 +665,16 @@ export class Network {
 			getPubsub: (): any => this.pubsub,
 			broadcast: (topic, msg, pubsub): Promise<void> => Network.publishOn(pubsub, topic, msg),
 			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<BootstrapDialResult> => this.addBootstrapPeers(multiaddrs, networkID, origin),
+			localCidrs: (): string[] => this.localCidrs(),
 		});
+	}
+
+	/**
+	 * The networks this node can reach without a router of its own: the host's interfaces, or for the node of a
+	 * protected lishnet the overlay subnet — its only network, which no host interface carries.
+	 */
+	private localCidrs(now?: number): string[] {
+		return this.overlay ? [this.overlay.bridge.subnet] : getLocalCidrs(now);
 	}
 
 	/**
@@ -1633,7 +1642,7 @@ export class Network {
 		let skippedNoReachable = 0;
 		let skippedSuppressed = 0;
 		let skippedQuarantined = 0;
-		const localCidrs = getLocalCidrs(now);
+		const localCidrs = this.localCidrs(now);
 		for (const peer of allPeers) {
 			if (epoch !== this.runEpoch) return; // stop() hit — this run's state is gone
 			const pid = peer.id.toString();
@@ -1911,7 +1920,7 @@ export class Network {
 		}
 		let attempted = 0;
 		let configuredAttempts = 0;
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.localCidrs();
 		const ordered = orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors);
 		const isEligible = (entry: IBootstrapEntry): boolean => {
 			if (this.bootstrapByAddress.get(entry.key) !== entry) return false;
@@ -2002,7 +2011,7 @@ export class Network {
 	private async probeParkedConfiguredBootstraps(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.localCidrs();
 		for (const entry of [...this.bootstrapByAddress.values()]) {
 			if (epoch !== this.runEpoch) return;
 			const { ma, key: canonical, peerID: pid } = entry;
@@ -2329,7 +2338,7 @@ export class Network {
 			return 'incomplete';
 		}
 		const myPeerID = this.node.peerId.toString();
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.localCidrs();
 		// Fire-and-forget callers (peer-announce intake, startup joins) run outside
 		// the status-tick epoch guard. Capture the epoch so a dial that settles after
 		// a stop()/restart cannot record outcomes on the cleared tracker or write
