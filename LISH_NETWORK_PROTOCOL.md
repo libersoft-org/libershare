@@ -3,7 +3,7 @@
 - **Document version**: 1
 - **Protocol**: `/lish/0.0.1`
 - **Created**: 24 October 2025
-- **Last update**: 26 August 2026
+- **Last update**: 16 October 2026
 
 ## Overview
 
