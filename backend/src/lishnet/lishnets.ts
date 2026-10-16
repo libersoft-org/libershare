@@ -409,15 +409,16 @@ export class Networks {
 
 	/**
 	 * A protected lishnet keeps its CA: a definition with another CA under the same ID is a different network,
-	 * and accepting it would hand the lishnet to whoever made that CA. Of two definitions with the same CA the
-	 * higher version wins; one without an overlay never turns a protected lishnet public.
+	 * and accepting it would hand the lishnet to whoever made that CA. With the same CA the stored overlay stays:
+	 * its lighthouses and relays change only through the founder's signed state, never through an unsigned file —
+	 * a doctored copy could otherwise point members at a host that learns their addresses. A definition without an
+	 * overlay never turns a protected lishnet public.
 	 */
 	private static mergeOverlay(existing: LISHOverlayDefinition | undefined, incoming: LISHOverlayDefinition | undefined): LISHOverlayDefinition | undefined {
 		const checked = incoming === undefined ? undefined : validateOverlayDefinition(incoming);
 		if (!existing) return checked;
-		if (!checked) return existing;
-		if (checked.caCert.trim() !== existing.caCert.trim()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'this lishnet already exists with another certificate authority');
-		return checked.version > existing.version ? checked : existing;
+		if (checked && checked.caCert.trim() !== existing.caCert.trim()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'this lishnet already exists with another certificate authority');
+		return existing;
 	}
 
 	/** {@link mergeOverlay} applied to a config about to be written over the stored row. */
