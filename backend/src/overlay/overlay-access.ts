@@ -1,5 +1,6 @@
 import { Mutex } from 'async-mutex';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { CodedError, ErrorCodes, isHostPort, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from '@shared';
@@ -86,7 +87,7 @@ export class OverlayAccess {
 		const running = this.deps.nodes.network(networkID)?.getNodeInfo();
 		if (running) return running.peerID;
 		await store.ensureDir();
-		const datastore = new SqliteDatastore(`${store.dir}/datastore`);
+		const datastore = new SqliteDatastore(join(store.dir, 'datastore'));
 		datastore.open();
 		try {
 			if (await datastore.has(PRIVATE_KEY_PATH as any)) return peerIdFromPrivateKey(privateKeyFromProtobuf(await datastore.get(PRIVATE_KEY_PATH as any))).toString();
