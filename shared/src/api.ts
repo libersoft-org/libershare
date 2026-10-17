@@ -541,7 +541,8 @@ class LISHsAPI {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
+	/** `scope`: protected lishnets to share it in only; absent or empty = the public lishnets. */
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm, scope?: string[]): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -555,7 +556,13 @@ class LISHsAPI {
 			minifyJSON,
 			compress,
 			compressionAlgorithm,
+			scope,
 		});
+	}
+
+	/** Share a LISH in these protected lishnets only, or (empty list) in the public lishnets. */
+	setScope(lishID: string, networkIDs: string[]): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.setScope', { lishID, networkIDs });
 	}
 
 	delete(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {

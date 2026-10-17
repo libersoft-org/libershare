@@ -1,6 +1,7 @@
 import { type Database } from 'bun:sqlite';
 import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILinkEntry, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
 import { getVerificationProgress, getFileVerificationProgress } from './lishs-verification.ts';
+import { parseLISHScope } from './lishs-flags.ts';
 
 interface LISHRow {
 	id: number;
@@ -227,7 +228,7 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 
 /** Returns detailed view of a LISH including file-level verification progress, or null. */
 export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null {
-	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; total_uploaded_bytes: number; total_downloaded_bytes: number; scope: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, total_uploaded_bytes, total_downloaded_bytes, scope FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 
 	const files = getFiles(db, row.id);
@@ -258,6 +259,7 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 		totalChunks: vp.totalChunks,
 		totalUploadedBytes: row.total_uploaded_bytes,
 		totalDownloadedBytes: row.total_downloaded_bytes,
+		scope: parseLISHScope(row.scope),
 	};
 }
 

@@ -46,7 +46,7 @@ interface LISHnetsHandlers {
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[]; detailed?: boolean }) => Promise<LISHNetworkConfig | NetworkMutationOutcome<LISHNetworkConfig>>;
 }
 /** The import pipeline WITHOUT its admission gate — the caller here already holds it. */
-type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean; scope?: string[] }) => Promise<ImportLISHResponse>;
 type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
 /**
@@ -313,7 +313,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
 		const enableSharing = settings.get('network.autoStartSharing') ?? true;
 		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
-		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading });
+		// What came from a protected lishnet is shared back into that lishnet only.
+		const scope = networks.get(p.networkID)?.overlay ? [p.networkID] : undefined;
+		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {

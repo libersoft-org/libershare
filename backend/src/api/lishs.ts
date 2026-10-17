@@ -6,7 +6,7 @@ import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { setBusy, clearBusy, getBusyReason } from './busy.ts';
-import { getEnabledUploads, removeUploadState, enableUpload, disableUpload } from '../protocol/lish-protocol.ts';
+import { getEnabledUploads, removeUploadState, enableUpload, disableUpload, getLISHScope, setLISHScope, removeLISHScope } from '../protocol/lish-protocol.ts';
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH, forceDisableDownload } from './transfer.ts';
 import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
@@ -29,6 +29,8 @@ interface CreateLISHParams {
 	minifyJSON?: boolean;
 	compress?: boolean;
 	compressionAlgorithm?: CompressionAlgorithm;
+	/** Protected lishnets to share it in only; absent or empty = public. */
+	scope?: string[];
 }
 interface ImportFromFileParams {
 	filePath: string;
@@ -70,6 +72,13 @@ interface MoveParams {
 	moveData: boolean;
 	createSubdirectory?: boolean;
 }
+interface ImportManifestOptions {
+	overwrite?: boolean;
+	enableSharing?: boolean;
+	enableDownloading?: boolean;
+	/** Protected lishnets the LISH is shared in only (a manifest that came from one stays inside it). */
+	scope?: string[];
+}
 interface LISHsHandlers {
 	list: (p?: { sortBy?: LISHSortField; sortOrder?: SortOrder }) => ILISHListResult;
 	get: (p: { lishID: string }) => ILISHDetail | null;
@@ -100,9 +109,11 @@ interface LISHsHandlers {
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
 	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
 	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
-	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint
+	importManifest: (lish: ILISH, downloadPath: string, opts?: ImportManifestOptions) => Promise<ImportLISHResponse>; // Shared import entrypoint
 	/** As {@link LISHsHandlers.importManifest}, for a caller that already holds mutation admission. */
-	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: ImportManifestOptions) => Promise<ImportLISHResponse>;
+	/** Restrict a LISH to protected lishnets, or (empty list) make it public again. */
+	setScope: (p: { lishID: string; networkIDs: string[] }) => SuccessResponse;
 	pauseMutations: () => Promise<void>;
 	/** Pause verification without discarding the user's queue during a network restart. */
 	pauseForNetworkRestart: () => Promise<void>;
@@ -146,7 +157,14 @@ export class LISHMutationGate {
 	}
 }
 
-export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings): LISHsHandlers {
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings, isProtectedLishnet: (networkID: string) => boolean = () => false): LISHsHandlers {
+	/** A scope from the API: every entry a protected lishnet this node knows. */
+	function checkedScope(scope: unknown): string[] | undefined {
+		if (scope === undefined) return undefined;
+		if (!Array.isArray(scope) || scope.some(id => typeof id !== 'string' || !isProtectedLishnet(id))) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'a LISH can be restricted to protected lishnets only');
+		return [...new Set(scope as string[])];
+	}
+
 	/**
 	 * Every creation admitted and not yet finished.
 	 *
@@ -248,6 +266,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
+		const scope = checkedScope(p.scope);
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
@@ -310,7 +329,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// 3. Save to data-server if requested (required for both sharing and downloading)
 		if (addToSharing || addToDownloading) {
 			lish.directory = dataPathStat.isFile() ? dirname(dataPath) : dataPath;
-			await addLISH(lish, { root: { kind: 'explicit', path: resolve(lish.directory) }, enableSharing: addToSharing, enableDownloading: addToDownloading });
+			await addLISH(lish, { root: { kind: 'explicit', path: resolve(lish.directory) }, enableSharing: addToSharing, enableDownloading: addToDownloading, scope });
 		}
 		return { lishID: lish.id, lishFile: resultLISHFile };
 	}
@@ -334,6 +353,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			if (p.deleteData && lish.directory) await withChunkFilesClosed(p.lishID, () => deleteDatasetData(lish, storedRoot(lish), dataServer.getDatasetLinkBindings(p.lishID)));
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
+				// Only once the row is gone: a LISH that is still there must keep its restriction.
+				removeLISHScope(p.lishID);
 				console.log(`✓ LISH deleted: ${p.lishID}`);
 				broadcast('lishs:remove', { lishID: p.lishID });
 			}
@@ -363,7 +384,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * broadcasts, applies sharing/downloading flags, and starts verification.
 	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
 	 */
-	async function addLISH(lish: IStoredLISH, opts: { root: DatasetRoot; finalRoot?: DatasetRoot; enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined }): Promise<void> {
+	async function addLISH(lish: IStoredLISH, opts: { root: DatasetRoot; finalRoot?: DatasetRoot; enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; scope?: string[] | undefined }): Promise<void> {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
 		const dataset = await openDataset(opts.root);
@@ -379,7 +400,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		dataServer.setDownloadEnabled(lish.id, false);
 		removeUploadState(lish.id);
 		await forceDisableDownload(lish.id);
-		console.log(`✓ LISH added: ${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
+		// Before sharing starts: a LISH meant for a protected lishnet must never be served publicly, not even briefly.
+		// Without an explicit scope a re-added LISH keeps the one it had.
+		if (opts.scope) setLISHScope(lish.id, opts.scope);
+		else if (getLISHScope(lish.id).length > 0) setLISHScope(lish.id, getLISHScope(lish.id));
+		console.log(`✓ LISH added:${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
 		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
 		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
@@ -388,7 +413,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		enqueueVerification(lish.id);
 	}
 
-	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
 		// Validate structure early to fail fast before any disk operations.
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
@@ -435,7 +460,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (existing) {
 			await stopDatasetWork(lish.id);
 		}
-		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading });
+		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, scope });
 		return { lishID: lish.id, directory };
 	}
 
@@ -838,12 +863,21 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 	}
 
-	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+	async function importManifest(lish: ILISH, downloadPath: string, opts?: ImportManifestOptions): Promise<ImportLISHResponse> {
 		return runMutation(() => importManifestAdmitted(lish, downloadPath, opts));
 	}
 
-	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
-		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading);
+	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: ImportManifestOptions): Promise<ImportLISHResponse> {
+		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading, opts?.scope);
+	}
+
+	function setScope(p: { lishID: string; networkIDs: string[] }): SuccessResponse {
+		assert(p, ['lishID', 'networkIDs']);
+		const scope = checkedScope(p.networkIDs)!;
+		if (!dataServer.get(p.lishID)) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
+		setLISHScope(p.lishID, scope);
+		broadcast('lishs:scope', { lishID: p.lishID, scope });
+		return { success: true };
 	}
 
 	async function pauseMutations(): Promise<void> {
@@ -869,5 +903,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, setScope, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

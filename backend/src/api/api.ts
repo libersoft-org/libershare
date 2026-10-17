@@ -338,7 +338,7 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
-		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
+		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings, id => this.networks.get(id)?.overlay !== undefined);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation, this.peerReadAbort.signal);
 		const _identity = initIdentityHandlers(this.networks);
 		const _overlay = initOverlayHandlers(this.networks);
@@ -510,6 +510,7 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
+			'lishs.setScope': _lishs.setScope,
 			'lishs.parseFromFile': _lishs.parseFromFile,
 			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
 			'lishs.parseFromJSON': _lishs.parseFromJSON,
