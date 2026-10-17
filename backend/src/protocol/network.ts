@@ -24,7 +24,7 @@ import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@libp2p/gossipsub/score';
 import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
-import { applyGossipsubPatches } from './gossipsub-patches.ts';
+import { applyGossipsubOutboundRenewPatch, applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { ONE_WAY_PUBSUB_GRACE_MS, OneWayPubsubWatch } from './one-way-pubsub-watch.ts';
@@ -974,11 +974,13 @@ export class Network {
 
 		this.pubsub = this.node.services['pubsub'] as PubSub;
 
-		// Only the PX ingress filter is patched in. @libp2p/gossipsub's OutboundStream.push()
+		// The PX ingress filter and the outbound stream renewal are patched in. @libp2p/gossipsub's OutboundStream.push()
 		// is synchronous, so sendRpc's own try/catch already handles a write to a closed
 		// stream (and re-attaches the control and gossip it piggybacked); the old wrapper
 		// for the async push of @chainsafe/libp2p-gossipsub would now swallow that error.
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
+		const runNode = this.node;
+		applyGossipsubOutboundRenewPatch(this.pubsub, (peerId: any) => runNode.getConnections(peerId));
 
 		// Register lish protocol handler
 		// libp2p 3 calls a handler with (stream, connection): the connection is the only reliable source of the sender.

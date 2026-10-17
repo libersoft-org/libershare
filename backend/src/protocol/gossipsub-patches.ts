@@ -77,6 +77,49 @@ export function applyGossipsubPXIngressPatch(pubsub: any, deps: GossipsubPatchDe
 }
 
 /**
+ * Open a new outbound stream to a peer whose outbound stream closed while the peer stays connected.
+ *
+ * gossipsub keeps one outbound stream per peer and skips a new connection while that stream exists. A peer that
+ * crashes and comes back before its dead connection is noticed leaves exactly that state: the new connection is
+ * skipped, the old stream dies with its connection a little later, and nothing opens one on the live connection.
+ * The peer then never hears our subscriptions or messages until the one-way watch renews the connection —
+ * measured 92 s after a 5 s outage.
+ */
+export function applyGossipsubOutboundRenewPatch(pubsub: any, openConnections: (peerId: any) => any[]): void {
+	if (!pubsub || pubsub.__lishOutboundRenewPatched) return;
+	if (typeof pubsub.createOutboundStream !== 'function' || !(pubsub.streamsOutbound instanceof Map) || typeof pubsub.outboundInflightQueue?.push !== 'function') {
+		// The one-way watch still repairs it, only slower.
+		console.warn('[NET] gossipsub outbound stream renewal unavailable: gossipsub internals changed');
+		return;
+	}
+	const original = pubsub.createOutboundStream.bind(pubsub);
+	pubsub.createOutboundStream = async (peerId: any, connection: any): Promise<void> => {
+		await original(peerId, connection);
+		const id = peerId.toString();
+		const stream = pubsub.streamsOutbound.get(id);
+		if (!stream?.rawStream || stream.__lishRenewWatched) return;
+		stream.__lishRenewWatched = true;
+		stream.rawStream.addEventListener(
+			'close',
+			() => {
+				// After gossipsub's own close handler has dropped the entry. Not on the connection the stream ran on: it
+				// is the one going away, and can still read as open at this point.
+				setTimeout(() => {
+					if (!pubsub.isStarted?.() || !pubsub.peers?.has(id) || pubsub.streamsOutbound.has(id)) return;
+					const all = openConnections(peerId);
+					// The newest one: older ones from before the peer came back read as open too, until they time out.
+					const live = all.filter(c => c !== connection && c.status === 'open').sort((a, b) => (b.timeline?.open ?? 0) - (a.timeline?.open ?? 0))[0];
+					console.debug(`[NET] gossipsub outbound stream to ${id.slice(0, 12)} closed, ${all.length} connection(s): ${live ? 'reopening on a live one' : 'none other open'}`);
+					if (live) pubsub.outboundInflightQueue.push({ peerId, connection: live });
+				}, 0);
+			},
+			{ once: true }
+		);
+	};
+	pubsub.__lishOutboundRenewPatched = true;
+}
+
+/**
  * Apply all gossipsub patches in the correct order.
  * Call after pubsub is available (immediately after start()).
  */
