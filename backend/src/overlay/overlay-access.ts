@@ -1,7 +1,7 @@
 import { Mutex } from 'async-mutex';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
+import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { CodedError, ErrorCodes, isHostPort, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from '@shared';
 import { SqliteDatastore } from '../protocol/datastore.ts';
@@ -347,7 +347,9 @@ export class OverlayAccess {
 		const body = /-----BEGIN NEBULA ED25519 PRIVATE KEY-----([\s\S]*?)-----END NEBULA ED25519 PRIVATE KEY-----/.exec(caKey ?? '')?.[1];
 		const raw = body ? Buffer.from(body.replace(/\s+/g, ''), 'base64') : Buffer.alloc(0);
 		if (raw.length !== 64) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'not a CA key');
-		if (raw.subarray(32).toString('hex') !== (await this.deps.nodes.caPublicKey(store, overlay.caCert))) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the key does not belong to this lishnet');
+		// The public half is derived from the seed, not read from the key's second half, which anyone can copy.
+		const derived = Buffer.from((await generateKeyPairFromSeed('Ed25519', raw.subarray(0, 32))).publicKey.raw).toString('hex');
+		if (derived !== (await this.deps.nodes.caPublicKey(store, overlay.caCert))) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the key does not belong to this lishnet');
 		await store.writeText('ca.key', caKey.trim() + '\n');
 		if (!store.has('founder.json')) await store.writeJSON('founder.json', await store.readFounder());
 		this.deps.emit('overlay:status', { networkID });
