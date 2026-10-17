@@ -338,7 +338,18 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 ### Revocation and expiry
 
 - A revoked certificate fingerprint is blocklisted by every node that holds the state. Its tunnels are closed at once and the helper closes the connections that ran through them. A revocation is permanent; the member needs a new certificate.
+- Revoking a member revokes every certificate its node holds, not only the one named: an earlier certificate stays valid after a renewal.
+- A renewal keeps the member's overlay address. If it ends sooner than a certificate the member still holds, that certificate is revoked in the same state, so a shorter term takes effect at once; the member is cut off until it imports the new certificate.
+- A member approved again after a revocation gets a new overlay address.
 - A certificate past its expiry is refused by every node without any state.
+
+### Shared LISHs
+
+Each shared LISH has a scope: the public networks (the default), or a list of protected networks.
+
+- The public node serves (lists, answers searches and `want`s for, and sends manifests and chunks of) public LISHs only; the node of a protected network serves only the LISHs whose scope names that network. A request for a LISH outside the node's scope is answered as if the LISH were not shared.
+- A LISH added from a protected network's peer gets that network as its scope, so a member never shares it back outside.
+- The scope is set when a LISH is created (`lishs.create`, parameter `scope`) and can be changed with `lishs.setScope`.
 
 ### Addresses
 
@@ -351,7 +362,7 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 
 - The CA key is the network: whoever holds it can admit anyone. A leaked key can only be answered with a new network.
 - Lighthouses and relays see the public addresses of the members who use them. Members with such a role see them too.
-- Shared LISHs are offered in every joined network, protected ones included (see above), so the same shares can link a member's protected identity to a public one.
+- A member can still change a LISH's scope to public on purpose; the protocol cannot stop a member from copying what it received.
 
 ## Transfer flow
 
