@@ -7,7 +7,7 @@ import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { storedDatasetFilesPresent } from '../lish/stored-dataset.ts';
-import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads, getLISHScope } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
 import { isBusy, getBusyReason } from './busy.ts';
@@ -601,13 +601,21 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	/**
-	 * The node a stored download runs on. A downloader takes its peers from one node, and a protected lishnet's
-	 * peers are reachable only through its own node, so a LISH known in a protected lishnet downloads there; the
-	 * public lishnets it also belongs to simply contribute no peers on that node.
+	 * The node and lishnets a stored download runs on, from the LISH's scope. A downloader takes its peers from one
+	 * node; a LISH shared in protected lishnets is served only by those lishnets' nodes and a public one only by the
+	 * public node, so peers anywhere else would refuse it — with two protected lishnets joined, the first one in the
+	 * list was taken and every peer answered "not shared".
 	 */
-	function nodeForNetworks(networkIDs: string[]): Network {
-		const protectedID = networkIDs.find(id => networks.get(id)?.overlay);
-		return protectedID ? networks.networkFor(protectedID) : networks.getRunningNetwork();
+	function downloadNode(lishID: string, networkIDs: string[]): { node: Network; networkIDs: string[] } {
+		const scope = getLISHScope(lishID);
+		// shortcut: one node per download, so a LISH shared in two protected lishnets takes peers from one of them.
+		const protectedID = scope.find(id => networkIDs.includes(id) && networks.isJoined(id));
+		if (protectedID) return { node: networks.networkFor(protectedID), networkIDs: [protectedID] };
+		const publicIDs = networkIDs.filter(id => !networks.get(id)?.overlay);
+		if (scope.length === 0 && publicIDs.length > 0) return { node: networks.getRunningNetwork(), networkIDs: publicIDs };
+		// None of its lishnets is joined: wait where the old choice put it, the restore logic suspends it on leave.
+		const fallbackID = networkIDs.find(id => networks.get(id)?.overlay);
+		return { node: fallbackID ? networks.networkFor(fallbackID) : networks.getRunningNetwork(), networkIDs };
 	}
 
 	/** Prepared candidates retain the request epoch across the handoff and batch preparation. */
@@ -620,7 +628,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			await access(hasChunks ? downloadDir : dirname(downloadDir), constants.R_OK | constants.W_OK);
 		}
 
-		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), nodeForNetworks(networkIDs), dataServer, networkIDs, originalNetworkIDs);
+		const target = downloadNode(lishID, networkIDs);
+		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), target.node, dataServer, target.networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
 		const prepared = { downloader, requireEnabled, scheduledAt, destroy: () => downloader.destroy() };
 		const refusal = storedStartRefusal(lishID, prepared, disabled);
