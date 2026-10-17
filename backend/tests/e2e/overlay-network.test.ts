@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { createSocket } from 'node:dgram';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Subprocess } from 'bun';
 import { API, WsClient, type LISHNetworkConfig, type OverlayStatus } from '@shared';
@@ -24,6 +24,8 @@ interface Node {
 	proc: Subprocess;
 	api: API;
 	client: WsClient;
+	/** The public node's TCP port. */
+	p2pPort: number;
 }
 
 async function freePort(kind: 'tcp' | 'udp'): Promise<number> {
@@ -60,18 +62,20 @@ async function startNode(root: string, name: string): Promise<Node> {
 	const dir = join(root, name);
 	await mkdir(dir, { recursive: true });
 	const storage = Object.fromEntries(['downloadPath', 'tempPath', 'lishPath', 'lishnetPath', 'backupPath'].map(k => [k, join(dir, k) + '/']));
-	await writeFile(join(dir, 'settings.json'), JSON.stringify({ network: { incomingPort: await freePort('tcp'), mdnsEnabled: false, upnpEnabled: false }, storage }));
+	const p2pPort = await freePort('tcp');
+	await writeFile(join(dir, 'settings.json'), JSON.stringify({ network: { incomingPort: p2pPort, mdnsEnabled: false, upnpEnabled: false }, storage }));
 	const apiPort = await freePort('tcp');
 	const proc = Bun.spawn(['bun', APP, '--datadir', dir, '--port', String(apiPort), '--host', '127.0.0.1', '--token', TOKEN, '--loglevel', 'debug', '--logfile', join(dir, 'backend.log')], { stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' });
 	await until(`${name} API`, async () => (await fetch(`http://127.0.0.1:${apiPort}/health`)).ok, 60_000);
 	const client = new WsClient(`ws://127.0.0.1:${apiPort}/?token=${TOKEN}`, () => {});
-	return { name, dir, proc, api: new API(client), client };
+	return { name, dir, proc, api: new API(client), client, p2pPort };
 }
 
 describe('protected lishnet on loopback', () => {
 	let root: string;
 	let founder: Node, alice: Node, bob: Node;
 	let network: LISHNetworkConfig;
+	let protectedLish = '';
 	const nodes = (): Node[] => [founder, alice, bob].filter(Boolean);
 
 	beforeAll(async () => {
@@ -136,7 +140,8 @@ describe('protected lishnet on loopback', () => {
 		await mkdir(source, { recursive: true });
 		const content = randomBytes(3 * 1024 * 1024 + 123);
 		await writeFile(join(source, 'payload.bin'), content);
-		const { lishID } = await alice.api.lishs.create(source, undefined, true, false, 'payload');
+		const { lishID } = await alice.api.lishs.create(source, undefined, true, false, 'payload', undefined, undefined, undefined, undefined, undefined, undefined, undefined, [network.networkID]);
+		protectedLish = lishID;
 		const alicePeer = (await alice.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
 		await until('bob sees the lish', async () => (await bob.api.lishnets.getPeerLishs(alicePeer, network.networkID)).lishs?.some(l => l.id === lishID), 60_000);
 		await bob.api.lishnets.addPeerLish(lishID, alicePeer, network.networkID);
@@ -153,7 +158,36 @@ describe('protected lishnet on loopback', () => {
 			120_000
 		);
 		expect(createHash('sha256').update(downloaded).digest('hex')).toBe(createHash('sha256').update(content).digest('hex'));
+		// What came from the protected lishnet is shared back into it only.
+		expect((await bob.api.lishs.get(lishID))?.scope).toEqual([network.networkID]);
 	}, 240_000);
+
+	it('a LISH shared in the protected lishnet stays off a public lishnet, and a public one off the protected', async () => {
+		// The dial filter refuses loopback on purpose (no remote peer reaches it), so the host's own address it is.
+		const hostIP = Object.values(networkInterfaces())
+			.flat()
+			.find(i => i?.family === 'IPv4' && !i.internal)?.address;
+		if (!hostIP) throw new Error('the public-lishnet check needs a non-loopback IPv4 address');
+		const aliceNode = (await alice.api.lishnets.getNodeInfo())!;
+		const publicNet = { networkID: crypto.randomUUID(), name: 'E2E public', description: '', created: new Date().toISOString(), enabled: true };
+		await alice.api.lishnets.add({ ...publicNet, bootstrapPeers: [] });
+		await bob.api.lishnets.add({ ...publicNet, bootstrapPeers: [`/ip4/${hostIP}/tcp/${alice.p2pPort}/p2p/${aliceNode.peerID}`] });
+		await until('bob meets alice on the public lishnet', async () => (await bob.api.lishnets.getPeers(publicNet.networkID)).some(p => p.peerID === aliceNode.peerID), 60_000);
+		const source = join(alice.dir, 'public-share');
+		await mkdir(source, { recursive: true });
+		await writeFile(join(source, 'public.bin'), randomBytes(64 * 1024));
+		const { lishID: publicLish } = await alice.api.lishs.create(source, undefined, true, false, 'public');
+		const publicList = await until('bob lists alice on the public lishnet', async () => {
+			const list = (await bob.api.lishnets.getPeerLishs(aliceNode.peerID, publicNet.networkID)).lishs;
+			return list?.some(l => l.id === publicLish) ? list : null;
+		});
+		expect(publicList.some(l => l.id === protectedLish)).toBe(false);
+		const alicePeer = (await alice.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		const protectedList = (await bob.api.lishnets.getPeerLishs(alicePeer, network.networkID)).lishs ?? [];
+		expect(protectedList.map(l => l.id)).toEqual([protectedLish]);
+		await alice.api.lishnets.delete(publicNet.networkID);
+		await bob.api.lishnets.delete(publicNet.networkID);
+	}, 120_000);
 
 	it('a revoked member is cut off from everyone', async () => {
 		const bobStatus = await bob.api.overlay.status(network.networkID);
@@ -182,5 +216,33 @@ describe('protected lishnet on loopback', () => {
 		await until('alice sees bob again', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
 		const info = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!;
 		for (const addr of info.addresses!) expect(addr).toContain(`/ip4/${status.certificate!.vpnIP}/`);
+	}, 150_000);
+
+	it('a renewal that ends sooner revokes the longer certificate it replaces', async () => {
+		const held = (await bob.api.overlay.status(network.networkID)).certificate!;
+		const request = await bob.api.overlay.requestAccess(network.networkID, 'Bob');
+		const bundle = await founder.api.overlay.issue(request, { validUntil: new Date(Date.now() + 2 * 3600_000).toISOString() });
+		const rows = (await founder.api.overlay.listMembers(network.networkID)).filter(m => m.name === 'Bob');
+		expect(rows.find(m => m.fingerprint === held.fingerprint)?.revoked).toBe(true);
+		expect((await founder.api.overlay.status(network.networkID)).stateVersion).toBeGreaterThan(0);
+		const renewed = await bob.api.overlay.importCertificate(bundle);
+		expect(renewed.certificate!.vpnIP).toBe(held.vpnIP);
+		expect(renewed.certificate!.revoked).toBe(false);
+		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		await until('alice sees bob on the shorter certificate', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
+	}, 150_000);
+
+	it("revoking any of a member's certificates revokes the member", async () => {
+		const shorter = (await bob.api.overlay.status(network.networkID)).certificate!;
+		// An extension: the shorter certificate stays valid next to the longer one.
+		const request = await bob.api.overlay.requestAccess(network.networkID, 'Bob');
+		const longer = await bob.api.overlay.importCertificate(await founder.api.overlay.issue(request, { validUntil: new Date(Date.now() + 2 * 86_400_000).toISOString() }));
+		expect(longer.certificate!.fingerprint).not.toBe(shorter.fingerprint);
+		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		await until('alice sees bob on the longer certificate', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
+		await founder.api.overlay.revoke(network.networkID, shorter.fingerprint);
+		expect((await founder.api.overlay.listMembers(network.networkID)).filter(m => m.name === 'Bob').every(m => m.revoked)).toBe(true);
+		await until('alice loses bob', async () => !(await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 15_000);
+		expect((await bob.api.overlay.status(network.networkID)).certificate?.revoked).toBe(true);
 	}, 150_000);
 });
