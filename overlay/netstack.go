@@ -85,12 +85,17 @@ func newNetstack(control *nebula.Control, port uint16, onAccept func(net.Conn)) 
 	rcv := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4096, Default: 1 << 20, Max: tcpBufferMax}
 	snd := tcpip.TCPSendBufferSizeRangeOption{Min: 4096, Default: 1 << 20, Max: tcpBufferMax}
 	moderate := tcpip.TCPModerateReceiveBufferOption(true)
-	for _, opt := range []tcpip.SettableTransportProtocolOption{&sack, &rcv, &snd, &moderate} {
+	// RACK loss detection walks every unacknowledged segment on each ACK; with an 8 MB window it took over half of
+	// the sender's CPU and capped a stream at 6–10 MiB/s. Plain SACK recovery: 24 MiB/s on the same hosts.
+	recovery := tcpip.TCPRecovery(0)
+	for _, opt := range []tcpip.SettableTransportProtocolOption{&sack, &rcv, &snd, &moderate, &recovery} {
 		if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, opt); err != nil {
 			return nil, fmt.Errorf("netstack TCP option: %v", err)
 		}
 	}
-	linkEP := channel.New(512, 1280, "")
+	// A full queue drops the packet silently, so it holds a whole 8 MB send window: with 512 a stream lost 6–8 % of
+	// its segments to its own bursts.
+	linkEP := channel.New(8192, 1280, "")
 	if err := s.CreateNIC(nicID, linkEP); err != nil {
 		return nil, fmt.Errorf("netstack NIC: %v", err)
 	}
