@@ -42,7 +42,7 @@ describe('buildNebulaConfig — member', () => {
 		expect(config.lighthouse.hosts).toEqual(['100.64.0.1', '100.64.0.2']);
 		expect(config.static_host_map).toEqual({ '100.64.0.1': ['203.0.113.7:4242'], '100.64.0.2': ['lh2.example.com:4243'], '100.64.0.3': ['198.51.100.9:4242'] });
 		expect(config.pki).toEqual({ ...pki, blocklist: ['ab'.repeat(32)], disconnect_invalid: true });
-		expect(config.listen).toEqual({ host: '0.0.0.0', port: 0 });
+		expect(config.listen).toEqual({ host: '0.0.0.0', port: 0, read_buffer: 32 * 1024 * 1024, write_buffer: 32 * 1024 * 1024 });
 		expect(config.relay).toMatchObject({ am_relay: false, use_relays: true });
 		expect([...config.relay.relays].sort()).toEqual(['100.64.0.1', '100.64.0.3']);
 		expect(config.firewall.inbound).toEqual([{ port: 9090, proto: 'tcp', host: 'any' }]);

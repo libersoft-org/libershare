@@ -4,9 +4,10 @@ import { type LISHOverlayDefinition, type LISHOverlayHost } from '@shared';
 /** TCP port of every lishnet node inside its overlay. Each overlay has its own netstack, so one port fits all. */
 export const OVERLAY_LIBP2P_PORT = 9090;
 /**
- * UDP socket buffers of a lighthouse or relay; with the defaults the OS dropped hundreds of thousands of packets in
- * fast transfers. Members keep the OS defaults: raising them past the system limit needs privileges a member does
- * not have, and their own traffic is one stream at a time.
+ * UDP socket buffers of every node. With the OS defaults a relay dropped hundreds of thousands of packets in fast
+ * transfers, and a receiving member tens of thousands (measured: one 256 MiB download through a relay stalled for
+ * 20 s while TCP recovered). Where raising them needs privileges the node lacks (Linux without root), Nebula logs
+ * the failure and keeps the defaults.
  */
 const UDP_BUFFER_BYTES = 32 * 1024 * 1024;
 /** Underlay ranges a LAN neighbour can be reached on when the lishnet allows direct LAN connections. */
@@ -84,7 +85,7 @@ export function buildNebulaConfig(input: NebulaConfigInput): Record<string, unkn
 		pki: { ca: input.pki.ca, cert: input.pki.cert, key: input.pki.key, blocklist: input.revoked, disconnect_invalid: true },
 		static_host_map: staticHostMap,
 		lighthouse,
-		listen: own ? { host: '0.0.0.0', port: hostPort(own.addr).port, read_buffer: UDP_BUFFER_BYTES, write_buffer: UDP_BUFFER_BYTES } : { host: '0.0.0.0', port: 0 },
+		listen: { host: '0.0.0.0', port: own ? hostPort(own.addr).port : 0, read_buffer: UDP_BUFFER_BYTES, write_buffer: UDP_BUFFER_BYTES },
 		punchy: { punch: !isInfra && overlay.lanDirect, respond: !isInfra && overlay.lanDirect },
 		relay: { am_relay: isRelay, use_relays: true, relays: isRelay ? [] : orderRelays(overlay.relays, input.peerID) },
 		firewall: {
