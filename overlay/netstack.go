@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"time"
 
 	"github.com/slackhq/nebula"
 	"github.com/slackhq/nebula/overlay"
@@ -30,7 +31,28 @@ const (
 	nicID = 1
 	// tcpBufferMax lets auto-tuning grow a stream's window to 8 MB.
 	tcpBufferMax = 8 << 20
+
+	keepaliveIdle     = 10 * time.Second
+	keepaliveInterval = 5 * time.Second
+	keepaliveCount    = 3
+	// userTimeout: data unacknowledged this long means the peer is gone (measured worst case on the fleet's
+	// slowest relay path stays far below it).
+	userTimeout = 20 * time.Second
 )
+
+// failFast makes a dead connection fail fast instead of staying open until the backend's own idle timeout (46 s
+// measured, while libp2p kept using it): a busy connection gives up after 20 s of unacknowledged data, an idle one
+// after keepalive probes go unanswered (25 s), and a peer that restarted answers the first segment with a reset.
+func failFast(ep tcpip.Endpoint) {
+	ep.SocketOptions().SetKeepAlive(true)
+	idle := tcpip.KeepaliveIdleOption(keepaliveIdle)
+	interval := tcpip.KeepaliveIntervalOption(keepaliveInterval)
+	timeout := tcpip.TCPUserTimeoutOption(userTimeout)
+	ep.SetSockOpt(&idle)
+	ep.SetSockOpt(&interval)
+	ep.SetSockOpt(&timeout)
+	ep.SetSockOptInt(tcpip.KeepaliveCountOption, keepaliveCount)
+}
 
 // netstack is a TCP/IP stack on top of a Nebula user device, accepting inbound TCP on one port only.
 type netstack struct {
@@ -94,7 +116,7 @@ func newNetstack(control *nebula.Control, port uint16, onAccept func(net.Conn)) 
 			return
 		}
 		r.Complete(false)
-		ep.SocketOptions().SetKeepAlive(true)
+		failFast(ep)
 		go onAccept(gonet.NewTCPConn(&wq, ep))
 	})
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, fwd.HandlePacket)
@@ -142,11 +164,35 @@ func newNetstack(control *nebula.Control, port uint16, onAccept func(net.Conn)) 
 	return &netstack{stack: s, eg: eg}, nil
 }
 
-// dial opens a TCP connection to an address inside the overlay.
+// dial opens a TCP connection to an address inside the overlay. It is gonet.DialContextTCP with keepalive set on
+// the endpoint before it connects.
 func (n *netstack) dial(ctx context.Context, to netip.AddrPort) (net.Conn, error) {
 	if !to.Addr().Is4() {
 		return nil, errors.New("only IPv4 overlay addresses are supported")
 	}
 	full := tcpip.FullAddress{NIC: nicID, Addr: tcpip.AddrFromSlice(to.Addr().AsSlice()), Port: to.Port()}
-	return gonet.DialContextTCP(ctx, n.stack, full, ipv4.ProtocolNumber)
+	var wq waiter.Queue
+	ep, terr := n.stack.NewEndpoint(tcp.ProtocolNumber, ipv4.ProtocolNumber, &wq)
+	if terr != nil {
+		return nil, errors.New(terr.String())
+	}
+	failFast(ep)
+	entry, notify := waiter.NewChannelEntry(waiter.WritableEvents)
+	wq.EventRegister(&entry)
+	defer wq.EventUnregister(&entry)
+	terr = ep.Connect(full)
+	if _, started := terr.(*tcpip.ErrConnectStarted); started {
+		select {
+		case <-ctx.Done():
+			ep.Close()
+			return nil, ctx.Err()
+		case <-notify:
+		}
+		terr = ep.LastError()
+	}
+	if terr != nil {
+		ep.Close()
+		return nil, fmt.Errorf("connect %s: %s", to, terr)
+	}
+	return gonet.NewTCPConn(&wq, ep), nil
 }
