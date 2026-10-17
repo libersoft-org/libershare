@@ -1,5 +1,6 @@
 import { Mutex } from 'async-mutex';
 import { randomUUID } from 'node:crypto';
+import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
@@ -42,6 +43,19 @@ export interface ApproveOptions {
 	validUntil?: string;
 	/** Infrastructure roles; they need the `infraAddr` the request offered. */
 	roles?: OverlayRole[];
+}
+
+/**
+ * Whether this computer can listen on a UDP port. A lighthouse or relay listens on the port of its public address;
+ * when another protected lishnet or program holds it, the lishnet would be created and then never start.
+ */
+function udpPortFree(addr: string): Promise<boolean> {
+	const port = Number(addr.slice(addr.lastIndexOf(':') + 1));
+	return new Promise(resolve => {
+		const socket = createSocket('udp4');
+		socket.once('error', () => resolve(false));
+		socket.bind(port, () => socket.close(() => resolve(true)));
+	});
 }
 
 function pemHex(pem: string): string {
@@ -129,6 +143,7 @@ export class OverlayAccess {
 		const parsed = parseSubnet(subnet);
 		if (!parsed) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'subnet must be an aligned IPv4 subnet between /8 and /30');
 		if (p.lighthouseAddr !== undefined && !isHostPort(p.lighthouseAddr)) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'lighthouse address must be host:port');
+		if (p.lighthouseAddr !== undefined && !(await udpPortFree(p.lighthouseAddr))) throw new CodedError(ErrorCodes.NETWORK_INVALID, `the UDP port of ${p.lighthouseAddr} is already in use on this computer`);
 		const networkID = randomUUID();
 		const store = this.deps.nodes.store(networkID);
 		await store.ensureDir();
@@ -167,6 +182,8 @@ export class OverlayAccess {
 	async requestAccess(networkID: string, name: string, infraAddr?: string): Promise<OverlayAccessRequest> {
 		const { store } = this.overlayOf(networkID);
 		if (infraAddr !== undefined && !isHostPort(infraAddr)) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'infrastructure address must be host:port');
+		// A running node of this lishnet holds its own port (a host renewing its certificate).
+		if (infraAddr !== undefined && !this.deps.nodes.isRunning(networkID) && !(await udpPortFree(infraAddr))) throw new CodedError(ErrorCodes.NETWORK_INVALID, `the UDP port of ${infraAddr} is already in use on this computer`);
 		const request = validateAccessRequest({ type: 'lish-overlay-request', networkID, name, peerID: await this.nodePeerID(networkID, store), publicKey: await this.memberKey(store), ...(infraAddr !== undefined ? { infraAddr } : {}), created: new Date().toISOString() });
 		await store.writeJSON('request.json', request);
 		this.deps.emit('overlay:status', { networkID });
