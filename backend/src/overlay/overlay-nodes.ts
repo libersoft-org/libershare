@@ -188,7 +188,7 @@ export class OverlayNodes {
 					await entry.helper.setInboundPort(port);
 				},
 			};
-			entry.network = new Network(store.dir, this.deps.dataServer, this.deps.settings, { overlay: { vpnIP, port: OVERLAY_LIBP2P_PORT, bridge } });
+			entry.network = new Network(store.dir, this.deps.dataServer, this.deps.settings, { overlay: { vpnIP, port: OVERLAY_LIBP2P_PORT, bridge }, lishScope: row.networkID });
 			entry.network.onPeerCountChange = () => this.deps.onPeerCountChange();
 			entry.network.onBootstrapStatusChange = (id, status) => this.deps.onBootstrapStatusChange(id, status);
 			try {

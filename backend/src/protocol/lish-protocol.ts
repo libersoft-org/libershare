@@ -510,6 +510,40 @@ export function isUploadEnabled(lishID: string): boolean {
 export function isUploadAdvertisable(lishID: string): boolean {
 	return uploadEnabled.has(lishID) && !isBusy(lishID);
 }
+
+/**
+ * The protected lishnets each LISH is shared in. A LISH without an entry is public and served by the public node
+ * only; one with an entry is served only by the nodes of those protected lishnets. Every node shares one data
+ * server, so without this a file shared inside a protected lishnet would be listed, searched and served to any
+ * peer of a public lishnet, from the member's public address.
+ */
+const lishScopes = new Map<string, string[]>();
+let persistLISHScope: ((lishID: string, networkIDs: string[]) => void) | null = null;
+
+export function initLISHScopes(scopes: Map<string, string[]>, persistFn: (lishID: string, networkIDs: string[]) => void): void {
+	lishScopes.clear();
+	for (const [lishID, networkIDs] of scopes) if (networkIDs.length > 0) lishScopes.set(lishID, [...networkIDs]);
+	persistLISHScope = persistFn;
+}
+/** Restrict a LISH to these protected lishnets; an empty list makes it public. */
+export function setLISHScope(lishID: string, networkIDs: string[]): void {
+	const ids = [...new Set(networkIDs)];
+	if (ids.length > 0) lishScopes.set(lishID, ids);
+	else lishScopes.delete(lishID);
+	persistLISHScope?.(lishID, ids);
+}
+export function getLISHScope(lishID: string): string[] {
+	return lishScopes.get(lishID) ?? [];
+}
+/** Forget a deleted LISH's scope (its row, and with it the stored scope, is gone). */
+export function removeLISHScope(lishID: string): void {
+	lishScopes.delete(lishID);
+}
+/** Whether a node serves a LISH: the public node (`scope` null) public LISHs, a protected lishnet's node its own. */
+export function isServedOn(lishID: string, scope: string | null): boolean {
+	const ids = lishScopes.get(lishID);
+	return scope === null ? ids === undefined : ids?.includes(scope) === true;
+}
 export function getEnabledUploads(): Set<string> {
 	return uploadEnabled;
 }
@@ -559,7 +593,8 @@ export function toManifest(lish: import('@shared').IStoredLISH): import('@shared
 	return exportData as import('@shared').IStoredLISH;
 }
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal, scope: string | null = null): Promise<void> {
+	const advertisable = (lishID: string): boolean => isUploadAdvertisable(lishID) && isServedOn(lishID, scope);
 	const servedLishIDs = new Set<string>();
 	const listPages = new LISHListPages();
 	// Keeps the files this stream reads open between its chunk requests; closed with the stream.
@@ -648,7 +683,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					continue;
 				}
 				try {
-					await reply(listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
+					await reply(listPages.respond(request, () => dataServer.list(), advertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
 				} catch (error) {
 					listPages.clear();
 					if (!(error instanceof CodedError)) throw error;
@@ -658,7 +693,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'getLish') {
 				// Only return manifest for LISHs with upload enabled — and only to
 				// peers we share a joined lishnet with (same gate as getLishs).
-				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !isUploadAdvertisable(request.lishID)) {
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !advertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					await reply(codecEncode(response));
 				} else {
@@ -686,7 +721,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					await reply(codecEncode(gatedResponse));
 					continue;
 				}
-				if (!uploadEnabled.has(chunkReq.lishID)) {
+				if (!uploadEnabled.has(chunkReq.lishID) || !isServedOn(chunkReq.lishID, scope)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					await reply(codecEncode(blockedResponse));
 					continue;

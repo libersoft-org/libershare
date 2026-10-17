@@ -121,7 +121,7 @@ const networks = new Networks(db, dataDir, dataServer, settings);
 networks.init();
 
 // Point the protocol layer at the live settings, then push the transfer rates
-import { setUploadBroadcast, initUploadState } from './protocol/lish-protocol.ts';
+import { setUploadBroadcast, initUploadState, initLISHScopes } from './protocol/lish-protocol.ts';
 import { applyNetworkLimits } from './protocol/network-limits.ts';
 import { useNetworkSettings } from './settings.ts';
 import { getUploadEnabledLishs, setUploadEnabled, getDownloadEnabledLishs, setDownloadEnabled } from './db/lishs.ts';
@@ -130,6 +130,7 @@ useNetworkSettings(() => settings.get().network);
 applyNetworkLimits(settings.get().network);
 initUploadState(getUploadEnabledLishs(db), (lishID, enabled) => setUploadEnabled(db, lishID, enabled));
 initDownloadState(getDownloadEnabledLishs(db), (lishID, enabled) => setDownloadEnabled(db, lishID, enabled));
+initLISHScopes(dataServer.getLISHScopes(), (lishID, networkIDs) => dataServer.setLISHScope(lishID, networkIDs));
 
 let ipcFailed = false;
 const apiServer = new APIServer(dataDir, dataServer, networks, settings, {

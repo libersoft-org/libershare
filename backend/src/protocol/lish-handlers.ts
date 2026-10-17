@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { trace } from '../logger.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { LISH_PROTOCOL, LISHClient, type HaveChunks, isUploadEnabled, isUploadAdvertisable } from './lish-protocol.ts';
+import { LISH_PROTOCOL, LISHClient, type HaveChunks, isUploadEnabled, isUploadAdvertisable, isServedOn } from './lish-protocol.ts';
 import { isBusy } from '../api/busy.ts';
 import { type WantMessage } from './downloader.ts';
 import { type IDialResult } from './network.ts';
@@ -56,6 +56,8 @@ export interface LISHHandlersDeps {
 	isDirectPeer(peerID: string): boolean;
 	/** Whether we are still joined to this specific lishnet. */
 	isJoinedToLishnet(networkID: string): boolean;
+	/** The protected lishnet this node serves, or null/absent for the public node — see `isServedOn`. */
+	readonly scope?: string | null;
 }
 
 /**
@@ -115,7 +117,7 @@ export class LISHServingHandlers {
 			trace(`[NET] want ignored: no verified sender peerID`);
 			return;
 		}
-		if (!isUploadEnabled(data.lishID)) {
+		if (!isUploadEnabled(data.lishID) || !isServedOn(data.lishID, this.deps.scope ?? null)) {
 			trace(`[NET] want ignored: upload disabled for ${data.lishID.slice(0, 8)}`);
 			return;
 		}
@@ -243,7 +245,7 @@ export class LISHServingHandlers {
 		const q = data.query.toLowerCase();
 		const matches: Array<{ id: string; name?: string; totalSize?: number }> = [];
 		for (const lish of this.deps.dataServer.list()) {
-			if (!isSearchAdvertisableLish(lish)) continue;
+			if (!isSearchAdvertisableLish(lish) || !isServedOn(lish.id, this.deps.scope ?? null)) continue;
 			const idLower = lish.id.toLowerCase();
 			const nameLower = lish.name?.toLowerCase() ?? '';
 			if (!idLower.includes(q) && !nameLower.includes(q)) continue;

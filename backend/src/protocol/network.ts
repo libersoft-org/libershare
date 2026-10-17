@@ -637,10 +637,13 @@ export class Network {
 	private readonly settings: Settings;
 	/** Set for the node of a protected lishnet: it then lives inside that network's overlay only. */
 	private readonly overlay: OverlayNodeOptions | undefined;
+	/** The protected lishnet whose LISHs this node serves; null for the public node, which serves public LISHs. */
+	readonly lishScope: string | null;
 
-	constructor(dataDir: string, dataServer: DataServer, settings: Settings, options: { overlay?: OverlayNodeOptions } = {}) {
+	constructor(dataDir: string, dataServer: DataServer, settings: Settings, options: { overlay?: OverlayNodeOptions; lishScope?: string } = {}) {
 		this.dataDir = dataDir;
 		this.overlay = options.overlay;
+		this.lishScope = options.lishScope ?? null;
 
 		this.dataServer = dataServer;
 		this.settings = settings;
@@ -654,6 +657,7 @@ export class Network {
 			canServePubsubRequestTo: (peerID, treatAsDirect): boolean => this.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID): boolean => this.isDirectPeer(peerID),
 			isJoinedToLishnet: (networkID): boolean => this.isJoinedToLishnet(networkID),
+			scope: this.lishScope,
 		});
 		// Lets the discovered-row cap keep live participants and drop dead addresses first.
 		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
@@ -1076,7 +1080,8 @@ export class Network {
 						connType,
 						pid => this.sharesJoinedTopicWith(pid),
 						pid => this.canListSharesTo(pid),
-						runAbort.signal
+						runAbort.signal,
+						this.lishScope
 					);
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);

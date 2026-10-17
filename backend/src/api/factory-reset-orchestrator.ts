@@ -2,7 +2,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type Settings } from '../settings.ts';
 import { type FactoryResetResponse } from '@shared';
-import { initUploadState } from '../protocol/lish-protocol.ts';
+import { initLISHScopes, initUploadState } from '../protocol/lish-protocol.ts';
 import { persistAndApplyNetworkLimits } from '../protocol/network-limits.ts';
 import type { NetworkRestartManager } from './network-restart.ts';
 import { runFactoryReset } from './factory-reset.ts';
@@ -125,6 +125,7 @@ export function buildFactoryResetHandler(deps: FactoryResetOrchestratorDeps): (p
 				const enabledDownloads = dataServer.getDownloadEnabledLishs();
 				initDownloadState(enabledDownloads, (id, en) => dataServer.setDownloadEnabled(id, en));
 				initUploadState(dataServer.getUploadEnabledLishs(), (id, en) => dataServer.setUploadEnabled(id, en));
+				initLISHScopes(dataServer.getLISHScopes(), (id, networkIDs) => dataServer.setLISHScope(id, networkIDs));
 				await networks.startEnabledNetworks();
 				try {
 					await restoreAllTransfers(enabledDownloads, transferRestoreSnapshot);
