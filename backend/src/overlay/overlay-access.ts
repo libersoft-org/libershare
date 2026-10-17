@@ -363,12 +363,14 @@ export class OverlayAccess {
 		const helper = await nodes.helperStatus(networkID);
 		const tunnels = new Map((helper?.hosts ?? []).map(h => [h.vpnAddrs[0] ?? '', h]));
 		const infra = new Set([...overlay.lighthouses, ...overlay.relays].map(h => h.vpnIP));
-		const request = cert ? null : await store.readRequest();
+		const revoked = cert ? (state?.revoked.includes(cert.fingerprint) ?? false) : false;
+		// A member whose certificate is revoked or expired asks again; its new request is shown like a first one.
+		const request = !cert || revoked || Date.parse(cert.notAfter) <= Date.now() ? await store.readRequest() : null;
 		const ownIP = cert?.networks[0]?.split('/')[0];
 		return {
 			networkID,
 			role: store.has('ca.key') ? 'founder' : cert ? 'member' : 'none',
-			...(cert ? { certificate: { name: cert.name, vpnIP: cert.networks[0]!.split('/')[0]!, groups: cert.groups, notBefore: cert.notBefore, notAfter: cert.notAfter, fingerprint: cert.fingerprint, revoked: state?.revoked.includes(cert.fingerprint) ?? false } } : {}),
+			...(cert ? { certificate: { name: cert.name, vpnIP: cert.networks[0]!.split('/')[0]!, groups: cert.groups, notBefore: cert.notBefore, notAfter: cert.notAfter, fingerprint: cert.fingerprint, revoked } } : {}),
 			...(request ? { request } : {}),
 			running: nodes.isRunning(networkID),
 			stateVersion: state?.version ?? overlay.version,
