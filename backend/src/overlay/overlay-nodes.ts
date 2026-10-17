@@ -17,6 +17,8 @@ import { applyState, nextVersion, signState, verifyState } from './overlay-state
 const STATE_REPUBLISH_MS = 60_000;
 /** A peer joining the state topic triggers a publish, at most this often. */
 const STATE_PUBLISH_MIN_GAP_MS = 5_000;
+/** A new revocation is passed on this long before the node blocks the revoked certificate. */
+const REVOCATION_NOTICE_MS = 1_000;
 const RESTART_DELAY_MIN_MS = 1_000;
 const RESTART_DELAY_MAX_MS = 30_000;
 
@@ -360,7 +362,10 @@ export class OverlayNodes {
 		console.log(`[Overlay ${networkID.slice(0, 8)}] accepted network state v${incoming.version} (${incoming.lighthouses.length} lighthouse(s), ${incoming.relays.length} relay(s), ${incoming.revoked.length} revoked)`);
 		this.deps.onStateChange(networkID, incoming);
 		// Passed on at once and past the rate limit: a revocation must not wait for the next periodic send.
-		void this.publishState(networkID, true);
+		await this.publishState(networkID, true);
+		// This message is the only way a revoked member learns why its tunnels went, and every node cuts it off once
+		// configured: give it time to get there first.
+		if (incoming.revoked.some(f => !previous?.revoked.includes(f))) await Bun.sleep(REVOCATION_NOTICE_MS);
 		await this.reconfigure(networkID);
 		return true;
 	}

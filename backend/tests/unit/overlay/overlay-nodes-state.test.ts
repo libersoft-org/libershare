@@ -83,6 +83,29 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// The revoked member hears of its revocation only through this message; blocked at once, it sometimes never did.
+	it('passes a new revocation on a while before blocking it, an unchanged list without delay', async () => {
+		const h = await harness();
+		const reconfigured: number[] = [];
+		(h.nodes as any).reconfigure = async () => {
+			reconfigured.push(Date.now());
+		};
+		const sent = (): number => h.broadcasts[h.broadcasts.length - 1].at;
+		h.broadcasts.push = function (this: any[], b: any) {
+			return Array.prototype.push.call(this, { ...b, at: Date.now() });
+		};
+		try {
+			await h.nodes.acceptState(NET, await h.sign(5));
+			expect(h.broadcasts).toHaveLength(1);
+			expect(reconfigured[0]! - sent()).toBeGreaterThanOrEqual(900);
+			await h.nodes.acceptState(NET, await h.sign(6));
+			expect(h.broadcasts).toHaveLength(2);
+			expect(reconfigured[1]! - sent()).toBeLessThan(500);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
 	it('refuses a state signed by another key', async () => {
 		const h = await harness();
 		try {
