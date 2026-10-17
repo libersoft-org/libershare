@@ -9,6 +9,8 @@
 	import { sanitizeFilename, compressionExtension, stripCompressionExtension, type CompressionAlgorithm } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
 	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { getNetworks } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkConfig } from '@shared';
 
 	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
 	function shareBaseName(path: string): string {
@@ -181,6 +183,15 @@
 		if (untrack(() => initialDataPath) && name) handleNameChange(name);
 	});
 
+	// Where the LISH is shared: '' = the public lishnets, else one protected lishnet only.
+	let protectedNets = $state<LISHNetworkConfig[]>([]);
+	let scope = $state('');
+	onMount(() => {
+		getNetworks()
+			.then(nets => (protectedNets = nets.filter(n => n.overlay)))
+			.catch(() => {});
+	});
+
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>(DEFAULT_ALGO);
@@ -226,6 +237,7 @@
 			// Apply global auto-start settings — controlled in Settings → Download.
 			if ($autoStartSharing) params['addToSharing'] = true;
 			if ($autoStartDownloading) params['addToDownloading'] = true;
+			if (scope) params['scope'] = [scope];
 			// Only pass non-default advanced options
 			const parsedChunkSize = parseChunkSize(chunkSize);
 			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params['chunkSize'] = parsedChunkSize;
@@ -408,9 +420,20 @@
 				<!-- Threads -->
 				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
 			{/if}
+			{#if protectedNets.length > 0}
+				<div>
+					<div class="label">{$t('lish.create.shareIn')}:</div>
+					<div class="algo-selector">
+						<Button label={$t('lish.create.sharePublic')} position={[0, 12]} active={scope === ''} onConfirm={() => (scope = '')} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{#each protectedNets as net, i}
+							<Button icon="/img/lock.svg" label={net.name} position={[i + 1, 12]} active={scope === net.networkID} onConfirm={() => (scope = net.networkID)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{/each}
+					</div>
+				</div>
+			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 12]}>
+		<ButtonBar justify="center" basePosition={[0, 13]}>
 			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>

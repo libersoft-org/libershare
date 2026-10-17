@@ -62,6 +62,8 @@ export interface DownloadData {
 	chunkSize: number;
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
+	/** Protected lishnets the LISH is shared in only; empty = the public lishnets. */
+	scope: string[];
 	errorCode?: string | undefined;
 	errorMessage?: string | undefined;
 	recoveryRetryCount?: number | undefined;
@@ -127,6 +129,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		chunkSize: detail.chunkSize,
 		totalUploadedBytes: detail.totalUploadedBytes ?? 0,
 		totalDownloadedBytes: detail.totalDownloadedBytes ?? 0,
+		scope: detail.scope ?? [],
 	};
 }
 
@@ -282,6 +285,11 @@ export async function initDownloads(): Promise<void> {
 				addNotification(tt('downloads.lishAdded', { name: detail.name ?? detail.id }), 'info');
 				return [entry, ...list];
 			});
+		});
+
+		// lishs:scope — where a LISH is shared changed (lishs.setScope)
+		api.on('lishs:scope', (data: { lishID: string; scope: string[] }) => {
+			downloads.update(list => list.map(d => (d.id === data.lishID ? { ...d, scope: data.scope } : d)));
 		});
 
 		// lishs:remove — LISH deleted (broadcast from backend)
@@ -811,6 +819,7 @@ export async function initDownloads(): Promise<void> {
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
 	api.subscribe('lishs:add');
+	api.subscribe('lishs:scope');
 	api.subscribe('lishs:remove');
 	api.subscribe('lishs:verify');
 	api.subscribe('lishs:move');
@@ -886,6 +895,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 		chunkSize: 0,
 		totalUploadedBytes: 0,
 		totalDownloadedBytes: 0,
+		scope: [],
 	};
 	downloads.update(list => [dl, ...list]);
 }
