@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -245,4 +246,12 @@ describe('protected lishnet on loopback', () => {
 		await until('alice loses bob', async () => !(await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 15_000);
 		expect((await bob.api.overlay.status(network.networkID)).certificate?.revoked).toBe(true);
 	}, 150_000);
+
+	it('deleting a protected lishnet removes its keys, certificate and node data', async () => {
+		const nodeDir = join(bob.dir, 'lishnet-nodes', network.networkID);
+		expect(existsSync(join(nodeDir, 'member.key'))).toBe(true);
+		await bob.api.lishnets.delete(network.networkID);
+		await until('bob forgets the lishnet', async () => !existsSync(nodeDir), 30_000);
+		expect((await bob.api.lishnets.infoAll()).some(n => n.networkID === network.networkID)).toBe(false);
+	}, 60_000);
 });
