@@ -981,7 +981,8 @@ export class Network {
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
 
 		// Register lish protocol handler
-		await this.node.handle(LISH_PROTOCOL, (data: any) => this.handleInboundLISHProtocol(data), { runOnLimitedConnection: true });
+		// libp2p 3 calls a handler with (stream, connection): the connection is the only reliable source of the sender.
+		await this.node.handle(LISH_PROTOCOL, (stream: any, connection: any) => this.handleInboundLISHProtocol(stream, connection), { runOnLimitedConnection: true });
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
 		// DHT removed; only bootstrap + gossipsub for discovery
@@ -1036,7 +1037,7 @@ export class Network {
 	 * Track the complete application Promise returned to libp2p. Stopping the node
 	 * closes transports, but libp2p does not wait for this Promise itself.
 	 */
-	private handleInboundLISHProtocol(data: any): Promise<void> {
+	private handleInboundLISHProtocol(data: any, handlerConnection?: any): Promise<void> {
 		const stream = (data.stream ?? data) as Stream;
 		const runAbort = this.lishProtocolAbort;
 		const runNode = this.node;
@@ -1051,7 +1052,7 @@ export class Network {
 		handler = Promise.resolve()
 			.then(async () => {
 				try {
-					const connection = data.connection;
+					const connection = handlerConnection ?? data.connection;
 					let remotePeerID = connection?.remotePeer?.toString?.();
 					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
 					if (!remotePeerID) {
@@ -1061,7 +1062,8 @@ export class Network {
 							for (const peer of runNode.getPeers()) {
 								for (const conn of runNode.getConnections(peer)) {
 									try {
-										if (conn.streams.some((candidate: any) => candidate.id === stream.id)) {
+										// The stream itself, not its id: ids count per connection, so another peer's stream can share it.
+										if (conn.streams.some((candidate: any) => candidate === stream)) {
 											remotePeerID = peer.toString();
 											isRelay = Circuit.matches(conn.remoteAddr);
 										}
