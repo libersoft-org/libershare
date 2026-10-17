@@ -39,6 +39,9 @@
 	let requestJSON = $derived(status?.request ? JSON.stringify(status.request) : '');
 	let relayed = $derived(status?.peers.filter(p => p.path === 'relay').length ?? 0);
 	let direct = $derived(status?.peers.filter(p => p.path === 'direct').length ?? 0);
+	let expired = $derived(!!status?.certificate && Date.parse(status.certificate.notAfter) <= Date.now());
+	/** A member out of the lishnet (revoked or expired) asks again the same way as the first time. */
+	let canRequest = $derived(!!status && !status.request && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired))));
 	/** Running is not enough: without a lighthouse or relay reachable the node is cut off. */
 	let online = $derived(!!status?.running && status.hosts.some(h => h.connected));
 
@@ -178,6 +181,8 @@
 			{#if status}
 				{#if status.certificate?.revoked}
 					<Alert type="error" message={$t('settings.lishNetwork.protected.revoked')} />
+				{:else if expired && status.certificate}
+					<Alert type="error" message={tt('settings.lishNetwork.protected.expired', { date: formatDate(status.certificate.notAfter) })} />
 				{/if}
 				<Table columns="35vh 1fr" noBorder>
 					<TableRow>
@@ -190,8 +195,9 @@
 							<TableCell><span class="value mono">{status.certificate.vpnIP}</span></TableCell>
 						</TableRow>
 						<TableRow>
-							<TableCell><span class="label">{$t('settings.lishNetwork.protected.validUntil')}</span></TableCell>
-							<TableCell><span class="value">{formatDate(status.certificate.notAfter)}</span></TableCell>
+							<!-- Both ends: a wrong clock on this computer shows as a validity that has not started or already ended. -->
+							<TableCell><span class="label">{$t('settings.lishNetwork.protected.validity')}</span></TableCell>
+							<TableCell><span class="value">{formatDate(status.certificate.notBefore)} – {formatDate(status.certificate.notAfter)}</span></TableCell>
 						</TableRow>
 						<TableRow>
 							<TableCell><span class="label">{$t('settings.lishNetwork.protected.connection')}</span></TableCell>
@@ -213,7 +219,7 @@
 						</TableCell>
 					</TableRow>
 				</Table>
-				{#if status.role === 'none' && !status.request}
+				{#if canRequest}
 					<div role="group" data-mouse-activate-area={areaID}>
 						<Input bind:value={name} label={$t('settings.lishNetwork.protected.yourName')} position={[0, 1]} />
 					</div>

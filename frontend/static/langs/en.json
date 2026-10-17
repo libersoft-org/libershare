@@ -562,6 +562,8 @@
 				"address": "Address in the network",
 				"validUntil": "Valid until",
 				"revoked": "Your access to this network was revoked.",
+				"validity": "Valid",
+				"expired": "Your certificate expired on {date}. Ask the founder for a new one.",
 				"connection": "Connection",
 				"running": "Connected",
 				"notRunning": "Not connected",

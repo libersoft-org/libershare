@@ -562,6 +562,8 @@
 				"address": "Adresa v síti",
 				"validUntil": "Platí do",
 				"revoked": "Tvůj přístup do této sítě byl odvolán.",
+				"validity": "Platnost",
+				"expired": "Tvůj certifikát vypršel {date}. Požádej zakladatele o nový.",
 				"connection": "Spojení",
 				"running": "Připojeno",
 				"notRunning": "Nepřipojeno",
