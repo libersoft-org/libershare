@@ -218,14 +218,15 @@ export class OverlayAccess {
 		if (roles.some(r => !ROLES.includes(r))) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'unknown role');
 		const until = opts.validUntil ? new Date(opts.validUntil) : new Date(Date.now() + DEFAULT_MEMBER_DAYS * 86_400_000);
 		if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'validity must end in the future');
-		const { bundleMember, request } = await this.founderLock(networkID).runExclusive(async () => {
+		const { bundleMember, request, hadRoles, superseded } = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
 			const request = data.requests.find(r => r.id === requestID);
 			if (!request) throw new CodedError(ErrorCodes.OVERLAY_REQUEST_NOT_FOUND, requestID);
 			if (roles.length > 0 && !request.infraAddr) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'an infrastructure role needs the public address the request offers');
 			const subnet = parseSubnet(overlay.subnet)!;
 			// A renewal keeps the address the member already had; a new member gets the next free one.
-			const previous = data.members.find(m => m.peerID === request.peerID && !m.revoked);
+			const current = data.members.filter(m => m.peerID === request.peerID && !m.revoked);
+			const previous = current[0];
 			let vpnIP = previous?.vpnIP;
 			if (!vpnIP) {
 				const used = new Set(data.members.map(m => m.vpnIP));
@@ -234,20 +235,25 @@ export class OverlayAccess {
 				vpnIP = subnetAddress(overlay.subnet, data.nextHost++);
 			}
 			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], until.toISOString().replace(/\.\d{3}Z$/, 'Z'));
+			// A renewal that ends sooner than a certificate the node still holds would shorten nothing while that
+			// one stays valid: it is revoked, and the node is out until it imports the new one.
+			const superseded = current.filter(m => Date.parse(m.notAfter) > Date.parse(cert.notAfter));
+			for (const m of superseded) m.revoked = true;
 			const member: OverlayMember = { name: request.name, peerID: request.peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false };
 			data.members.push(member);
 			data.requests = data.requests.filter(r => r.id !== requestID);
 			await store.writeJSON('founder.json', data);
-			return { bundleMember: { member, cert: cert.cert }, request };
+			return { bundleMember: { member, cert: cert.cert }, request, hadRoles: current.some(m => m.roles.length > 0), superseded: superseded.map(m => m.fingerprint) };
 		});
-		if (roles.length > 0) {
-			const host: LISHOverlayHost = { vpnIP: bundleMember.member.vpnIP, addr: request.infraAddr!, peerID: request.peerID };
+		// Roles given, taken away by a renewal without them, or an older certificate to revoke: a new signed state.
+		if (roles.length > 0 || hadRoles || superseded.length > 0) {
+			const host: LISHOverlayHost = { vpnIP: bundleMember.member.vpnIP, addr: request.infraAddr ?? '', peerID: request.peerID };
 			const current = await this.deps.nodes.currentState(networkID, overlay);
 			const others = (list: LISHOverlayHost[]): LISHOverlayHost[] => list.filter(h => h.vpnIP !== host.vpnIP);
 			await this.deps.nodes.publishNewState(networkID, {
 				lighthouses: roles.includes('lighthouse') ? [...others(overlay.lighthouses), host] : others(overlay.lighthouses),
 				relays: roles.includes('relay') ? [...others(overlay.relays), host] : others(overlay.relays),
-				revoked: current?.revoked ?? [],
+				revoked: [...new Set([...(current?.revoked ?? []), ...superseded])],
 			});
 		}
 		this.deps.emit('overlay:members', { networkID });
@@ -266,26 +272,27 @@ export class OverlayAccess {
 	}
 
 	/**
-	 * Founder: revoke a certificate by fingerprint, for good. Every node blocklists it as soon as the signed state
-	 * reaches it, and with `disconnect_invalid` its tunnels drop at once. A revoked host leaves the infrastructure.
+	 * Founder: revoke a member for good — the certificate with this fingerprint and every other one its node still
+	 * holds (an earlier one stays valid after a renewal). Every node blocklists them as soon as the signed state
+	 * reaches it, and with `disconnect_invalid` their tunnels drop at once. A revoked host leaves the infrastructure.
 	 */
 	async revoke(networkID: string, fingerprint: string): Promise<void> {
 		const { overlay, store } = this.founderOf(networkID);
 		if (!FINGERPRINT.test(fingerprint)) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'fingerprint must be 64 hex characters');
 		// The founder's own node is the lishnet's authority (and usually its lighthouse): revoking it locks everyone out.
-		if ((await this.deps.nodes.ownCertificate(store, overlay.caCert))?.fingerprint === fingerprint) throw new CodedError(ErrorCodes.NETWORK_INVALID, "the founder's own certificate cannot be revoked");
-		const member = await this.founderLock(networkID).runExclusive(async () => {
+		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert);
+		const { member, fingerprints } = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
 			const member = data.members.find(m => m.fingerprint === fingerprint);
-			if (member) {
-				member.revoked = true;
-				await store.writeJSON('founder.json', data);
-			}
-			return member;
+			if (own && (own.fingerprint === fingerprint || member?.peerID === own.name)) throw new CodedError(ErrorCodes.NETWORK_INVALID, "the founder's own certificate cannot be revoked");
+			const node = member ? data.members.filter(m => m.peerID === member.peerID && !m.revoked) : [];
+			for (const m of node) m.revoked = true;
+			if (node.length > 0) await store.writeJSON('founder.json', data);
+			return { member, fingerprints: [fingerprint, ...node.map(m => m.fingerprint)] };
 		});
 		const current = await this.deps.nodes.currentState(networkID, overlay);
 		const keep = (list: LISHOverlayHost[]): LISHOverlayHost[] => (member ? list.filter(h => h.vpnIP !== member.vpnIP || h.peerID !== member.peerID) : list);
-		await this.deps.nodes.publishNewState(networkID, { lighthouses: keep(overlay.lighthouses), relays: keep(overlay.relays), revoked: [...new Set([...(current?.revoked ?? []), fingerprint])] });
+		await this.deps.nodes.publishNewState(networkID, { lighthouses: keep(overlay.lighthouses), relays: keep(overlay.relays), revoked: [...new Set([...(current?.revoked ?? []), ...fingerprints])] });
 		this.deps.emit('overlay:members', { networkID });
 	}
 
