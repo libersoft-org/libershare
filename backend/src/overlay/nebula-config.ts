@@ -87,6 +87,9 @@ export function buildNebulaConfig(input: NebulaConfigInput): Record<string, unkn
 		lighthouse,
 		listen: { host: '0.0.0.0', port: own ? hostPort(own.addr).port : 0, read_buffer: UDP_BUFFER_BYTES, write_buffer: UDP_BUFFER_BYTES },
 		punchy: { punch: !isInfra && overlay.lanDirect, respond: !isInfra && overlay.lanDirect },
+		// A tunnel whose traffic stopped is tested after 2 s and dropped 4 s later (defaults 5 + 10): a member then
+		// moves to the next relay in about 6 s when one goes down, instead of about 20 s (measured on the fleet).
+		timers: { connection_alive_interval: 2, pending_deletion_interval: 4 },
 		relay: { am_relay: isRelay, use_relays: true, relays: isRelay ? [] : orderRelays(overlay.relays, input.peerID) },
 		firewall: {
 			outbound: [{ port: 'any', proto: 'any', host: 'any' }],
