@@ -68,6 +68,27 @@ func (b *bridge) track(remote netip.Addr, local, overlayConn net.Conn) func() {
 	}
 }
 
+// closeDisallowed closes every direct tunnel whose underlay address the configuration no longer allows. A reload
+// applies a new lighthouse.remote_allow_list to new packets only: a host taken off the lighthouses and relays kept
+// its tunnel, and the member went on talking to it directly.
+func closeDisallowed(control *nebula.Control, cfg *config.C) (int, error) {
+	allow, err := nebula.NewRemoteAllowListFromConfig(cfg, "lighthouse.remote_allow_list", "lighthouse.remote_allow_ranges")
+	if err != nil {
+		return 0, err
+	}
+	closed := 0
+	for _, h := range control.ListHostmapHosts(false) {
+		// A relayed tunnel has no underlay address of its own; the tunnel to its relay is checked instead.
+		if !h.CurrentRemote.IsValid() || len(h.VpnAddrs) == 0 || allow.AllowAll(h.VpnAddrs, h.CurrentRemote.Addr()) {
+			continue
+		}
+		if control.CloseTunnel(h.VpnAddrs[0], false) {
+			closed++
+		}
+	}
+	return closed, nil
+}
+
 // closeOrphans closes every bridged connection to a peer that no longer has a tunnel.
 func (b *bridge) closeOrphans() int {
 	b.mu.Lock()
@@ -321,6 +342,11 @@ func (b *bridge) controlHandler() http.Handler {
 			return
 		}
 		b.cfg.ReloadConfig()
+		if n, err := closeDisallowed(b.control, b.cfg); err != nil {
+			b.log.Error("checking tunnels against the remote allow list", "error", err)
+		} else if n > 0 {
+			b.log.Info("closed tunnels to hosts no longer allowed", "count", n)
+		}
 		// disconnect_invalid closes a revoked peer's tunnels on the connection manager's next check, a second or
 		// two after the reload; its bridged TCP connections would otherwise hang until a timeout, because nothing
 		// inside the dead tunnel can reset them.
