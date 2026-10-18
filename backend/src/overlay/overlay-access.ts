@@ -420,6 +420,13 @@ export class OverlayAccess {
 			data.nextHost = Math.max(data.nextHost, backup?.nextHost ?? 1);
 			await store.writeJSON('founder.json', data);
 		});
+		// A clean device has no certificate of its own, and the screens offer a founder no request to make: it signs
+		// its own membership here, so it can join its lishnet as well as approve others.
+		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
+		if (!own) {
+			const { row } = this.overlayOf(networkID);
+			await this.importCertificate(await this.issue(await this.requestAccess(networkID, row.name.slice(0, 64))));
+		}
 		this.deps.emit('overlay:status', { networkID });
 	}
 

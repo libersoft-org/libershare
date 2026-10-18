@@ -7,6 +7,8 @@ import { OverlayAccess } from '../../../src/overlay/overlay-access.ts';
 import { OverlayStore } from '../../../src/overlay/overlay-store.ts';
 
 const NET = 'net-ca';
+/** This device's own membership: the restore below concerns the CA key, not joining. */
+const MEMBER_CERT = { name: 'self', networks: ['100.64.0.9/16'] };
 const pem = (raw: Uint8Array): string => `-----BEGIN NEBULA ED25519 PRIVATE KEY-----\n${Buffer.from(raw).toString('base64')}\n-----END NEBULA ED25519 PRIVATE KEY-----\n`;
 
 /** Restoring a lishnet's CA key makes this node a founder, so the key must really be the CA's — not only end in its public key. */
@@ -17,7 +19,7 @@ describe('importing a CA key', () => {
 			const ca = await generateKeyPair('Ed25519');
 			const other = await generateKeyPair('Ed25519');
 			const access = new OverlayAccess({
-				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex') } as any,
+				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT } as any,
 				getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
 				refresh: async () => {},
@@ -46,7 +48,7 @@ describe('importing a CA key', () => {
 				const ca = await generateKeyPair('Ed25519');
 				const make = (dir: string): OverlayAccess =>
 					new OverlayAccess({
-						nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => null } as any,
+						nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT } as any,
 						getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 						addNetwork: async () => {},
 						refresh: async () => {},
@@ -72,6 +74,38 @@ describe('importing a CA key', () => {
 				await rm(dirB, { recursive: true, force: true });
 			}
 		});
+
+	/** A founder restored on a clean device could approve others but had no certificate, and no screen to get one. */
+	it('a founder restored on a device without a certificate signs its own membership and imports it', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
+		const request = { type: 'lish-overlay-request', networkID: NET, name: 'Network', peerID: '1'.repeat(46), publicKey: 'pub', created: '2026-01-01T00:00:00Z' };
+		const bundle = { type: 'lish-overlay-certificate', networkID: NET, certificate: 'crt' };
+		const calls: unknown[][] = [];
+		const ask = spyOn(OverlayAccess.prototype, 'requestAccess').mockImplementation(async (...args: unknown[]) => (calls.push(['request', ...args]), request) as any);
+		const sign = spyOn(OverlayAccess.prototype, 'issue').mockImplementation(async (...args: unknown[]) => (calls.push(['issue', ...args]), bundle) as any);
+		const take = spyOn(OverlayAccess.prototype, 'importCertificate').mockImplementation(async (...args: unknown[]) => (calls.push(['import', ...args]), {}) as any);
+		try {
+			const ca = await generateKeyPair('Ed25519');
+			const access = new OverlayAccess({
+				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => null } as any,
+				getRow: () => ({ networkID: NET, name: 'Network', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+				addNetwork: async () => {},
+				refresh: async () => {},
+				emit: () => {},
+			});
+			await access.importCA(NET, pem(ca.raw));
+			expect(calls).toEqual([
+				['request', NET, 'Network'],
+				['issue', request],
+				['import', bundle],
+			]);
+		} finally {
+			ask.mockRestore();
+			sign.mockRestore();
+			take.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 
 	it('refuses a backup whose member list is damaged', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
