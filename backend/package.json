@@ -48,6 +48,7 @@
 	},
 	"patchedDependencies": {
 		"@achingbrain/ssdp@4.2.4": "patches/@achingbrain%2Fssdp@4.2.4.patch",
-		"@libp2p/tcp@11.0.28": "patches/@libp2p%2Ftcp@11.0.28.patch"
+		"@libp2p/tcp@11.0.28": "patches/@libp2p%2Ftcp@11.0.28.patch",
+		"@libp2p/gossipsub@17.1.2": "patches/@libp2p%2Fgossipsub@17.1.2.patch"
 	}
 }

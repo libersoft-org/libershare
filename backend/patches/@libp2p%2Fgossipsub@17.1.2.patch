@@ -1,0 +1,39 @@
+diff --git a/dist/src/utils/buildRawMessage.js b/dist/src/utils/buildRawMessage.js
+index 8d37b6ea153b9e7b9e01770d50fb51b928a47999..a30c810eda445d2f6cf426c929545bb74b3f6e25 100644
+--- a/dist/src/utils/buildRawMessage.js
++++ b/dist/src/utils/buildRawMessage.js
+@@ -13,9 +13,22 @@ export const SignPrefix = uint8ArrayFromString('libp2p-pubsub:');
+ // increasing 64-bit big-endian uint" seqno, and kubo's BasicSeqnoValidator
+ // (default since kubo 0.40) drops messages whose seqno isn't strictly greater
+ // than the previously-seen max from that peer.
+-let seqnoCounter = BigInt(Date.now()) * 1000000n;
+-function nextSeqno() {
+-    const v = ++seqnoCounter;
++// One counter per author: a process running several nodes (identities) must not number their messages from one
++// shared counter, or consecutive seqnos on two nodes give away that they are the same machine. Each counter starts
++// at a random point up to 2^40 ns (about 18 minutes) after the clock, so the seqno does not tell either when a node
++// started: nodes started together would otherwise be paired by their nearly equal first seqnos.
++const seqnoCounters = new Map();
++function seqnoStart() {
++    const random = crypto.getRandomValues(new Uint8Array(5));
++    let offset = 0n;
++    for (const byte of random)
++        offset = (offset << 8n) | BigInt(byte);
++    return BigInt(Date.now()) * 1000000n + offset;
++}
++function nextSeqno(author) {
++    const key = author.toString();
++    const v = (seqnoCounters.get(key) ?? seqnoStart()) + 1n;
++    seqnoCounters.set(key, v);
+     const out = new Uint8Array(8);
+     new DataView(out.buffer).setBigUint64(0, v, false);
+     return out;
+@@ -26,7 +39,7 @@ export async function buildRawMessage(publishConfig, topic, originalData, transf
+             const rpcMsg = {
+                 from: publishConfig.author.toMultihash().bytes,
+                 data: transformedData,
+-                seqno: nextSeqno(),
++                seqno: nextSeqno(publishConfig.author),
+                 topic,
+                 signature: undefined, // Exclude signature field for signing
+                 key: undefined // Exclude key field for signing
