@@ -257,7 +257,7 @@ export class OverlayAccess {
 		if (roles.some(r => !ROLES.includes(r))) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'unknown role');
 		const until = opts.validUntil ? new Date(opts.validUntil) : new Date(Date.now() + DEFAULT_MEMBER_DAYS * 86_400_000);
 		if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'validity must end in the future');
-		const { bundleMember, request, hadRoles, superseded } = await this.founderLock(networkID).runExclusive(async () => {
+		const bundleMember = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
 			const request = data.requests.find(r => r.id === requestID);
 			if (!request) throw new CodedError(ErrorCodes.OVERLAY_REQUEST_NOT_FOUND, requestID);
@@ -285,19 +285,18 @@ export class OverlayAccess {
 			data.members.push(member);
 			data.requests = data.requests.filter(r => r.id !== requestID);
 			await store.writeJSON('founder.json', data);
-			return { bundleMember: { member, cert: cert.cert }, request, hadRoles: current.some(m => m.roles.length > 0), superseded: superseded.map(m => m.fingerprint) };
+			// Roles given, taken away by a renewal without them, or an older certificate to revoke: a new signed state.
+			if (roles.length > 0 || current.some(m => m.roles.length > 0) || superseded.length > 0) {
+				const host: LISHOverlayHost = { vpnIP, addr: request.infraAddr ?? '', peerID: request.peerID };
+				const others = (list: LISHOverlayHost[]): LISHOverlayHost[] => list.filter(h => h.vpnIP !== host.vpnIP);
+				await this.publishLocked(
+					networkID,
+					o => ({ lighthouses: roles.includes('lighthouse') ? [...others(o.lighthouses), host] : others(o.lighthouses), relays: roles.includes('relay') ? [...others(o.relays), host] : others(o.relays) }),
+					superseded.map(m => m.fingerprint)
+				);
+			}
+			return { member, cert: cert.cert };
 		});
-		// Roles given, taken away by a renewal without them, or an older certificate to revoke: a new signed state.
-		if (roles.length > 0 || hadRoles || superseded.length > 0) {
-			const host: LISHOverlayHost = { vpnIP: bundleMember.member.vpnIP, addr: request.infraAddr ?? '', peerID: request.peerID };
-			const current = await this.deps.nodes.currentState(networkID, overlay);
-			const others = (list: LISHOverlayHost[]): LISHOverlayHost[] => list.filter(h => h.vpnIP !== host.vpnIP);
-			await this.deps.nodes.publishNewState(networkID, {
-				lighthouses: roles.includes('lighthouse') ? [...others(overlay.lighthouses), host] : others(overlay.lighthouses),
-				relays: roles.includes('relay') ? [...others(overlay.relays), host] : others(overlay.relays),
-				revoked: [...new Set([...(current?.revoked ?? []), ...superseded])],
-			});
-		}
 		this.deps.emit('overlay:members', { networkID });
 		const state = await store.readState();
 		return { type: 'lish-overlay-certificate', networkID, certificate: bundleMember.cert, ...(state ? { state } : {}) };
@@ -323,18 +322,16 @@ export class OverlayAccess {
 		if (!FINGERPRINT.test(fingerprint)) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'fingerprint must be 64 hex characters');
 		// The founder's own node is the lishnet's authority (and usually its lighthouse): revoking it locks everyone out.
 		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert);
-		const { member, fingerprints } = await this.founderLock(networkID).runExclusive(async () => {
+		await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
 			const member = data.members.find(m => m.fingerprint === fingerprint);
 			if (own && (own.fingerprint === fingerprint || member?.peerID === own.name)) throw new CodedError(ErrorCodes.NETWORK_INVALID, "the founder's own certificate cannot be revoked");
 			const node = member ? data.members.filter(m => m.peerID === member.peerID && !m.revoked) : [];
 			for (const m of node) m.revoked = true;
 			if (node.length > 0) await store.writeJSON('founder.json', data);
-			return { member, fingerprints: [fingerprint, ...node.map(m => m.fingerprint)] };
+			const keep = (list: LISHOverlayHost[]): LISHOverlayHost[] => (member ? list.filter(h => h.vpnIP !== member.vpnIP || h.peerID !== member.peerID) : list);
+			await this.publishLocked(networkID, o => ({ lighthouses: keep(o.lighthouses), relays: keep(o.relays) }), [fingerprint, ...node.map(m => m.fingerprint)]);
 		});
-		const current = await this.deps.nodes.currentState(networkID, overlay);
-		const keep = (list: LISHOverlayHost[]): LISHOverlayHost[] => (member ? list.filter(h => h.vpnIP !== member.vpnIP || h.peerID !== member.peerID) : list);
-		await this.deps.nodes.publishNewState(networkID, { lighthouses: keep(overlay.lighthouses), relays: keep(overlay.relays), revoked: [...new Set([...(current?.revoked ?? []), ...fingerprints])] });
 		this.deps.emit('overlay:members', { networkID });
 	}
 
@@ -343,8 +340,17 @@ export class OverlayAccess {
 		const { overlay } = this.founderOf(networkID);
 		const lh = validateOverlayHosts(lighthouses, overlay.subnet, 'lighthouses');
 		const rl = validateOverlayHosts(relays, overlay.subnet, 'relays');
+		await this.founderLock(networkID).runExclusive(() => this.publishLocked(networkID, () => ({ lighthouses: lh, relays: rl }), []));
+	}
+
+	/**
+	 * Sign and publish a new state built from the stored hosts and revocations, under the founder lock: two changes
+	 * that each start from the hosts they read first would otherwise lose one another's host.
+	 */
+	private async publishLocked(networkID: string, hosts: (overlay: LISHOverlayDefinition) => Pick<LISHOverlayDefinition, 'lighthouses' | 'relays'>, revoke: string[]): Promise<void> {
+		const { overlay } = this.overlayOf(networkID);
 		const current = await this.deps.nodes.currentState(networkID, overlay);
-		await this.deps.nodes.publishNewState(networkID, { lighthouses: lh, relays: rl, revoked: current?.revoked ?? [] });
+		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...(current?.revoked ?? []), ...revoke])] });
 	}
 
 	/**
