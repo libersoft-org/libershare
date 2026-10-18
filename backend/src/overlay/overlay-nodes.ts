@@ -200,6 +200,9 @@ export class OverlayNodes {
 				if (!entry.network.subscribeTopic(row.networkID)) throw new Error('could not subscribe the lishnet topic');
 				await entry.network.subscribe(stateTopic(row.networkID), message => void this.onStateMessage(row.networkID, message));
 			} catch (err) {
+				// A helper that died meanwhile has a restart scheduled, for an entry nothing would ever stop.
+				entry.stopped = true;
+				if (entry.restartTimer) clearTimeout(entry.restartTimer);
 				await entry.network.stop().catch(() => {});
 				await entry.helper.stop();
 				throw err;
