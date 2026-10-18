@@ -4,7 +4,7 @@ import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { CodedError, ErrorCodes, isHostPort, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from '@shared';
+import { CodedError, ErrorCodes, ipInSubnet, isHostPort, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from '@shared';
 import { SqliteDatastore } from '../protocol/datastore.ts';
 import { PRIVATE_KEY_PATH, writeIdentityKey } from '../protocol/identity-store.ts';
 import { runOverlayCommand, type CertificateInfo } from './overlay-binary.ts';
@@ -17,6 +17,28 @@ const DEFAULT_MEMBER_DAYS = 365;
 const MAX_PENDING_REQUESTS = 1000;
 const ROLES: readonly OverlayRole[] = ['lighthouse', 'relay'];
 const FINGERPRINT = /^[0-9a-f]{64}$/;
+const MEMBERS_BEGIN = '-----BEGIN LISH OVERLAY MEMBERS-----';
+const MEMBERS_END = '-----END LISH OVERLAY MEMBERS-----';
+
+/** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
+function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members'> | null {
+	const body = new RegExp(`${MEMBERS_BEGIN}([\\s\\S]*?)${MEMBERS_END}`).exec(text)?.[1];
+	if (body === undefined) return null;
+	const invalid = (): CodedError => new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the member list of the backup is damaged');
+	let list: any;
+	try {
+		list = JSON.parse(Buffer.from(body.replace(/\s+/g, ''), 'base64').toString('utf8'));
+	} catch {
+		throw invalid();
+	}
+	if (!Number.isInteger(list?.nextHost) || list.nextHost < 1 || !Array.isArray(list.members)) throw invalid();
+	const str = (v: unknown): v is string => typeof v === 'string' && v.length <= 256;
+	const members: OverlayMember[] = list.members.map((m: any) => {
+		if (!str(m?.name) || !str(m.peerID) || !str(m.vpnIP) || !ipInSubnet(m.vpnIP, subnet) || !str(m.fingerprint) || !FINGERPRINT.test(m.fingerprint) || !str(m.notAfter) || !str(m.issued) || typeof m.revoked !== 'boolean' || !Array.isArray(m.roles) || m.roles.some((r: unknown) => !ROLES.includes(r as OverlayRole))) throw invalid();
+		return { name: m.name, ...(m.founder === true ? { founder: true } : {}), peerID: m.peerID, vpnIP: m.vpnIP, roles: [...m.roles], notAfter: m.notAfter, fingerprint: m.fingerprint, issued: m.issued, revoked: m.revoked };
+	});
+	return { nextHost: list.nextHost, members };
+}
 
 export interface OverlayAccessDeps {
 	nodes: OverlayNodes;
@@ -246,7 +268,10 @@ export class OverlayAccess {
 			const previous = current[0];
 			let vpnIP = previous?.vpnIP;
 			if (!vpnIP) {
-				const used = new Set(data.members.map(m => m.vpnIP));
+				// Beyond the member list: a CA restored from the key alone knows no members, but the founder's address, its
+				// own and the hosts' are still taken.
+				const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
+				const used = new Set([...data.members.map(m => m.vpnIP), subnetAddress(overlay.subnet, 1), ...(own ? [own.networks[0]!.split('/')[0]!] : []), ...overlay.lighthouses.map(h => h.vpnIP), ...overlay.relays.map(h => h.vpnIP)]);
 				while (data.nextHost < subnet.size - 1 && used.has(subnetAddress(overlay.subnet, data.nextHost))) data.nextHost++;
 				if (data.nextHost >= subnet.size - 1) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, overlay.subnet);
 				vpnIP = subnetAddress(overlay.subnet, data.nextHost++);
@@ -352,23 +377,39 @@ export class OverlayAccess {
 		return await this.status(bundle.networkID);
 	}
 
-	/** Founder: the CA key, for a backup or a second device that should be able to approve and revoke as well. */
+	/**
+	 * Founder: a backup of the CA key with the member list, for a restore or a second device that should be able to
+	 * approve and revoke as well. Without the list a restored node would hand out addresses already in use and could
+	 * revoke only the certificates it is told about.
+	 */
 	async exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
 		const { store } = this.founderOf(networkID);
-		return { networkID, caKey: (await store.readText('ca.key'))! };
+		const { nextHost, members } = await store.readFounder();
+		const list = Buffer.from(JSON.stringify({ nextHost, members })).toString('base64');
+		return { networkID, caKey: `${(await store.readText('ca.key'))!.trim()}\n${MEMBERS_BEGIN}\n${list.replace(/.{1,64}/g, '$&\n')}${MEMBERS_END}\n` };
 	}
 
-	/** Restore the CA key from a backup. It must belong to the lishnet's CA certificate. */
+	/** Restore the CA key (and the member list, when the backup has one). The key must belong to the lishnet's CA certificate. */
 	async importCA(networkID: string, caKey: string): Promise<void> {
 		const { overlay, store } = this.overlayOf(networkID);
-		const body = /-----BEGIN NEBULA ED25519 PRIVATE KEY-----([\s\S]*?)-----END NEBULA ED25519 PRIVATE KEY-----/.exec(caKey ?? '')?.[1];
-		const raw = body ? Buffer.from(body.replace(/\s+/g, ''), 'base64') : Buffer.alloc(0);
+		const pem = /-----BEGIN NEBULA ED25519 PRIVATE KEY-----([\s\S]*?)-----END NEBULA ED25519 PRIVATE KEY-----/.exec(caKey ?? '');
+		const raw = pem ? Buffer.from(pem[1]!.replace(/\s+/g, ''), 'base64') : Buffer.alloc(0);
 		if (raw.length !== 64) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'not a CA key');
 		// The public half is derived from the seed, not read from the key's second half, which anyone can copy.
 		const derived = Buffer.from((await generateKeyPairFromSeed('Ed25519', raw.subarray(0, 32))).publicKey.raw).toString('hex');
 		if (derived !== (await this.deps.nodes.caPublicKey(store, overlay.caCert))) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the key does not belong to this lishnet');
-		await store.writeText('ca.key', caKey.trim() + '\n');
-		if (!store.has('founder.json')) await store.writeJSON('founder.json', await store.readFounder());
+		const backup = parseMemberList(caKey, overlay.subnet);
+		await this.founderLock(networkID).runExclusive(async () => {
+			await store.writeText('ca.key', pem![0] + '\n');
+			const data = await store.readFounder();
+			for (const m of backup?.members ?? []) {
+				const held = data.members.find(h => h.fingerprint === m.fingerprint);
+				if (held) held.revoked ||= m.revoked;
+				else data.members.push(m);
+			}
+			data.nextHost = Math.max(data.nextHost, backup?.nextHost ?? 1);
+			await store.writeJSON('founder.json', data);
+		});
 		this.deps.emit('overlay:status', { networkID });
 	}
 
