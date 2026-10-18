@@ -56,6 +56,8 @@ interface RunningOverlay {
 	disposeSubscribe: () => void;
 	/** {@link startOnlySettings} the helper was started with. */
 	startOnly: string;
+	/** The last reconfiguration failed: the helper may still run without a newer revocation, so it is retried. */
+	unapplied: boolean;
 }
 
 /**
@@ -177,7 +179,7 @@ export class OverlayNodes {
 			const vpnIP = cert.networks[0]!.split('/')[0]!;
 			const base = { networkID: row.networkID, store, vpnIP, peerID: cert.name };
 			await this.writeConfig(base, overlay);
-			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP) } as RunningOverlay;
+			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP), unapplied: false } as RunningOverlay;
 			entry.helper = await this.startHelper(entry);
 			const bridge: OverlayBridge = {
 				get dialPort() {
@@ -212,7 +214,10 @@ export class OverlayNodes {
 			entry.disposeSubscribe = entry.network.onPeerSubscribe((_peer, topic) => {
 				if (topic === stateTopic(row.networkID)) void this.publishState(row.networkID, false);
 			});
-			entry.republishTimer = setInterval(() => void this.publishState(row.networkID, true), STATE_REPUBLISH_MS);
+			entry.republishTimer = setInterval(() => {
+				void this.publishState(row.networkID, true);
+				if (entry.unapplied) void this.reconfigure(row.networkID).catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] reconfiguration failed again: ${err?.message ?? err}`));
+			}, STATE_REPUBLISH_MS);
 			this.running.set(row.networkID, entry);
 			const bootstrap = this.bootstrapPeers(row, overlay, cert.name);
 			if (bootstrap.length > 0) void entry.network.addBootstrapPeers(bootstrap, row.networkID, 'configured').catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] bootstrap failed: ${err?.message ?? err}`));
@@ -319,8 +324,14 @@ export class OverlayNodes {
 			const entry = this.running.get(networkID);
 			const row = this.deps.getRow(networkID);
 			if (!entry || !row?.overlay) return;
-			await this.writeConfig(entry, row.overlay);
-			if (entry.helper.isRunning()) await entry.helper.reload();
+			try {
+				await this.writeConfig(entry, row.overlay);
+				if (entry.helper.isRunning()) await entry.helper.reload();
+				entry.unapplied = false;
+			} catch (err) {
+				entry.unapplied = true;
+				throw err;
+			}
 			const bootstrap = this.bootstrapPeers(row, row.overlay, entry.peerID);
 			if (bootstrap.length > 0) void entry.network.addBootstrapPeers(bootstrap, networkID, 'configured').catch(() => {});
 		});
@@ -363,6 +374,8 @@ export class OverlayNodes {
 		if (!changed) {
 			// The sender is behind; our newer state reaches it through the topic.
 			if (incoming.version < held.version) void this.publishState(networkID, false);
+			// Stored but never applied (writing the configuration or the reload failed): this copy is the next chance.
+			if (this.running.get(networkID)?.unapplied) await this.reconfigure(networkID);
 			return false;
 		}
 		console.log(`[Overlay ${networkID.slice(0, 8)}] accepted network state v${incoming.version} (${incoming.lighthouses.length} lighthouse(s), ${incoming.relays.length} relay(s), ${incoming.revoked.length} revoked)`);

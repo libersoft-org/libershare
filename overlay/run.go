@@ -42,6 +42,7 @@ type bridge struct {
 	ns      *netstack
 	control *nebula.Control
 	cfg     *config.C
+	cfgPath string
 	log     *slog.Logger
 	// inbound is the backend's loopback port for connections arriving from the overlay; 0 refuses them.
 	inbound atomic.Int32
@@ -98,16 +99,16 @@ func cmdRun(args []string) error {
 	if *port <= 0 || *port > 65535 {
 		return fmt.Errorf("invalid -port %d", *port)
 	}
-	var c config.C
+	log := logging.NewLogger(os.Stderr)
+	c := config.NewC(log)
 	if err := c.Load(*cfgPath); err != nil {
 		return err
 	}
-	log := logging.NewLogger(os.Stderr)
-	control, err := nebula.Main(&c, false, version, log, overlay.NewUserDeviceFromConfig)
+	control, err := nebula.Main(c, false, version, log, overlay.NewUserDeviceFromConfig)
 	if err != nil {
 		return err
 	}
-	b := &bridge{token: token, control: control, cfg: &c, log: log, stop: make(chan struct{}), conns: map[net.Conn]netip.Addr{}}
+	b := &bridge{token: token, control: control, cfg: c, cfgPath: *cfgPath, log: log, stop: make(chan struct{}), conns: map[net.Conn]netip.Addr{}}
 	b.ns, err = newNetstack(control, uint16(*port), b.forwardInbound)
 	if err != nil {
 		return err
@@ -313,6 +314,12 @@ func (b *bridge) controlHandler() http.Handler {
 	// /reload re-reads the configuration file: a new blocklist, relay list or lighthouse list applies without
 	// dropping tunnels, and with pki.disconnect_invalid a revoked member is cut off at once.
 	mux.HandleFunc("POST /reload", func(w http.ResponseWriter, r *http.Request) {
+		// ReloadConfig only logs a file it cannot read and keeps the old settings: a revocation would then be reported
+		// as applied. The file is read once first, so the backend learns of the failure.
+		if err := config.NewC(b.log).Load(b.cfgPath); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		b.cfg.ReloadConfig()
 		// disconnect_invalid closes a revoked peer's tunnels on the connection manager's next check, a second or
 		// two after the reload; its bridged TCP connections would otherwise hang until a timeout, because nothing

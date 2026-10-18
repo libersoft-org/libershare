@@ -47,6 +47,7 @@ async function harness() {
 		// A peer subscribed a moment ago, so the rate limit of peer-triggered sends is armed.
 		lastPublish: Date.now(),
 		startOnly: 'false|0',
+		unapplied: false,
 	});
 	const sign = (version: number, revoked: string[] = [FP]) => signState({ networkID: NET, version, lighthouses: [{ vpnIP: '100.64.0.1', addr: '203.0.113.7:4242' }], relays: [], revoked }, caKey);
 	return { nodes, store, broadcasts, changes, sign, caKey, overlay: () => overlay, cleanup: () => rm(dataDir, { recursive: true, force: true }) };
@@ -102,6 +103,27 @@ describe('OverlayNodes network state', () => {
 			await h.nodes.acceptState(NET, await h.sign(6));
 			expect(h.broadcasts).toHaveLength(2);
 			expect(reconfigured[1]! - sent()).toBeLessThan(500);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
+	// Stored before it was applied: a reload that failed once left the revocation out of Nebula for good.
+	it('applies a stored state again when the reload failed, on the next copy of it', async () => {
+		const h = await harness();
+		let reloads = 0;
+		(h.nodes as any).running.get(NET).helper = {
+			isRunning: () => true,
+			reload: async () => {
+				if (++reloads === 1) throw new Error('overlay helper /reload: HTTP 500');
+			},
+		};
+		try {
+			await expect(h.nodes.acceptState(NET, await h.sign(5))).rejects.toThrow('HTTP 500');
+			expect(await h.nodes.acceptState(NET, await h.sign(5))).toBe(false);
+			expect(reloads).toBe(2);
+			expect(await h.nodes.acceptState(NET, await h.sign(5))).toBe(false);
+			expect(reloads).toBe(2);
 		} finally {
 			await h.cleanup();
 		}
