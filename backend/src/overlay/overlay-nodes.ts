@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { lookup } from 'node:dns/promises';
+import * as dns from 'node:dns/promises';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayState, type SignedOverlayState } from '@shared';
@@ -60,6 +60,8 @@ interface RunningOverlay {
 	startOnly: string;
 	/** The last reconfiguration failed: the helper may still run without a newer revocation, so it is retried. */
 	unapplied: boolean;
+	/** The infrastructure addresses the written configuration allows ({@link OverlayNodes.followInfraAddresses}). */
+	infraIPs: string[];
 }
 
 /**
@@ -136,25 +138,48 @@ export class OverlayNodes {
 		}
 	}
 
-	private async writeConfig(entry: { networkID: string; store: OverlayStore; vpnIP: string; peerID: string }, overlay: LISHOverlayDefinition): Promise<void> {
-		const state = await this.currentState(entry.networkID, overlay);
-		const infraIPs: string[] = [];
+	/** The underlay addresses of the lishnet's lighthouses and relays, sorted; `complete` is false when a name did not resolve. */
+	private async resolveInfra(networkID: string, overlay: LISHOverlayDefinition): Promise<{ ips: string[]; complete: boolean }> {
+		const ips = new Set<string>();
+		let complete = true;
 		for (const host of infraHosts(overlay)) {
 			try {
-				for (const r of await lookup(host, { all: true, family: 4 })) infraIPs.push(r.address);
+				for (const r of await dns.lookup(host, { all: true, family: 4 })) ips.add(r.address);
 			} catch (err: any) {
-				console.warn(`[Overlay ${entry.networkID.slice(0, 8)}] cannot resolve ${host}: ${err?.message ?? err}`);
+				complete = false;
+				console.warn(`[Overlay ${networkID.slice(0, 8)}] cannot resolve ${host}: ${err?.message ?? err}`);
 			}
 		}
+		return { ips: [...ips].sort(), complete };
+	}
+
+	/** Write the Nebula configuration; returns the infrastructure addresses it allows. */
+	private async writeConfig(entry: { networkID: string; store: OverlayStore; vpnIP: string; peerID: string }, overlay: LISHOverlayDefinition): Promise<string[]> {
+		const state = await this.currentState(entry.networkID, overlay);
+		const { ips } = await this.resolveInfra(entry.networkID, overlay);
 		const config = buildNebulaConfig({
 			pki: { ca: entry.store.path('ca.crt'), cert: entry.store.path('member.crt'), key: entry.store.path('member.key') },
 			overlay,
 			vpnIP: entry.vpnIP,
 			peerID: entry.peerID,
 			revoked: state?.revoked ?? [],
-			infraIPs: [...new Set(infraIPs)],
+			infraIPs: ips,
 		});
 		await entry.store.writeJSON('nebula.yml', config);
+		return ips;
+	}
+
+	/**
+	 * A lighthouse or relay given by name can move to another address; the allow list of a member names addresses, so
+	 * it has to follow, or every packet from the new one is dropped. A name that does not resolve right now changes
+	 * nothing: dropping its old address would cut the member off over a passing DNS failure.
+	 */
+	private async followInfraAddresses(networkID: string): Promise<void> {
+		const entry = this.running.get(networkID);
+		const row = this.deps.getRow(networkID);
+		if (!entry || !row?.overlay) return;
+		const { ips, complete } = await this.resolveInfra(networkID, row.overlay);
+		if (complete && ips.join(',') !== entry.infraIPs.join(',')) await this.reconfigure(networkID);
 	}
 
 	/** libp2p bootstrap addresses: the definition's own list plus every host that names its peer ID. */
@@ -180,8 +205,8 @@ export class OverlayNodes {
 			}
 			const vpnIP = cert.networks[0]!.split('/')[0]!;
 			const base = { networkID: row.networkID, store, vpnIP, peerID: cert.name };
-			await this.writeConfig(base, overlay);
-			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP), unapplied: false } as RunningOverlay;
+			const infraIPs = await this.writeConfig(base, overlay);
+			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP), unapplied: false, infraIPs } as RunningOverlay;
 			entry.helper = await this.startHelper(entry);
 			const bridge: OverlayBridge = {
 				get dialPort() {
@@ -218,7 +243,8 @@ export class OverlayNodes {
 			});
 			entry.republishTimer = setInterval(() => {
 				void this.publishState(row.networkID, true);
-				if (entry.unapplied) void this.reconfigure(row.networkID).catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] reconfiguration failed again: ${err?.message ?? err}`));
+				const applied = entry.unapplied ? this.reconfigure(row.networkID) : this.followInfraAddresses(row.networkID);
+				void applied.catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] reconfiguration failed: ${err?.message ?? err}`));
 			}, STATE_REPUBLISH_MS);
 			this.running.set(row.networkID, entry);
 			const bootstrap = this.bootstrapPeers(row, overlay, cert.name);
@@ -327,7 +353,7 @@ export class OverlayNodes {
 			const row = this.deps.getRow(networkID);
 			if (!entry || !row?.overlay) return;
 			try {
-				await this.writeConfig(entry, row.overlay);
+				entry.infraIPs = await this.writeConfig(entry, row.overlay);
 				if (entry.helper.isRunning()) await entry.helper.reload();
 				entry.unapplied = false;
 			} catch (err) {

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
+import * as dns from 'node:dns/promises';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,6 +49,7 @@ async function harness() {
 		lastPublish: Date.now(),
 		startOnly: 'false|0',
 		unapplied: false,
+		infraIPs: [],
 	});
 	const sign = (version: number, revoked: string[] = [FP]) => signState({ networkID: NET, version, lighthouses: [{ vpnIP: '100.64.0.1', addr: '203.0.113.7:4242' }], relays: [], revoked }, caKey);
 	return { nodes, store, broadcasts, changes, sign, caKey, overlay: () => overlay, cleanup: () => rm(dataDir, { recursive: true, force: true }) };
@@ -140,6 +142,30 @@ describe('OverlayNodes network state', () => {
 			await h.nodes.acceptState(NET, signed);
 			expect(calls).toEqual(['leave', 'join']);
 		} finally {
+			await h.cleanup();
+		}
+	});
+
+	// The allow list names addresses: a lighthouse given by name that moved was never let in again.
+	it('follows a new address of a host given by name, and keeps the old one while the name does not resolve', async () => {
+		const h = await harness();
+		let answer: string | null = '198.51.100.1';
+		const lookup = spyOn(dns, 'lookup').mockImplementation((async () => {
+			if (!answer) throw new Error('ENOTFOUND');
+			return [{ address: answer, family: 4 }];
+		}) as any);
+		const allowed = async (): Promise<string[]> => Object.keys((await h.store.readJSON<any>('nebula.yml'))?.lighthouse.remote_allow_list ?? {}).filter(k => k.endsWith('/32'));
+		try {
+			await h.nodes.acceptState(NET, await signState({ networkID: NET, version: 5, lighthouses: [{ vpnIP: '100.64.0.1', addr: 'lighthouse.example.test:4242' }], relays: [], revoked: [] }, h.caKey));
+			expect(await allowed()).toEqual(['198.51.100.1/32']);
+			answer = '198.51.100.2';
+			await (h.nodes as any).followInfraAddresses(NET);
+			expect(await allowed()).toEqual(['198.51.100.2/32']);
+			answer = null;
+			await (h.nodes as any).followInfraAddresses(NET);
+			expect(await allowed()).toEqual(['198.51.100.2/32']);
+		} finally {
+			lookup.mockRestore();
 			await h.cleanup();
 		}
 	});
