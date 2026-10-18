@@ -287,6 +287,14 @@ export class Networks {
 			onPeerCountChange: () => this.emitPeerCounts(),
 			onBootstrapStatusChange: (id, status) => this._onBootstrapStatusChange?.(id, status),
 			onStateChange: (id, state) => this._onOverlayEvent?.('overlay:state', { networkID: id, version: state.version }),
+			// Still joined, on a new node: the transfer layer moves the lishnet's downloads to it as on a rejoin.
+			onNodeReplaced: id => {
+				try {
+					this._onNetworkJoined?.(id);
+				} catch (err: any) {
+					console.error(`[Networks] onNetworkJoined observer for ${id} threw:`, err?.message ?? err);
+				}
+			},
 		});
 		this.overlay = new OverlayAccess({
 			nodes: this.overlayNodes,

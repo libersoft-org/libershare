@@ -74,6 +74,131 @@ for (const [scope, expected] of [
 		}
 	});
 
+/**
+ * A public node and two protected lishnets, all joined, with real transfer handlers; the downloads never touch the
+ * network (`download` is stubbed) and each start is recorded with its node and lishnets.
+ */
+function world(id: string, scope: string[]) {
+	initDownloadState(new Set(), () => {});
+	initUploadState(new Set(), () => {});
+	initLISHScopes(new Map(scope.length > 0 ? [[id, scope]] : []), () => {});
+	const joined = new Set(['public', 'net-a', 'net-b']);
+	const node = (n: string): object => ({ name: n, lishScope: n === 'public' ? null : n, onPeerDisconnect: () => () => {} });
+	const nodes = new Map<string, object>(['public', 'net-a', 'net-b'].map(n => [n, node(n)]));
+	let onJoined!: (networkID: string) => void;
+	let onLeft!: (networkID: string) => void;
+	const networks = {
+		get: (n: string) => ({ networkID: n, overlay: n === 'public' ? undefined : {} }),
+		networkFor: (n: string) => nodes.get(n),
+		protectedNodes: () => [],
+		getRunningNetwork: () => nodes.get('public'),
+		getEnabled: () => [...joined].map(networkID => ({ networkID })),
+		isJoined: (n: string) => joined.has(n),
+		set onNetworkLeft(callback: (networkID: string) => void) {
+			onLeft = callback;
+		},
+		set onNetworkJoined(callback: (networkID: string) => void) {
+			onJoined = callback;
+		},
+	} as unknown as Networks;
+	const data = {
+		get: () => ({ id, name: 'download', directory: null, files: [] }),
+		getDatasetRoot: (): null => null,
+		getAllChunkCount: () => 4,
+		getMissingChunks: () => ['chunk-0'],
+		isCompleteLISH: () => false,
+		getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
+		clearError: () => {},
+		isVerifyPending: () => false,
+		setError: () => {},
+	} as unknown as DataServer;
+	const cancels: Array<(error: Error) => void> = [];
+	const used: Array<{ downloader: Downloader; node: unknown }> = [];
+	const start = spyOn(Downloader.prototype, 'download').mockImplementation(function (this: Downloader) {
+		used.push({ downloader: this, node: (this as any).network });
+		const running = new Promise<void>((_, reject) => cancels.push(reject));
+		void running.catch(() => {});
+		return running;
+	});
+	const handlers = initTransferHandlers(
+		networks,
+		data,
+		tmpdir(),
+		() => {},
+		() => {},
+		{ get: () => false } as unknown as Settings
+	);
+	return {
+		handlers,
+		nodes,
+		used,
+		replaceNode: (n: string) => nodes.set(n, node(n)),
+		leave: (n: string) => {
+			joined.delete(n);
+			onLeft(n);
+		},
+		join: (n: string) => {
+			joined.add(n);
+			onJoined(n);
+		},
+		started: async (count: number) => {
+			for (let i = 0; i < 100 && used.length < count; i++) await Bun.sleep(10);
+		},
+		cleanup: async () => {
+			for (const cancel of cancels) cancel(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
+			await removeDownloadState(id);
+			start.mockRestore();
+		},
+	};
+}
+
+/** A protected lishnet left and joined again came back into a public download, which then asked for the LISH there. */
+test('a public download does not take in a protected lishnet joined again', async () => {
+	const w = world('public-rejoin', []);
+	try {
+		expect(await w.handlers.enableDownload({ lishID: 'public-rejoin' })).toEqual({ success: true });
+		w.leave('net-a');
+		w.join('net-a');
+		await Bun.sleep(20);
+		expect(w.used[0]!.downloader.getNetworkIDs()).toEqual(['public']);
+	} finally {
+		await w.cleanup();
+	}
+});
+
+/** A LISH made protected while it downloaded kept downloading on the public node. */
+test('a download moves to its lishnet when its scope changes', async () => {
+	const w = world('scope-change', []);
+	try {
+		expect(await w.handlers.enableDownload({ lishID: 'scope-change' })).toEqual({ success: true });
+		expect(w.used[0]!.node).toBe(w.nodes.get('public'));
+		initLISHScopes(new Map([['scope-change', ['net-b']]]), () => {});
+		await w.handlers.rehomeDownload('scope-change');
+		await w.started(2);
+		expect(w.used[1]?.node).toBe(w.nodes.get('net-b'));
+		expect(w.used[1]?.downloader.getNetworkIDs()).toEqual(['net-b']);
+	} finally {
+		await w.cleanup();
+	}
+});
+
+/** A protected lishnet joined again runs on a new node; the download held on to the stopped one. */
+test("a download follows its protected lishnet's new node", async () => {
+	const w = world('new-node', ['net-b']);
+	try {
+		expect(await w.handlers.enableDownload({ lishID: 'new-node' })).toEqual({ success: true });
+		const before = w.nodes.get('net-b');
+		expect(w.used[0]!.node).toBe(before);
+		w.replaceNode('net-b');
+		w.join('net-b');
+		await w.started(2);
+		expect(w.used[1]?.node).toBe(w.nodes.get('net-b'));
+		expect(w.used[1]?.node).not.toBe(before);
+	} finally {
+		await w.cleanup();
+	}
+});
+
 /** Its protected lishnet down after a restart, the public one up: the download asked for it on the public node. */
 test('a LISH of a protected lishnet that is not joined waits for it instead of downloading elsewhere', async () => {
 	const id = 'scoped-download-waiting';

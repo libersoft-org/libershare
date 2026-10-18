@@ -510,7 +510,12 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
-			'lishs.setScope': _lishs.setScope,
+			'lishs.setScope': async (p: { lishID: string; networkIDs: string[] }) => {
+				const result = _lishs.setScope(p);
+				// A running download moves to the node of its new scope instead of asking the old lishnets on.
+				await _transfer.rehomeDownload(p.lishID);
+				return result;
+			},
 			'lishs.parseFromFile': _lishs.parseFromFile,
 			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
 			'lishs.parseFromJSON': _lishs.parseFromJSON,

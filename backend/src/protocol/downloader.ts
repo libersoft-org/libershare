@@ -150,6 +150,11 @@ export class Downloader {
 		return [...this.originalNetworkIDs];
 	}
 
+	/** The node this download takes its peers from. */
+	getNetwork(): Network {
+		return this.network;
+	}
+
 	/**
 	 * Stop sourcing this download from a lishnet the node just left. Removes the
 	 * network from the set so subsequent WANT broadcasts and topic-peer probes no

@@ -37,6 +37,8 @@ export interface OverlayNodesDeps {
 	onBootstrapStatusChange(networkID: string, status: BootstrapStatus): void;
 	/** A newer signed state was accepted. */
 	onStateChange(networkID: string, state: OverlayState): void;
+	/** The lishnet's node was restarted as a new {@link Network} (new address, role or port) and is running again. */
+	onNodeReplaced?(networkID: string): void;
 }
 
 interface RunningOverlay {
@@ -316,7 +318,7 @@ export class OverlayNodes {
 			const cert = await this.ownCertificate(entry.store, row.overlay.caCert);
 			if ((cert && cert.networks[0]!.split('/')[0] !== entry.vpnIP) || startOnlySettings(row.overlay, entry.vpnIP) !== entry.startOnly) {
 				await this.leave(networkID);
-				await this.join(row);
+				if (await this.join(row)) this.deps.onNodeReplaced?.(networkID);
 				return;
 			}
 		}
