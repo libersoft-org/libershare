@@ -89,6 +89,8 @@ interface SearchSession {
 	 * the dial is what lets a cancelled search stop occupying the slots the next one needs.
 	 */
 	abort: AbortController;
+	/** The search IDs the protected lishnets' nodes sent the query under ({@link SearchSession.searchID} is the public node's). */
+	aliases: string[];
 }
 
 /**
@@ -177,6 +179,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		session.inFlightClients.clear();
 		session.disposePeerConnect();
 		unregisterSearchResultHandler(searchID);
+		for (const alias of session.aliases) unregisterSearchResultHandler(alias);
 		sessions.delete(searchID);
 		broadcast('search:lishs:complete', { searchID, reason, refusedPeers: session.refusedListing.size });
 	}
@@ -289,16 +292,30 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			answered: new Set<string>(),
 			inFlightClients: new Set<LISHClient>(),
 			abort: new AbortController(),
+			aliases: [],
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
+		// Every node sends the query under an ID of its own: one ID on the public and a protected lishnet would tell a
+		// member of both that the two identities are one machine. Answers to any of them land in this session.
+		const nodeSearchIDs = new Map<Network, string>([[network, searchID]]);
+		const idFor = (node: Network): string => {
+			let id = nodeSearchIDs.get(node);
+			if (!id) {
+				id = randomUUID();
+				nodeSearchIDs.set(node, id);
+				session.aliases.push(id);
+				registerSearchResultHandler(id, ann => handleResult({ ...ann, searchID }));
+			}
+			return id;
+		};
 		// Broadcast the query on every joined network topic. If broadcast fails on a particular
 		// topic, log and continue — the search is still useful on other networks.
-		const message = { type: 'searchLishs', searchID, query };
 		for (const config of networks.list()) {
 			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
 			try {
-				await (config.overlay ? networks.networkFor(config.networkID) : network).broadcast(lishTopic(config.networkID), message);
+				const node = config.overlay ? networks.networkFor(config.networkID) : network;
+				await node.broadcast(lishTopic(config.networkID), { type: 'searchLishs', searchID: idFor(node), query });
 			} catch (err: any) {
 				console.warn(`[Search] broadcast on ${config.networkID.slice(0, 8)} failed: ${err?.message ?? err}`);
 			}
