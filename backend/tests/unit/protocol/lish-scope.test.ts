@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DataServer } from '../../../src/lish/data-server.ts';
-import { handleLISHProtocol, initLISHScopes, initUploadState, isServedOn, resetUploadState, setLISHScope } from '../../../src/protocol/lish-protocol.ts';
+import { handleLISHProtocol, initLISHScopes, initUploadState, isServedOn, registerHaveAnnouncementHandler, resetUploadState, setLISHScope } from '../../../src/protocol/lish-protocol.ts';
 import { addLISH, getLISHScopes } from '../../../src/db/lishs.ts';
 import { createTestDB, createTestLISH, TEST_CHUNK_IDS, TEST_LISH_ID } from '../helpers/fixtures.ts';
 import { decodeLISHResponses, fakeLISHStream } from '../helpers/lish-stream.ts';
@@ -57,6 +57,24 @@ describe('LISH scope', () => {
 		const dataServer = setup();
 		expect((await ask(dataServer, { type: 'getLishs' }, null)).lishs.map((l: { id: string }) => l.id)).toEqual([TEST_LISH_ID]);
 		expect((await ask(dataServer, { type: 'getLishs' }, PROTECTED)).lishs).toEqual([]);
+	});
+
+	it('hands a HAVE announcement only to a downloader on the node it arrived on', async () => {
+		const dataServer = setup();
+		const seen: Array<string | null> = [];
+		const announce = { type: 'announceHave', lishID: TEST_LISH_ID, chunks: 'all', multiaddrs: ['/ip4/203.0.113.7/tcp/9090'] };
+		const releasePublic = registerHaveAnnouncementHandler(TEST_LISH_ID, () => seen.push(null), null);
+		// Through a protected lishnet's node: the public downloader would dial the public address it carries.
+		expect((await ask(dataServer, announce, PROTECTED)).ok).toBe(true);
+		expect(seen).toEqual([]);
+		await ask(dataServer, announce, null);
+		expect(seen).toEqual([null]);
+		releasePublic();
+		const releaseProtected = registerHaveAnnouncementHandler(TEST_LISH_ID, () => seen.push(PROTECTED), PROTECTED);
+		await ask(dataServer, announce, null);
+		await ask(dataServer, announce, PROTECTED);
+		expect(seen).toEqual([null, PROTECTED]);
+		releaseProtected();
 	});
 
 	it('persists the scope, and a damaged one stays restricted', () => {

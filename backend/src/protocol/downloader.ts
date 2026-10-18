@@ -395,9 +395,13 @@ export class Downloader {
 	 */
 	private registerAnnouncementHandler(): void {
 		this.haveAnnouncementDisposer?.();
-		this.haveAnnouncementDisposer = registerHaveAnnouncementHandler(this.lishID, ann => {
-			this.onHaveAnnouncement(ann).catch(e => trace(`[DL] onHaveAnnouncement error: ${e?.message ?? e}`));
-		});
+		this.haveAnnouncementDisposer = registerHaveAnnouncementHandler(
+			this.lishID,
+			ann => {
+				this.onHaveAnnouncement(ann).catch(e => trace(`[DL] onHaveAnnouncement error: ${e?.message ?? e}`));
+			},
+			this.network.lishScope ?? null
+		);
 	}
 
 	/**

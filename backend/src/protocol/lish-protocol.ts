@@ -111,19 +111,24 @@ export interface HaveAnnouncement {
 	chunks: HaveChunks;
 }
 type HaveAnnouncementHandler = (ann: HaveAnnouncement) => void;
-const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
+/**
+ * One handler per LISH, with the scope of the node its downloader runs on. An announcement is handed over only when
+ * it arrived on a node of that scope: the downloader dials the addresses it carries through its own node, so a member
+ * of a protected lishnet could otherwise make a public downloader dial it and learn the victim's public address.
+ */
+const haveAnnouncementHandlers = new Map<string, { handler: HaveAnnouncementHandler; scope: string | null }>();
 
 /**
  * Register the single handler for a LISH and return an ownership-aware disposer.
  * A stale downloader may only remove its own registration, never a newer owner's.
  */
-export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): () => boolean {
-	haveAnnouncementHandlers.set(lishID, handler);
+export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler, scope: string | null = null): () => boolean {
+	haveAnnouncementHandlers.set(lishID, { handler, scope });
 	return () => unregisterHaveAnnouncementHandler(lishID, handler);
 }
 
 export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAnnouncementHandler): boolean {
-	if (owner && haveAnnouncementHandlers.get(lishID) !== owner) return false;
+	if (owner && haveAnnouncementHandlers.get(lishID)?.handler !== owner) return false;
 	return haveAnnouncementHandlers.delete(lishID);
 }
 
@@ -832,10 +837,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				// Unicast HAVE announcement from a seeder in response to our pubsub WANT.
 				// Dispatch to the registered Downloader (if any) — peerID is the verified stream remote,
 				// NOT a field from the wire, so it can't be spoofed.
-				const handler = haveAnnouncementHandlers.get(request.lishID);
-				if (handler && remotePeerID) {
+				const registered = haveAnnouncementHandlers.get(request.lishID);
+				if (registered && registered.scope === scope && remotePeerID) {
 					try {
-						handler({
+						registered.handler({
 							lishID: request.lishID,
 							peerID: remotePeerID,
 							multiaddrs: Array.isArray(request.multiaddrs) ? request.multiaddrs : [],
