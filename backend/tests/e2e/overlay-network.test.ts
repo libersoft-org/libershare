@@ -278,4 +278,22 @@ describe('protected lishnet on loopback', () => {
 		await until('bob forgets the lishnet', async () => !existsSync(nodeDir), 30_000);
 		expect((await bob.api.lishnets.infoAll()).some(n => n.networkID === network.networkID)).toBe(false);
 	}, 60_000);
+
+	// A founder restored on a clean device could approve others but not join: it had no certificate of its own.
+	it('a founder restored from the key backup on a clean device joins its lishnet', async () => {
+		const { caKey } = await founder.api.overlay.exportCA(network.networkID);
+		await bob.api.lishnets.add({ ...network, enabled: true });
+		await bob.api.overlay.importCA(network.networkID, caKey);
+		const status = await until('the restored founder runs', async () => {
+			const s = await bob.api.overlay.status(network.networkID);
+			return s.running && s.certificate ? s : null;
+		});
+		expect(status.role).toBe('founder');
+		expect(status.certificate!.revoked).toBe(false);
+		// The backup carried the member list, so the new address is a free one.
+		const taken = (await founder.api.overlay.listMembers(network.networkID)).map(m => m.vpnIP);
+		expect(taken).not.toContain(status.certificate!.vpnIP);
+		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		await until('alice sees the restored founder', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
+	}, 150_000);
 });
