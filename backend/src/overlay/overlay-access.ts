@@ -346,11 +346,15 @@ export class OverlayAccess {
 	/**
 	 * Sign and publish a new state built from the stored hosts and revocations, under the founder lock: two changes
 	 * that each start from the hosts they read first would otherwise lose one another's host.
+	 *
+	 * Every revocation in the member list goes in as well: a founder restored on a device that never held the signed
+	 * state would otherwise sign one without the earlier revocations, and members would unblock those certificates.
 	 */
 	private async publishLocked(networkID: string, hosts: (overlay: LISHOverlayDefinition) => Pick<LISHOverlayDefinition, 'lighthouses' | 'relays'>, revoke: string[]): Promise<void> {
-		const { overlay } = this.overlayOf(networkID);
+		const { overlay, store } = this.overlayOf(networkID);
 		const current = await this.deps.nodes.currentState(networkID, overlay);
-		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...(current?.revoked ?? []), ...revoke])] });
+		const listed = (await store.readFounder()).members.filter(m => m.revoked).map(m => m.fingerprint);
+		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...(current?.revoked ?? []), ...listed, ...revoke])] });
 	}
 
 	/**
