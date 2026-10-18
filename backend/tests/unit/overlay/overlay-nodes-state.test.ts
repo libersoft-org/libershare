@@ -170,6 +170,19 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// A lishnet deleted and added again in one run lost ca.crt, and the cached key never wrote it back: signing and
+	// importing certificates failed with OVERLAY_CERTIFICATE_INVALID.
+	it('writes the CA certificate back even when its key is cached', async () => {
+		const h = await harness();
+		try {
+			await h.store.remove('ca.crt');
+			await h.nodes.caPublicKey(h.store, 'test-ca');
+			expect(await h.store.readText('ca.crt')).toBe('test-ca');
+		} finally {
+			await h.cleanup();
+		}
+	});
+
 	it('refuses a state signed by another key', async () => {
 		const h = await harness();
 		try {

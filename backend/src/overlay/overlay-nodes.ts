@@ -109,9 +109,14 @@ export class OverlayNodes {
 
 	/** Public key (hex) of a lishnet's CA, read from its certificate by the helper once per certificate. */
 	async caPublicKey(store: OverlayStore, caCert: string): Promise<string> {
+		// The file is written even when the key is cached: signing and verifying read it, and a lishnet deleted and
+		// added again in the same run has lost it.
+		if ((await store.readText('ca.crt')) !== caCert) {
+			await store.ensureDir();
+			await store.writeText('ca.crt', caCert);
+		}
 		const cached = this.caKeys.get(caCert);
 		if (cached) return cached;
-		if ((await store.readText('ca.crt')) !== caCert) await store.writeText('ca.crt', caCert);
 		const info = await runOverlayCommand<CertificateInfo>(['print', '--crt', store.path('ca.crt')]);
 		if (!info.isCA) throw new Error('the lishnet CA certificate is not a CA');
 		this.caKeys.set(caCert, info.publicKey);
