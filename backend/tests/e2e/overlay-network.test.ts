@@ -190,6 +190,30 @@ describe('protected lishnet on loopback', () => {
 		await bob.api.lishnets.delete(publicNet.networkID);
 	}, 120_000);
 
+	// Nebula takes the lighthouse role and the listen port at start only: a running member approved as a host kept
+	// listening on its random port while everyone was told to reach it on the new one.
+	it('a running member approved as lighthouse and relay starts listening on its port', async () => {
+		const port = await freePort('udp');
+		const request = await alice.api.overlay.requestAccess(network.networkID, 'Alice', `127.0.0.1:${port}`);
+		await alice.api.overlay.importCertificate(await founder.api.overlay.issue(request, { roles: ['lighthouse', 'relay'] }));
+		const bound = (): Promise<boolean> =>
+			new Promise(resolve => {
+				const socket = createSocket('udp4');
+				socket.once('error', () => resolve(true));
+				socket.bind(port, '127.0.0.1', () => socket.close(() => resolve(false)));
+			});
+		await until("alice's helper on its lighthouse port", bound, 60_000);
+		const status = await alice.api.overlay.status(network.networkID);
+		expect(
+			status.hosts
+				.filter(h => h.self)
+				.map(h => h.role)
+				.sort()
+		).toEqual(['lighthouse', 'relay']);
+		const alicePeer = (await alice.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		await until('bob sees alice again', async () => (await bob.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === alicePeer), 90_000);
+	}, 180_000);
+
 	it('a revoked member is cut off from everyone', async () => {
 		const bobStatus = await bob.api.overlay.status(network.networkID);
 		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
