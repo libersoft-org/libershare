@@ -53,4 +53,17 @@ describe('protected lishnet definitions on re-import', () => {
 			await cleanup();
 		}
 	});
+
+	// The public node stayed joined to the topic of a row that said "protected".
+	it('refuse to turn a public lishnet into a protected one', async () => {
+		const { networks: n, cleanup } = await networks();
+		try {
+			const { overlay: _o, ...plain } = definition({});
+			await n.importFromLISHnet(plain);
+			await expect(n.importFromLISHnet(definition({}))).rejects.toThrow('already exists as a public one');
+			expect(n.get('p1')?.overlay).toBeUndefined();
+		} finally {
+			await cleanup();
+		}
+	});
 });

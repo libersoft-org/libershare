@@ -424,7 +424,11 @@ export class Networks {
 	/** {@link mergeOverlay} applied to a config about to be written over the stored row. */
 	private withMergedOverlay<T extends LISHNetworkDefinition>(network: T): T {
 		const { overlay: _incoming, ...rest } = network;
-		const overlay = Networks.mergeOverlay(this.get(network.networkID)?.overlay, network.overlay);
+		const stored = this.get(network.networkID);
+		// A joined public lishnet keeps its public node, identity and connections; a definition cannot turn it into a
+		// protected one under the same ID (an older version that dropped the overlay field left exactly such a row).
+		if (stored && !stored.overlay && network.overlay !== undefined) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'this lishnet already exists as a public one; delete it before importing it as a protected lishnet');
+		const overlay = Networks.mergeOverlay(stored?.overlay, network.overlay);
 		return (overlay ? { ...rest, overlay } : rest) as T;
 	}
 
