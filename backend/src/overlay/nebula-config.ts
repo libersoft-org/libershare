@@ -99,6 +99,15 @@ export function buildNebulaConfig(input: NebulaConfigInput): Record<string, unkn
 	};
 }
 
+/**
+ * The settings Nebula takes at start only and keeps through a reload: whether this node is a lighthouse and the UDP
+ * port it listens on. A change of either needs a restart of the helper.
+ */
+export function startOnlySettings(overlay: LISHOverlayDefinition, vpnIP: string): string {
+	const own = [...overlay.lighthouses, ...overlay.relays].find(h => h.vpnIP === vpnIP);
+	return `${overlay.lighthouses.some(h => h.vpnIP === vpnIP)}|${own ? hostPort(own.addr).port : 0}`;
+}
+
 /** Every distinct host name of the lishnet's lighthouses and relays. */
 export function infraHosts(overlay: LISHOverlayDefinition): string[] {
 	return [...new Set([...overlay.lighthouses, ...overlay.relays].map(h => hostPort(h.addr).host))];

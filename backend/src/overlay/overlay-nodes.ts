@@ -10,7 +10,7 @@ import { type OverlayBridge } from '../protocol/overlay-transport.ts';
 import { OverlayHelper, type HelperStatus } from './overlay-helper.ts';
 import { OverlayStore } from './overlay-store.ts';
 import { runOverlayCommand, type CertificateInfo } from './overlay-binary.ts';
-import { buildNebulaConfig, infraHosts, OVERLAY_LIBP2P_PORT } from './nebula-config.ts';
+import { buildNebulaConfig, infraHosts, OVERLAY_LIBP2P_PORT, startOnlySettings } from './nebula-config.ts';
 import { applyState, nextVersion, signState, verifyState } from './overlay-state.ts';
 
 /** Every node republishes the newest state it holds this often, so late joiners and missed messages catch up. */
@@ -54,6 +54,8 @@ interface RunningOverlay {
 	republishTimer: ReturnType<typeof setInterval>;
 	lastPublish: number;
 	disposeSubscribe: () => void;
+	/** {@link startOnlySettings} the helper was started with. */
+	startOnly: string;
 }
 
 /**
@@ -175,7 +177,7 @@ export class OverlayNodes {
 			const vpnIP = cert.networks[0]!.split('/')[0]!;
 			const base = { networkID: row.networkID, store, vpnIP, peerID: cert.name };
 			await this.writeConfig(base, overlay);
-			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0 } as RunningOverlay;
+			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP) } as RunningOverlay;
 			entry.helper = await this.startHelper(entry);
 			const bridge: OverlayBridge = {
 				get dialPort() {
@@ -299,14 +301,15 @@ export class OverlayNodes {
 	/**
 	 * Re-read the lishnet's row and apply it to a running node: new hosts, revocations and a renewed certificate, no
 	 * restart. A certificate for another overlay address (a member approved again after a revocation) restarts the
-	 * helper and the node: Nebula keeps the old certificate on reload, and the node listens on the old address.
+	 * helper and the node: Nebula keeps the old certificate on reload, and the node listens on the old address. So
+	 * does a new lighthouse role or listen port of this node ({@link startOnlySettings}).
 	 */
 	async reconfigure(networkID: string): Promise<void> {
 		const entry = this.running.get(networkID);
 		const row = this.deps.getRow(networkID);
 		if (entry && row?.overlay) {
 			const cert = await this.ownCertificate(entry.store, row.overlay.caCert);
-			if (cert && cert.networks[0]!.split('/')[0] !== entry.vpnIP) {
+			if ((cert && cert.networks[0]!.split('/')[0] !== entry.vpnIP) || startOnlySettings(row.overlay, entry.vpnIP) !== entry.startOnly) {
 				await this.leave(networkID);
 				await this.join(row);
 				return;

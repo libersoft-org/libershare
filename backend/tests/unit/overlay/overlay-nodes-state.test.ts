@@ -46,9 +46,10 @@ async function harness() {
 		network: { broadcast: async (topic: string, message: any) => broadcasts.push({ topic, message }), addBootstrapPeers: async () => 'completed' },
 		// A peer subscribed a moment ago, so the rate limit of peer-triggered sends is armed.
 		lastPublish: Date.now(),
+		startOnly: 'false|0',
 	});
 	const sign = (version: number, revoked: string[] = [FP]) => signState({ networkID: NET, version, lighthouses: [{ vpnIP: '100.64.0.1', addr: '203.0.113.7:4242' }], relays: [], revoked }, caKey);
-	return { nodes, store, broadcasts, changes, sign, overlay: () => overlay, cleanup: () => rm(dataDir, { recursive: true, force: true }) };
+	return { nodes, store, broadcasts, changes, sign, caKey, overlay: () => overlay, cleanup: () => rm(dataDir, { recursive: true, force: true }) };
 }
 
 describe('OverlayNodes network state', () => {
@@ -101,6 +102,21 @@ describe('OverlayNodes network state', () => {
 			await h.nodes.acceptState(NET, await h.sign(6));
 			expect(h.broadcasts).toHaveLength(2);
 			expect(reconfigured[1]! - sent()).toBeLessThan(500);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
+	// Nebula takes the lighthouse role and the listen port at start only: a reload left a new host listening nowhere.
+	it('restarts the node when it becomes a lighthouse', async () => {
+		const h = await harness();
+		const calls: string[] = [];
+		(h.nodes as any).leave = async () => calls.push('leave');
+		(h.nodes as any).join = async () => calls.push('join');
+		try {
+			const signed = await signState({ networkID: NET, version: 5, lighthouses: [{ vpnIP: '100.64.0.2', addr: '203.0.113.8:4243' }], relays: [], revoked: [] }, h.caKey);
+			await h.nodes.acceptState(NET, signed);
+			expect(calls).toEqual(['leave', 'join']);
 		} finally {
 			await h.cleanup();
 		}
