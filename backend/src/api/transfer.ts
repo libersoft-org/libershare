@@ -605,15 +605,20 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * node; a LISH shared in protected lishnets is served only by those lishnets' nodes and a public one only by the
 	 * public node, so peers anywhere else would refuse it — with two protected lishnets joined, the first one in the
 	 * list was taken and every peer answered "not shared".
+	 *
+	 * Null for a LISH of protected lishnets none of which is joined: asking for it anywhere else would tell other
+	 * lishnets what the member wants and could fetch it from outside its lishnet.
 	 */
-	function downloadNode(lishID: string, networkIDs: string[]): { node: Network; networkIDs: string[] } {
+	function downloadNode(lishID: string, networkIDs: string[]): { node: Network; networkIDs: string[] } | null {
 		const scope = getLISHScope(lishID);
-		// shortcut: one node per download, so a LISH shared in two protected lishnets takes peers from one of them.
-		const protectedID = scope.find(id => networkIDs.includes(id) && networks.isJoined(id));
-		if (protectedID) return { node: networks.networkFor(protectedID), networkIDs: [protectedID] };
+		if (scope.length > 0) {
+			// shortcut: one node per download, so a LISH shared in two protected lishnets takes peers from one of them.
+			const protectedID = scope.find(id => networks.isJoined(id));
+			return protectedID ? { node: networks.networkFor(protectedID), networkIDs: [protectedID] } : null;
+		}
 		const publicIDs = networkIDs.filter(id => !networks.get(id)?.overlay);
-		if (scope.length === 0 && publicIDs.length > 0) return { node: networks.getRunningNetwork(), networkIDs: publicIDs };
-		// None of its lishnets is joined: wait where the old choice put it, the restore logic suspends it on leave.
+		if (publicIDs.length > 0) return { node: networks.getRunningNetwork(), networkIDs: publicIDs };
+		// A public LISH with no public lishnet joined: wait where the old choice put it, the restore logic suspends it on leave.
 		const fallbackID = networkIDs.find(id => networks.get(id)?.overlay);
 		return { node: fallbackID ? networks.networkFor(fallbackID) : networks.getRunningNetwork(), networkIDs };
 	}
@@ -629,6 +634,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 
 		const target = downloadNode(lishID, networkIDs);
+		if (!target) {
+			// It waits for one of its own lishnets; a switched-off download stays off.
+			if (!disabled && claimSuspension(lishID, getLISHScope(lishID), scheduledAt)) downloadEnabledLishs.delete(lishID);
+			throw new DownloadStartAbandoned(lishID, 'none of its protected lishnets is joined');
+		}
 		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), target.node, dataServer, target.networkIDs, originalNetworkIDs);
 		await downloader.initFromManifest(lish);
 		const prepared = { downloader, requireEnabled, scheduledAt, destroy: () => downloader.destroy() };

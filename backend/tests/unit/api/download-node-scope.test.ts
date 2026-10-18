@@ -73,3 +73,67 @@ for (const [scope, expected] of [
 			start.mockRestore();
 		}
 	});
+
+/** Its protected lishnet down after a restart, the public one up: the download asked for it on the public node. */
+test('a LISH of a protected lishnet that is not joined waits for it instead of downloading elsewhere', async () => {
+	const id = 'scoped-download-waiting';
+	initDownloadState(new Set(), () => {});
+	initUploadState(new Set(), () => {});
+	initLISHScopes(new Map([[id, ['net-b']]]), () => {});
+	const joined = new Set(['public', 'net-a']);
+	const nodes = new Map<string, object>(['public', 'net-a', 'net-b'].map(n => [n, { name: n, onPeerDisconnect: () => () => {} }]));
+	let onJoined!: (networkID: string) => void;
+	const networks = {
+		get: (n: string) => ({ networkID: n, overlay: n === 'public' ? undefined : {} }),
+		networkFor: (n: string) => nodes.get(n),
+		protectedNodes: () => [],
+		getRunningNetwork: () => nodes.get('public'),
+		getEnabled: () => [...joined].map(networkID => ({ networkID })),
+		isJoined: (n: string) => joined.has(n),
+		set onNetworkLeft(_callback: unknown) {},
+		set onNetworkJoined(callback: (networkID: string) => void) {
+			onJoined = callback;
+		},
+	} as unknown as Networks;
+	const data = {
+		get: () => ({ id, name: 'download', directory: null, files: [] }),
+		getDatasetRoot: (): null => null,
+		getAllChunkCount: () => 4,
+		getMissingChunks: () => ['chunk-0'],
+		isCompleteLISH: () => false,
+		getTransferStats: () => ({ downloadedBytes: 0, uploadedBytes: 0 }),
+		clearError: () => {},
+		isVerifyPending: () => false,
+		setError: () => {},
+	} as unknown as DataServer;
+	let cancel!: (error: Error) => void;
+	const running = new Promise<void>((_, reject) => {
+		cancel = reject;
+	});
+	void running.catch(() => {});
+	const used: Array<{ node: unknown; networkIDs: string[] }> = [];
+	const start = spyOn(Downloader.prototype, 'download').mockImplementation(function (this: Downloader) {
+		used.push({ node: (this as any).network, networkIDs: this.getNetworkIDs() });
+		return running;
+	});
+	const handlers = initTransferHandlers(
+		networks,
+		data,
+		tmpdir(),
+		() => {},
+		() => {},
+		{ get: () => false } as unknown as Settings
+	);
+	try {
+		expect(await handlers.enableDownload({ lishID: id })).toEqual({ success: false });
+		expect(used).toEqual([]);
+		joined.add('net-b');
+		onJoined('net-b');
+		for (let i = 0; i < 50 && used.length === 0; i++) await Bun.sleep(10);
+		expect(used).toEqual([{ node: nodes.get('net-b'), networkIDs: ['net-b'] }]);
+	} finally {
+		cancel(new CodedError(ErrorCodes.DOWNLOAD_CANCELLED));
+		await removeDownloadState(id);
+		start.mockRestore();
+	}
+});
