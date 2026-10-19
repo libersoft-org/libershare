@@ -210,6 +210,18 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// A founder restored on a clean device has its backup's revocations but no signed state yet: Nebula ran without them.
+	it("blocks the member list's revocations before any signed state arrives", async () => {
+		const h = await harness();
+		try {
+			await h.store.writeJSON('founder.json', { nextHost: 3, members: [{ name: 'gone', peerID: 'p', vpnIP: '100.64.0.9', roles: [], notAfter: '2099-01-01T00:00:00Z', fingerprint: 'd'.repeat(64), issued: '', revoked: true }], requests: [], revoked: ['e'.repeat(64)] });
+			await h.nodes.reconfigure(NET);
+			expect(((await h.store.readJSON<any>('nebula.yml'))?.pki.blocklist ?? []).sort()).toEqual(['d'.repeat(64), 'e'.repeat(64)]);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
 	it('refuses a state signed by another key', async () => {
 		const h = await harness();
 		try {

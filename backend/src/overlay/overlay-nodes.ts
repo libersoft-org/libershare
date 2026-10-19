@@ -167,6 +167,9 @@ export class OverlayNodes {
 	/** Write the Nebula configuration; returns the infrastructure addresses it allows. */
 	private async writeConfig(entry: { networkID: string; store: OverlayStore; vpnIP: string; peerID: string }, overlay: LISHOverlayDefinition, known: Map<string, string[]>): Promise<{ byHost: Map<string, string[]>; ips: string[] }> {
 		const state = await this.currentState(entry.networkID, overlay);
+		// A founder restored from a backup knows revocations no signed state has brought it yet: they block from the start.
+		const founder = entry.store.has('founder.json') ? await entry.store.readFounder() : null;
+		const revoked = [...new Set([...(state?.revoked ?? []), ...(founder?.members.filter(m => m.revoked).map(m => m.fingerprint) ?? []), ...(founder?.revoked ?? [])])];
 		const resolved = await this.resolveInfra(entry.networkID, overlay, known);
 		const { ips } = resolved;
 		const config = buildNebulaConfig({
@@ -174,7 +177,7 @@ export class OverlayNodes {
 			overlay,
 			vpnIP: entry.vpnIP,
 			peerID: entry.peerID,
-			revoked: state?.revoked ?? [],
+			revoked,
 			infraIPs: ips,
 		});
 		await entry.store.writeJSON('nebula.yml', config);
