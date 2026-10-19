@@ -278,6 +278,42 @@ describe('importing a CA key', () => {
 		}
 	});
 
+	// A full lane fell back to the whole subnet and handed out an address in another device's lane.
+	it('a device whose lane is full takes another free lane, never an address in a lane another device holds', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
+		const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (..._args: unknown[]) => ({ cert: 'crt', fingerprint: 'f'.repeat(64), notAfter: '2099-01-01T00:00:00Z' }));
+		try {
+			const access = new OverlayAccess({
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }) } as any,
+				getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+				addNetwork: async () => {},
+				listOverlayIDs: () => [],
+				refresh: async () => {},
+				emit: () => {},
+			});
+			const store = new OverlayStore(dir, NET);
+			await store.ensureDir();
+			await store.writeText('ca.key', 'key');
+			const member = (host: number) => ({ name: `m${host}`, peerID: `p${host}`, vpnIP: `100.64.0.${host}`, roles: [], notAfter: '2099-01-01T00:00:00Z', fingerprint: String(host).padStart(64, '0'), issued: '', revoked: false });
+			// Lane 0 full; a restored device holds lane 5.
+			await store.writeJSON('founder.json', { nextHost: 2, lane: 0, lanes: [0, 5], members: Array.from({ length: 254 }, (_, i) => member(i + 2)), requests: [] });
+			// A peer ID whose slot in the whole subnet (the old fallback) lies in lane 5.
+			const base58 = (n: number): string => (n < 58 ? '' : base58(Math.floor(n / 58))) + '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[n % 58];
+			const wholeLane = (id: string): number => (2 + (createHash('sha256').update(id).digest().readUInt32BE(0) % (255 * 256 - 2))) >> 8;
+			let peerID = '';
+			for (let i = 0; !peerID; i++) if (wholeLane(`3${base58(i)}`.padEnd(46, '3')) === 5) peerID = `3${base58(i)}`.padEnd(46, '3');
+			await access.issue({ type: 'lish-overlay-request', networkID: NET, name: 'new', peerID, publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' });
+			const data = await store.readFounder();
+			const lane = Number(data.members.find(m => m.peerID === peerID)!.vpnIP.split('.')[2]);
+			expect([0, 5, 255]).not.toContain(lane);
+			expect(data.extraLanes).toEqual([lane]);
+			expect(data.lanes).toContain(lane);
+		} finally {
+			issue.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	// A running host with a valid certificate of its own restored a backup that revoked a member: the revocation sat
 	// on disk while the running helper kept the old blocklist and the member went on transferring.
 	it('applies a restored backup to a node that already runs', async () => {

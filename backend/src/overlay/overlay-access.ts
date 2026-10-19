@@ -45,17 +45,16 @@ function hashOf(text: string): number {
 /**
  * A free member address: the first one not in `used`, starting at a slot the peer ID's hash picks, inside the lane of
  * the device that approves. Two devices holding the CA key do not see what the other handed out; their own lanes keep
- * them apart (counting up from .2, both gave their next new member the same address every time). A full lane, or a
- * subnet too small for lanes, falls back to the whole subnet.
+ * them apart (counting up from .2, both gave their next new member the same address every time). A subnet too small
+ * for lanes uses the whole subnet. Null when the device's lanes are full: it never reaches into another device's lane
+ * (falling back to the whole subnet handed out addresses another device had given already).
  *
  * shortcut: two devices restored from one backup pick their lanes at random, so they share one with a chance of 1 in
- * (lanes − 1), 1 in 255 for a /16; a shared allocation would need them online together.
+ * (lanes − 2), 1 in 254 for a /16, and so do two devices that each take one more lane; a shared allocation would need
+ * them online together.
  */
-function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>, lane: number): string {
-	const ranges: Array<[number, number]> = size >= 2 * LANE_SIZE ? [[lane * LANE_SIZE, LANE_SIZE]] : [];
-	// The guest lane is the last one, so the whole subnet below it is what a member may get.
-	const guest = guestLane(size);
-	ranges.push([0, guest === null ? size : guest * LANE_SIZE]);
+function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>, lanes: number[]): string | null {
+	const ranges: Array<[number, number]> = size >= 2 * LANE_SIZE ? lanes.map(lane => [lane * LANE_SIZE, LANE_SIZE]) : [[0, size]];
 	for (const [base, count] of ranges) {
 		// Host 0 and the broadcast address are never handed out, and .1 is the founder's.
 		const first = Math.max(base, 2);
@@ -67,19 +66,25 @@ function freeAddress(cidr: string, size: number, peerID: string, used: Set<strin
 			if (!used.has(candidate)) return candidate;
 		}
 	}
-	throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, cidr);
+	return null;
 }
 
-/** A lane for a device restored from a backup: a free one other than the original founder's 0 and the guest lane, picked at random. */
-function pickLane(size: number, taken: number[]): number {
+/** A lane no known device holds, other than the original founder's 0 and the guest lane, picked at random; null when none is left. */
+function freeLane(size: number, taken: number[]): number | null {
 	const lanes = guestLane(size) ?? Math.floor(size / LANE_SIZE);
-	if (lanes < 2) return 0;
+	if (lanes < 2) return null;
 	const start = randomInt(lanes - 1);
 	for (let i = 0; i < lanes - 1; i++) {
 		const lane = 1 + ((start + i) % (lanes - 1));
 		if (!taken.includes(lane)) return lane;
 	}
-	return 1 + start;
+	return null;
+}
+
+/** A lane for a device restored from a backup ({@link freeLane}); with every lane taken it shares one. */
+function pickLane(size: number, taken: number[]): number {
+	const lanes = guestLane(size) ?? Math.floor(size / LANE_SIZE);
+	return freeLane(size, taken) ?? (lanes < 2 ? 0 : 1 + randomInt(lanes - 1));
 }
 
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
@@ -358,7 +363,17 @@ export class OverlayAccess {
 				// own and the hosts' are still taken.
 				const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
 				const used = new Set([...data.members.map(m => m.vpnIP), subnetAddress(overlay.subnet, 1), ...(own ? [own.networks[0]!.split('/')[0]!] : []), ...overlay.lighthouses.map(h => h.vpnIP), ...overlay.relays.map(h => h.vpnIP)]);
-				vpnIP = freeAddress(overlay.subnet, subnet.size, request.peerID, used, data.lane ?? 0);
+				const mine = [data.lane ?? 0, ...(data.extraLanes ?? [])];
+				let free = freeAddress(overlay.subnet, subnet.size, request.peerID, used, mine);
+				if (!free) {
+					// This device's lanes are full: it takes one more lane that no device it knows of holds.
+					const lane = freeLane(subnet.size, [...(data.lanes ?? [0]), ...mine]);
+					free = lane === null ? null : freeAddress(overlay.subnet, subnet.size, request.peerID, used, [lane]);
+					if (!free) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, overlay.subnet);
+					data.extraLanes = [...(data.extraLanes ?? []), lane!];
+					data.lanes = [...new Set([...(data.lanes ?? [0]), lane!])];
+				}
+				vpnIP = free;
 			}
 			// A node revoked as a member is approved again with a certificate valid only after that revocation, which
 			// keeps every older one (also one another device issued) revoked.
