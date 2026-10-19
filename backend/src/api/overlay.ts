@@ -17,7 +17,7 @@ export interface OverlayHandlers {
 	revoke: (p: { networkID: string; fingerprint: string }) => Promise<{ success: true }>;
 	setHosts: (p: { networkID: string; lighthouses: unknown; relays: unknown }) => Promise<{ success: true }>;
 	importCertificate: (p: { certificate: unknown }) => Promise<OverlayStatus>;
-	exportCA: (p: { networkID: string }) => Promise<{ networkID: string; caKey: string }>;
+	exportCA: (p: { networkID: string; forDevice?: boolean }) => Promise<{ networkID: string; caKey: string }>;
 	importCA: (p: { networkID: string; caKey: string }) => Promise<{ success: true }>;
 	status: (p: { networkID: string }) => Promise<OverlayStatus>;
 	createInvite: (p: { networkID: string; validDays?: number }) => Promise<{ invite: string }>;
@@ -81,7 +81,7 @@ export function initOverlayHandlers(networks: Networks): OverlayHandlers {
 		},
 		exportCA: p => {
 			assert(p, ['networkID']);
-			return access.exportCA(p.networkID);
+			return access.exportCA(p.networkID, p.forDevice === true);
 		},
 		importCA: async p => {
 			assert(p, ['networkID', 'caKey']);

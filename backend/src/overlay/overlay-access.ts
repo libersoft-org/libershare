@@ -53,7 +53,8 @@ function hashOf(text: string): number {
  * (falling back to the whole subnet handed out addresses another device had given already).
  *
  * shortcut: a subnet smaller than two lanes (/24 and smaller) has no lanes, so two devices holding the CA key there can
- * give two members one address; and so can two devices restored from one and the same backup ({@link ownRange}).
+ * give two members one address; and so can two devices restored from one and the same backup, or from two plain ones
+ * (they hand over the same lanes, {@link OverlayAccess.exportCA}).
  */
 function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>, lanes: number[]): string | null {
 	const ranges: Array<[number, number]> = size >= 2 * LANE_SIZE ? lanes.map(lane => [lane * LANE_SIZE, LANE_SIZE]) : [[0, size]];
@@ -849,19 +850,24 @@ export class OverlayAccess {
 	 * revoke only the certificates it is told about. Every revocation of the signed state goes in too: one made on
 	 * another device holding the key is in this node's state but not in its member list.
 	 */
-	async exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
+	async exportCA(networkID: string, forDevice: boolean = false): Promise<{ networkID: string; caKey: string }> {
 		const { overlay, store } = this.founderOf(networkID);
 		const size = parseSubnet(overlay.subnet)!.size;
-		// Every backup hands the device that restores it lanes of its own, taken off the top of this device's range; it
-		// cannot tell a backup kept for safety from one restored on another device. A subnet without lanes hands none.
+		// A backup hands the device that restores it lanes of its own, taken off the top of this device's range. Plain
+		// backups all hand the same ones, taken once: kept for safety, they must not use this device's addresses up. One
+		// made for another device that approves alongside (`forDevice`) takes new ones. A subnet without lanes hands none.
 		const { range, ...data } = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
 			if (size < 2 * LANE_SIZE) return { ...data, range: undefined };
+			if (!forDevice && data.backupRange) return { ...data, range: data.backupRange };
 			const [from, to] = ownRange(data, size);
 			const cut = Math.max(from, ...lanesInUse(data).map(l => l + 1), to - Math.max(1, Math.floor(memberLanes(size) / BACKUP_LANE_SHARE)));
-			data.laneRange = [from, Math.min(cut, to)];
+			// A backup whose restore could issue no certificate, not even the device's own, is refused before it is made.
+			if (cut >= to) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, 'no addresses left to hand to another device');
+			data.laneRange = [from, cut];
+			if (!forDevice) data.backupRange = [cut, to];
 			await store.writeJSON('founder.json', data);
-			return { ...data, range: [Math.min(cut, to), to] as [number, number] };
+			return { ...data, range: [cut, to] as [number, number] };
 		});
 		const known = await this.revocations(networkID, overlay);
 		const taken = [...new Set([...(data.lanes ?? [0]), ...lanesInUse(data)])];
@@ -879,17 +885,23 @@ export class OverlayAccess {
 		const derived = Buffer.from((await generateKeyPairFromSeed('Ed25519', raw.subarray(0, 32))).publicKey.raw).toString('hex');
 		if (derived !== (await this.deps.nodes.caPublicKey(store, overlay.caCert))) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the key does not belong to this lishnet');
 		const backup = parseMemberList(caKey, overlay.subnet);
+		// Refused before anything is kept: restored, it could not issue this device its own certificate.
+		if (backup?.laneRange && backup.laneRange[0] >= backup.laneRange[1]) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, 'the backup hands over no addresses; make a new one');
 		await this.founderLock(networkID).runExclusive(async () => {
 			await store.writeText('ca.key', pem![0] + '\n');
 			const data = await store.readFounder();
 			// A device taking the key over gets lanes of its own: the range the backup hands over, or with a backup made
-			// before ranges (or the key alone) one lane apart from the ones the backup knows.
+			// before ranges (or the key alone) one lane apart from the ones the backup knows. A device that took lanes it
+			// never used (a restore that failed after) takes the new backup's.
 			const taken = [...new Set([...(data.lanes ?? []), ...(backup?.lanes ?? [0])])];
-			if (data.lane === undefined && !data.laneRange) {
+			if (data.lane === undefined) {
 				if (backup?.laneRange) {
 					data.laneRange = backup.laneRange;
 					if (backup.laneRange[0] < backup.laneRange[1]) data.lane = backup.laneRange[0];
-				} else data.lane = pickLane(parseSubnet(overlay.subnet)!.size, taken);
+				} else {
+					delete data.laneRange;
+					data.lane = pickLane(parseSubnet(overlay.subnet)!.size, taken);
+				}
 			}
 			data.lanes = [...new Set([...taken, ...lanesInUse(data)])];
 			for (const m of backup?.members ?? []) {

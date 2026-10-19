@@ -125,8 +125,9 @@ class OverlayAPI {
 		return this.client.call<OverlayStatus>('overlay.importCertificate', { certificate });
 	}
 
-	exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
-		return this.client.call<{ networkID: string; caKey: string }>('overlay.exportCA', { networkID });
+	/** A backup of the CA key; `forDevice` hands the device restoring it addresses of its own, apart from plain backups'. */
+	exportCA(networkID: string, forDevice: boolean = false): Promise<{ networkID: string; caKey: string }> {
+		return this.client.call<{ networkID: string; caKey: string }>('overlay.exportCA', { networkID, forDevice });
 	}
 
 	importCA(networkID: string, caKey: string): Promise<SuccessResponse> {

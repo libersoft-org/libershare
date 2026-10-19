@@ -360,6 +360,82 @@ describe('importing a CA key', () => {
 			}
 		});
 
+	// Every backup took more lanes off the founding device: after a few backups kept for safety (18 in a /16, 2 in a /23)
+	// one handed over none, and restoring it left a founder that could not issue even its own certificate.
+	for (const subnet of ['100.64.0.0/16', '100.64.0.0/23'])
+		it(`backups made again and again stay restorable, in a ${subnet}`, async () => {
+			const dirA = await mkdtemp(join(tmpdir(), 'overlay-ca-a-'));
+			const dirB = await mkdtemp(join(tmpdir(), 'overlay-ca-b-'));
+			const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (...args: unknown[]) => ({ cert: 'crt', fingerprint: 'f'.repeat(64), notBefore: args[6] as string, notAfter: '2099-01-01T00:00:00Z' }));
+			try {
+				const ca = await generateKeyPair('Ed25519');
+				const make = (dir: string): OverlayAccess =>
+					new OverlayAccess({
+						nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => ({ ...MEMBER_CERT, networks: [`100.64.0.9/${subnet.split('/')[1]}`] }), currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async () => {}, reconfigure: async () => {}, sweepRevokedPeers: async () => {} } as any,
+						getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet, lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+						addNetwork: async () => {},
+						listOverlayIDs: () => [],
+						refresh: async () => {},
+						emit: () => {},
+					});
+				const a = new OverlayStore(dirA, NET);
+				await a.ensureDir();
+				await a.writeText('ca.key', pem(ca.raw));
+				await a.writeJSON('founder.json', { nextHost: 2, lane: 0, lanes: [0], members: [], requests: [] });
+				const deviceA = make(dirA);
+				let backup = '';
+				for (let i = 0; i < 20; i++) backup = (await deviceA.exportCA(NET)).caKey;
+				const deviceB = make(dirB);
+				await deviceB.importCA(NET, backup);
+				await deviceB.issue({ type: 'lish-overlay-request', networkID: NET, name: 'new', peerID: '2'.repeat(46), publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' });
+				expect((await deviceB.listMembers(NET)).map(m => m.name)).toEqual(['new']);
+				const range = (await a.readFounder()).laneRange!;
+				// The founding device gave up one share of its lanes, not one per backup.
+				expect(range[1] - range[0]).toBe(subnet.endsWith('/16') ? 255 - 15 : 1);
+				// A backup for a device approving alongside takes lanes of its own — or, with none left, is refused rather than made.
+				if (subnet.endsWith('/23')) await expect(deviceA.exportCA(NET, true)).rejects.toThrow('no addresses left');
+				else {
+					await deviceA.exportCA(NET, true);
+					const after = await a.readFounder();
+					expect(after.laneRange![1]).toBeLessThan(range[1]);
+					expect(after.backupRange![0]).toBeGreaterThanOrEqual(range[1]);
+				}
+			} finally {
+				issue.mockRestore();
+				await rm(dirA, { recursive: true, force: true });
+				await rm(dirB, { recursive: true, force: true });
+			}
+		});
+
+	// A backup handing over no lanes was restored: the key was kept, no certificate could be issued, and restoring a
+	// good backup after it kept the empty range.
+	it('refuses a backup that hands over no addresses, and a good one restores after it', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
+		try {
+			const ca = await generateKeyPair('Ed25519');
+			const access = new OverlayAccess({
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async () => {}, reconfigure: async () => {}, sweepRevokedPeers: async () => {} } as any,
+				getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+				addNetwork: async () => {},
+				listOverlayIDs: () => [],
+				refresh: async () => {},
+				emit: () => {},
+			});
+			const backup = (range: [number, number]): string => `${pem(ca.raw)}-----BEGIN LISH OVERLAY MEMBERS-----\n${Buffer.from(JSON.stringify({ nextHost: 2, members: [], lanes: [0], range })).toString('base64')}\n-----END LISH OVERLAY MEMBERS-----\n`;
+			await expect(access.importCA(NET, backup([16, 16]))).rejects.toThrow('no addresses');
+			expect(new OverlayStore(dir, NET).has('ca.key')).toBe(false);
+			// A restore that took a range it never used (it failed later) takes the next backup's.
+			const store = new OverlayStore(dir, NET);
+			await store.writeJSON('founder.json', { nextHost: 1, members: [], requests: [], laneRange: [16, 16] });
+			await access.importCA(NET, backup([200, 255]));
+			const data = await store.readFounder();
+			expect(data.laneRange).toEqual([200, 255]);
+			expect(data.lane).toBe(200);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	// A running host with a valid certificate of its own restored a backup that revoked a member: the revocation sat
 	// on disk while the running helper kept the old blocklist and the member went on transferring.
 	it('applies a restored backup to a node that already runs', async () => {
