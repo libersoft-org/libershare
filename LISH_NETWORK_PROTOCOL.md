@@ -316,6 +316,19 @@ A network whose definition carries an `overlay` (see [**LISH network structure f
 3. The founder approves it: a certificate for the request's key, with the next free overlay address, the expiry and optional roles. The answer is `{ type: "lish-overlay-certificate", networkID, certificate, state? }`.
 4. The member imports it. The node checks that the certificate is signed by the network's CA and issued for its own key and peer ID, then joins.
 
+A member may ask for a renewal the same way within 30 days before its certificate ends.
+
+### Invites
+
+Steps 2 and 4 can also run by themselves over the overlay:
+
+1. The founder creates an invite: `lishinvite:` followed by base64 of `{ type: "lish-overlay-invite", id, network, founder, cert, key, expires }`. `network` is the definition, `founder` the overlay address of the founder's device that made it, and `cert` and `key` a **guest certificate** with its private key: name `guest-<id>`, group `guest`, an address from the last 256 addresses of the subnet (the guest block; invites need a subnet of `/22` or larger), valid 7 days by default.
+2. The invited node adds the network, creates its request as in step 1 above and starts a second helper with the guest certificate. Through it the node connects to `<founder>:9090` and sends one JSON line `{ invite, request }`.
+3. The founder's node takes a connection whose tunnel certificate is a guest's away from libp2p and answers one JSON line: `{ status: "pending" }` (the request now waits for approval), `{ status: "approved", bundle }` (the certificate answer of step 3 above) or `{ status: "refused", reason }`. An invite serves one node (the peer ID of its first request), only from its own guest address, and only until it expires.
+4. The invited node asks again every 15 seconds until it gets the certificate, then imports it, stops the guest helper and deletes the guest key.
+
+Every node's Nebula firewall admits connections to port 9090 from certificates with the group `member` only (every member certificate has it). Only a device holding the CA key admits the group `guest` as well, so a guest certificate reaches nobody but the founder's invite exchange.
+
 ### Network state
 
 The founder publishes the network's current lighthouses, relays and revoked certificates as one signed document:
@@ -324,7 +337,7 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 {
 	type: 'overlayState',
 	signed: {
-		state: string, // JSON: { networkID, version, lighthouses, relays, revoked: string[] (certificate fingerprints) }
+		state: string, // JSON: { networkID, version, lighthouses, relays, revoked: string[] (certificate fingerprints), revokedPeers?: { [peerID]: ISO time } }
 		signature: string // hex ed25519 signature by the CA key over "lish-overlay-state/1\n" + state
 	}
 }
@@ -338,7 +351,9 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 ### Revocation and expiry
 
 - A revoked certificate fingerprint is blocklisted by every node that holds the state. Its tunnels are closed at once and the helper closes the connections that ran through them. A revocation is permanent; the member needs a new certificate.
-- Revoking a member revokes every certificate its node holds, not only the one named: an earlier certificate stays valid after a renewal.
+- Revoking a member revokes every certificate its node holds, not only the one named: an earlier certificate stays valid after a renewal. The state also lists the member's peer ID with the time of the revocation (`revokedPeers`): every certificate with that name and a start of validity before that time is revoked, also one issued by another device holding the CA key.
+- Every node keeps every revocation it has verified in any state; a newer state that lacks one does not lift it.
+- A libp2p connection over the overlay stands only when the certificate of the tunnel it came through names the connecting peer ID and is not revoked.
 - A renewal keeps the member's overlay address. If it ends sooner than a certificate the member still holds, that certificate is revoked in the same state, so a shorter term takes effect at once; the member is cut off until it imports the new certificate.
 - A member approved again after a revocation gets a new overlay address.
 - A certificate past its expiry is refused by every node without any state.
@@ -363,6 +378,8 @@ Each shared LISH has a scope: the public networks (the default), or a list of pr
 - The CA key is the network: whoever holds it can admit anyone. A leaked key can only be answered with a new network.
 - Lighthouses and relays see the public addresses of the members who use them. Members with such a role see them too.
 - A member can still change a LISH's scope to public on purpose; the protocol cannot stop a member from copying what it received.
+- The signed state has no expiry. A part of the network cut off from every node that holds a newer state keeps the older one, and does not learn of a revocation until it reconnects.
+- An invite is a secret until it expires: whoever holds it can hand in a request (the founder still decides). It cannot be withdrawn before it expires; rejecting its request ends it.
 
 ## Transfer flow
 
