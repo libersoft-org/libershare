@@ -263,6 +263,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// restart without saturating dial CPU; libp2p default of 5 is too low
 			// for fleets >30 peers.
 			maxParallelReconnects: 15,
+			// A protected lishnet's node resolves no names: a /dnsaddr a peer announced was looked up in public DNS
+			// before the dial filter refused it.
+			...(overlay ? { resolvers: {} } : {}),
 		},
 		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
 		// node's own interfaces. Peers advertise every known multiaddr (via

@@ -64,6 +64,14 @@ describe('buildLibp2pConfig — overlay node identity and names', () => {
 	});
 });
 
+// A /dnsaddr a peer announced was looked up in public DNS before the dial filter refused it.
+describe('buildLibp2pConfig — overlay node names', () => {
+	it('resolves no names', async () => {
+		expect((await build(true)).config.connectionManager.resolvers).toEqual({});
+		expect((await build(false)).config.connectionManager.resolvers).toBeUndefined();
+	});
+});
+
 describe('buildLibp2pConfig — public node unchanged', () => {
 	it('keeps TCP, the relay transport, relay server, AutoNAT, DCUtR, UPnP and mDNS', async () => {
 		const { config } = await build(false);
