@@ -217,7 +217,7 @@
 		// keep a suffix that contradicts the selected algorithm.
 		if (saveToFile) updateLISHFileExtension();
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
-		errorMessage = networksError || (validationError ? getLISHCreateErrorMessage(validationError, $t) : '') || ($privateOnly && !scope ? $t('settings.lishNetwork.protected.errorPrivateOnly') : '');
+		errorMessage = networksError || (validationError ? getLISHCreateErrorMessage(validationError, $t) : '') || ($privateOnly && !scope && ($autoStartSharing || $autoStartDownloading) ? $t('settings.lishNetwork.protected.errorPrivateOnly') : '');
 		if (!errorMessage) {
 			// Check if data path exists and is not an empty directory
 			try {

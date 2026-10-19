@@ -281,10 +281,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const scope = checkedScope(p.scope);
-		// Before the hashing pass, which addLISH would otherwise refuse only at its end.
-		refusePublicWhenPrivateOnly(scope);
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
+		// Before the hashing pass, which addLISH would otherwise refuse only at its end. A .lish file made and not added
+		// here is shared nowhere.
+		if (addToSharing || addToDownloading) refusePublicWhenPrivateOnly(scope);
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
 		const chunkSize = p.chunkSize ?? DEFAULT_CHUNK_SIZE;
 		// Reject overly large chunkSize before the (potentially long) hashing pass.
@@ -409,6 +410,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		} finally {
 			await dataset.close();
 		}
+		// Again at the end of a long creation or import: the setting may have been switched on meanwhile.
+		refusePublicWhenPrivateOnly(opts.scope ?? getLISHScope(lish.id));
 		dataServer.addDataset(lish, opts.root, opts.finalRoot);
 		moveRecoveryTokens.delete(lish.id);
 		stopRecoveryForLISH(lish.id);
@@ -422,6 +425,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		else if (getLISHScope(lish.id).length > 0) setLISHScope(lish.id, getLISHScope(lish.id));
 		console.log(`✓ LISH added:${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
+		// Switched on while the download was being stopped: stored, but neither shared nor downloaded.
+		refusePublicWhenPrivateOnly(getLISHScope(lish.id));
 		// Set enabled flags BEFORE verification — verify sets busy which blocks triggerEnableDownload.
 		// After verify completes, restartDownloadIfEnabled picks up the enabled flag automatically.
 		if (opts.enableSharing) enableUpload(lish.id);
@@ -433,8 +438,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// Validate structure early to fail fast before any disk operations.
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
-		// Without a scope a LISH added again keeps the one it had (addLISH).
-		refusePublicWhenPrivateOnly(scope ?? getLISHScope(lish.id));
+		// Without a scope a LISH added again keeps the one it had — as it is now: deleted meanwhile, it would be gone.
+		const kept = scope ?? getLISHScope(lish.id);
+		refusePublicWhenPrivateOnly(kept);
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		const dirName = datasetRootName(lish);
@@ -478,7 +484,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (existing) {
 			await stopDatasetWork(lish.id);
 		}
-		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, scope });
+		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, scope: kept });
 		return { lishID: lish.id, directory };
 	}
 
