@@ -903,7 +903,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 11vw 9vw 8vw 7vw 7vw 5vw 11vw';
 // Toolbar action IDs for download detail view
-export type DownloadToolbarActionID = 'back' | 'copy-lish-id' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
+export type DownloadToolbarActionID = 'back' | 'copy-lish-id' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'share-in' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {
 	id: DownloadToolbarActionID;
 	icon: string | ((downloadPaused: boolean, uploadPaused: boolean) => string);
@@ -918,6 +918,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'find-peers', icon: '/img/search.svg', getLabel: (t): string => t('downloads.findPeers') },
 	{ id: 'verify', icon: '/img/check.svg', getLabel: (t): string => t('downloads.verify') },
 	{ id: 'stop-verify', icon: '/img/cross.svg', getLabel: (t): string => t('downloads.stopVerify') },
+	{ id: 'share-in', icon: '/img/lock.svg', getLabel: (t): string => t('lish.create.shareIn') },
 	{ id: 'export', icon: '/img/upload.svg', getLabel: (t): string => t('common.export') },
 	{ id: 'move', icon: '/img/move.svg', getLabel: (t): string => t('downloads.moveData') },
 	{ id: 'delete', icon: '/img/del.svg', getLabel: (t): string => t('common.delete') },
