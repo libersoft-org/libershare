@@ -20,6 +20,8 @@ export interface OverlayHandlers {
 	exportCA: (p: { networkID: string }) => Promise<{ networkID: string; caKey: string }>;
 	importCA: (p: { networkID: string; caKey: string }) => Promise<{ success: true }>;
 	status: (p: { networkID: string }) => Promise<OverlayStatus>;
+	createInvite: (p: { networkID: string; validDays?: number }) => Promise<{ invite: string }>;
+	useInvite: (p: { invite: string; name: string; infraAddr?: string }) => Promise<OverlayStatus>;
 }
 
 /**
@@ -89,6 +91,14 @@ export function initOverlayHandlers(networks: Networks): OverlayHandlers {
 		status: p => {
 			assert(p, ['networkID']);
 			return access.status(p.networkID);
+		},
+		createInvite: async p => {
+			assert(p, ['networkID']);
+			return { invite: await access.createInvite(p.networkID, p.validDays) };
+		},
+		useInvite: p => {
+			assert(p, ['invite', 'name']);
+			return access.useInvite(p.invite, p.name, p.infraAddr);
 		},
 	};
 }

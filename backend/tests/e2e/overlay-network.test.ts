@@ -280,6 +280,32 @@ describe('protected lishnet on loopback', () => {
 		expect((await bob.api.lishnets.infoAll()).some(n => n.networkID === network.networkID)).toBe(false);
 	}, 60_000);
 
+	// No JSON passed by hand: the invited node hands its request in over the overlay and picks its certificate up there.
+	it('a node joins through an invite: the request and the certificate travel by themselves', async () => {
+		const { invite } = await founder.api.overlay.createInvite(network.networkID);
+		expect(invite).toStartWith('lishinvite:');
+		await bob.api.overlay.useInvite(invite, 'Bob by invite');
+		const pending = await until('the request reaches the founder', async () => (await founder.api.overlay.listRequests(network.networkID)).find(r => r.name === 'Bob by invite'), 90_000);
+		expect(pending.invite).toBeDefined();
+		await until('bob waits for the approval', async () => (await bob.api.overlay.status(network.networkID)).invite?.state === 'pending', 60_000);
+		await founder.api.overlay.approve(network.networkID, pending.id);
+		const status = await until(
+			'bob gets the certificate',
+			async () => {
+				const s = await bob.api.overlay.status(network.networkID);
+				return s.role === 'member' && !s.invite ? s : null;
+			},
+			90_000
+		);
+		const nodeDir = join(bob.dir, 'lishnet-nodes', network.networkID);
+		expect(existsSync(join(nodeDir, 'guest.key'))).toBe(false);
+		const bobPeer = await until('bob node', async () => (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID && n.peerID)?.peerID);
+		await until('alice sees bob', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
+		expect(status.certificate?.revoked).toBe(false);
+		await bob.api.lishnets.delete(network.networkID);
+		await until('bob forgets the lishnet', async () => !existsSync(nodeDir), 30_000);
+	}, 300_000);
+
 	// A founder restored on a clean device could approve others but not join: it had no certificate of its own.
 	it('a founder restored from the key backup on a clean device joins its lishnet', async () => {
 		const { caKey } = await founder.api.overlay.exportCA(network.networkID);

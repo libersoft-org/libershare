@@ -136,6 +136,16 @@ class OverlayAPI {
 	status(networkID: string): Promise<OverlayStatus> {
 		return this.client.call<OverlayStatus>('overlay.status', { networkID });
 	}
+
+	/** Founder: an invite to pass on; the request that comes through it waits for approval like any other. */
+	createInvite(networkID: string, validDays?: number): Promise<{ invite: string }> {
+		return this.client.call<{ invite: string }>('overlay.createInvite', { networkID, ...(validDays !== undefined ? { validDays } : {}) });
+	}
+
+	/** Join through an invite: the request and the certificate then travel by themselves. */
+	useInvite(invite: string, name: string, infraAddr?: string): Promise<OverlayStatus> {
+		return this.client.call<OverlayStatus>('overlay.useInvite', { invite, name, ...(infraAddr ? { infraAddr } : {}) });
+	}
 }
 
 /**

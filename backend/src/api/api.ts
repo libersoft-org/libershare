@@ -493,6 +493,8 @@ export class APIServer {
 			'overlay.revoke': _overlay.revoke,
 			'overlay.setHosts': _overlay.setHosts,
 			'overlay.importCertificate': _overlay.importCertificate,
+			'overlay.createInvite': _overlay.createInvite,
+			'overlay.useInvite': _overlay.useInvite,
 			'overlay.exportCA': _overlay.exportCA,
 			'overlay.importCA': _overlay.importCA,
 			'overlay.status': _overlay.status,
