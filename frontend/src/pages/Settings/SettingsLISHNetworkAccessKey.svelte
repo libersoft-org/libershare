@@ -33,9 +33,9 @@
 		}
 	});
 
-	async function show(): Promise<void> {
+	async function show(forDevice: boolean): Promise<void> {
 		try {
-			key = (await api.overlay.exportCA(network.networkID)).caKey;
+			key = (await api.overlay.exportCA(network.networkID, forDevice)).caKey;
 		} catch (e) {
 			addNotification(translateError(e), 'error');
 		}
@@ -83,6 +83,9 @@
 	<div class="container">
 		<Alert type="warning" message={$t('settings.lishNetwork.protected.backupWarning')} />
 		{#if founder === true}
+			{#if !key}
+				<Alert type="info" message={$t('settings.lishNetwork.protected.backupForDeviceHint')} />
+			{/if}
 			{#if key}
 				<div role="group" data-mouse-activate-area={areaID}>
 					<Input value={key} label={$t('settings.lishNetwork.protected.caKey')} multiline rows={4} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 0]} />
@@ -92,7 +95,8 @@
 				{#if key}
 					<Button icon="/img/copy.svg" label={$t('settings.lishNetwork.protected.copy')} onConfirm={() => copyToClipboard(key, $t('settings.lishNetwork.protected.copied'))} />
 				{:else}
-					<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.backupCA')} onConfirm={show} />
+					<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.backupCA')} onConfirm={() => show(false)} />
+					<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.backupForDevice')} onConfirm={() => show(true)} />
 				{/if}
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
 			</ButtonBar>

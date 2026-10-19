@@ -2,7 +2,6 @@ import { api } from './api.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition, type NetworkMutationResponse } from '@shared';
 import { translateError, tt } from './language.ts';
 import { addNotification } from './notifications.ts';
-import { get } from 'svelte/store';
 import { privateOnly } from './settings.ts';
 
 // Storage Operations (async, using backend API)
@@ -13,11 +12,13 @@ export async function getNetworks(): Promise<LISHNetworkConfig[]> {
 
 /**
  * The lishnets a LISH can be shared or searched in. With protected lishnets only the public node is sealed: a public
- * lishnet carries nothing, and a LISH marked public there would go out once the switch is turned off again.
+ * lishnet carries nothing, and a LISH marked public there would go out once the switch is turned off again. The switch
+ * is asked for here: the settings may still be loading, and the screens choose once from what this returns.
  */
 export async function getUsableNetworks(): Promise<LISHNetworkConfig[]> {
-	const nets = await getNetworks();
-	return get(privateOnly) ? nets.filter(n => n.overlay) : nets;
+	const [nets, sealed] = await Promise.all([getNetworks(), api.settings.get<boolean | undefined>('network.privateOnly')]);
+	privateOnly.set(sealed === true);
+	return sealed === true ? nets.filter(n => n.overlay) : nets;
 }
 
 export async function getNetworkByID(networkID: string): Promise<LISHNetworkConfig | undefined> {

@@ -48,8 +48,10 @@
 	let endingSoon = $derived(!!status?.certificate && !expired && Date.parse(status.certificate.notAfter) - Date.now() <= MEMBER_RENEWAL_WINDOW_MS);
 	/** A member out of the lishnet (revoked or expired), or about to be, asks again the same way as the first time. */
 	let canRequest = $derived(!!status && (!status.request || !!status.renewalRefused) && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired || endingSoon))));
-	/** Out of the lishnet, a new invite from the founder is the simple way back in. */
-	let canRejoin = $derived(!!status && !founder && !status.invite && (status.role === 'none' || !!status.certificate?.revoked || expired));
+	/** Out of the lishnet, a new invite from the founder is the simple way back in; so it is after one that ran out or was refused. */
+	let canRejoin = $derived(!!status && !founder && (!status.invite || status.invite.state === 'expired' || status.invite.state === 'refused') && (status.role === 'none' || !!status.certificate?.revoked || expired));
+	/** Addresses, hosts and the offer to serve as one: what a member needs only now and then. */
+	let advanced = $state(false);
 	// A renewal asks as the last request did.
 	$effect(() => {
 		const last = status?.request ?? status?.lastRequest;
@@ -213,7 +215,12 @@
 				{#if canRejoin}
 					<Button icon="/img/link.svg" label={$t('settings.lishNetwork.protected.joinByInvite')} onConfirm={() => invitePage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.joinByInvite')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
 				{/if}
-				<Button icon="/img/key.svg" label={founder ? $t('settings.lishNetwork.protected.backupCA') : $t('settings.lishNetwork.protected.restoreCA')} onConfirm={() => keyPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.caKey')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
+				{#if !founder}
+					<Button icon="/img/info.svg" label={$t('settings.lishNetwork.protected.advanced')} onConfirm={() => (advanced = !advanced)} padding="1vh 1.5vh" fontSize="1.6vh" />
+				{/if}
+				{#if founder || advanced}
+					<Button icon="/img/key.svg" label={founder ? $t('settings.lishNetwork.protected.backupCA') : $t('settings.lishNetwork.protected.takeOverCA')} onConfirm={() => keyPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.caKey')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
+				{/if}
 			</ButtonBar>
 			{#if error}
 				<Alert type="error" message={error} />
@@ -254,10 +261,12 @@
 						<TableCell><span class="value" data-testid="overlay-role">{$t(`settings.lishNetwork.protected.role${status.role === 'founder' ? 'Founder' : status.role === 'member' ? 'Member' : 'None'}`)}</span></TableCell>
 					</TableRow>
 					{#if status.certificate}
-						<TableRow>
-							<TableCell><span class="label">{$t('settings.lishNetwork.protected.address')}</span></TableCell>
-							<TableCell><span class="value mono">{status.certificate.vpnIP}</span></TableCell>
-						</TableRow>
+						{#if founder || advanced}
+							<TableRow>
+								<TableCell><span class="label">{$t('settings.lishNetwork.protected.address')}</span></TableCell>
+								<TableCell><span class="value mono">{status.certificate.vpnIP}</span></TableCell>
+							</TableRow>
+						{/if}
 						<TableRow>
 							<!-- Both ends: a wrong clock on this computer shows as a validity that has not started or already ended. -->
 							<TableCell><span class="label">{$t('settings.lishNetwork.protected.validity')}</span></TableCell>
@@ -268,28 +277,32 @@
 							<TableCell><span class="value">{online ? $t('settings.lishNetwork.protected.running') : $t('settings.lishNetwork.protected.notRunning')} · {tt('settings.lishNetwork.protected.peers', { relay: String(relayed), direct: String(direct) })}</span></TableCell>
 						</TableRow>
 					{/if}
-					<TableRow>
-						<TableCell><span class="label">{$t('settings.lishNetwork.protected.hosts')}</span></TableCell>
-						<TableCell>
-							{#if status.hosts.length === 0}
-								<span class="value">{$t('settings.lishNetwork.protected.noHosts')}</span>
-							{/if}
-							{#each status.hosts as host (host.role + host.vpnIP)}
-								<div class="host">
-									<Icon img={host.connected ? '/img/check.svg' : '/img/cross.svg'} size="2vh" padding="0" colorVariable={host.connected ? '--color-success' : '--secondary-foreground'} alt={host.connected ? $t('settings.lishNetwork.protected.hostConnected') : $t('settings.lishNetwork.protected.hostDisconnected')} />
-									<span class="value">{$t(`settings.lishNetwork.protected.${host.role}`)}: <span class="mono">{host.addr}</span> ({host.vpnIP}){host.self ? ` · ${$t('settings.lishNetwork.protected.self')}` : ''}</span>
-								</div>
-							{/each}
-						</TableCell>
-					</TableRow>
+					{#if founder || advanced}
+						<TableRow>
+							<TableCell><span class="label">{$t('settings.lishNetwork.protected.hosts')}</span></TableCell>
+							<TableCell>
+								{#if status.hosts.length === 0}
+									<span class="value">{$t('settings.lishNetwork.protected.noHosts')}</span>
+								{/if}
+								{#each status.hosts as host (host.role + host.vpnIP)}
+									<div class="host">
+										<Icon img={host.connected ? '/img/check.svg' : '/img/cross.svg'} size="2vh" padding="0" colorVariable={host.connected ? '--color-success' : '--secondary-foreground'} alt={host.connected ? $t('settings.lishNetwork.protected.hostConnected') : $t('settings.lishNetwork.protected.hostDisconnected')} />
+										<span class="value">{$t(`settings.lishNetwork.protected.${host.role}`)}: <span class="mono">{host.addr}</span> ({host.vpnIP}){host.self ? ` · ${$t('settings.lishNetwork.protected.self')}` : ''}</span>
+									</div>
+								{/each}
+							</TableCell>
+						</TableRow>
+					{/if}
 				</Table>
 				{#if canRequest}
 					<div role="group" data-mouse-activate-area={areaID}>
 						<Input bind:value={name} label={$t('settings.lishNetwork.protected.yourName')} position={[0, 1]} />
 					</div>
-					<div role="group" data-mouse-activate-area={areaID}>
-						<Input bind:value={infraAddr} label={$t('settings.lishNetwork.protected.infraAddr')} placeholder="203.0.113.7:4242" position={[0, 2]} />
-					</div>
+					{#if advanced || infraAddr}
+						<div role="group" data-mouse-activate-area={areaID}>
+							<Input bind:value={infraAddr} label={$t('settings.lishNetwork.protected.infraAddr')} placeholder="203.0.113.7:4242" position={[0, 2]} />
+						</div>
+					{/if}
 					<ButtonBar basePosition={[0, 3]}>
 						<Button icon="/img/key.svg" label={$t(`settings.lishNetwork.protected.${inLishnet ? 'requestRenewal' : 'requestAccess'}`)} disabled={busy} onConfirm={requestAccess} />
 					</ButtonBar>

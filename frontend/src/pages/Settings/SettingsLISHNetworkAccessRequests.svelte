@@ -35,6 +35,7 @@
 	let days = $state(DEFAULT_DAYS);
 	let lighthouse = $state(false);
 	let relay = $state(false);
+	let heldRoles = $state<OverlayRole[]>([]);
 	let issued = $state<{ name: string; certificate: string; byInvite: boolean; renewal: boolean } | null>(null);
 
 	function approvedText(i: { byInvite: boolean; renewal: boolean }): string {
@@ -80,12 +81,21 @@
 	const navHandle = createNavArea(() => ({ areaID, position, onBack, activate: true }));
 	const decidePage = createSubPage(navHandle, () => areaID);
 
-	function openRequest(request: OverlayPendingRequest): void {
+	async function openRequest(request: OverlayPendingRequest): Promise<void> {
+		// A member renewing keeps the roles it holds unless they are switched off: an approval without them takes them away.
+		let held: OverlayRole[] = [];
+		try {
+			held = (await api.overlay.listMembers(network.networkID)).filter(m => m.peerID === request.peerID && !m.revoked).flatMap(m => m.roles);
+		} catch (e) {
+			addNotification(translateError(e), 'error');
+			return;
+		}
 		selected = request;
 		issued = null;
 		days = DEFAULT_DAYS;
-		lighthouse = false;
-		relay = false;
+		heldRoles = held;
+		lighthouse = held.includes('lighthouse');
+		relay = held.includes('relay');
 		decidePage.enter(request.name, () => void closeRequest());
 	}
 
@@ -185,6 +195,9 @@
 				<div role="group" data-mouse-activate-area={areaID}>
 					<Input bind:value={days} type="number" min={1} max={3650} label={$t('settings.lishNetwork.protected.validDays')} position={[0, 0]} />
 				</div>
+				{#if heldRoles.length > 0}
+					<Alert type={(heldRoles.includes('lighthouse') && !lighthouse) || (heldRoles.includes('relay') && !relay) ? 'warning' : 'info'} message={$t('settings.lishNetwork.protected.rolesKept')} />
+				{/if}
 				{#if selected.infraAddr}
 					<div role="group" data-mouse-activate-area={areaID}>
 						<SwitchRow label={$t('settings.lishNetwork.protected.roleLighthouse') + ':'} checked={lighthouse} position={[0, 1]} onToggle={() => (lighthouse = !lighthouse)} />
@@ -222,7 +235,7 @@
 						<TableCell>{$t('settings.lishNetwork.protected.colOffer')}</TableCell>
 					</TableHeader>
 					{#each requests as request, i (request.id)}
-						<TableRow position={[0, i + 2]} onConfirm={() => openRequest(request)}>
+						<TableRow position={[0, i + 2]} onConfirm={() => void openRequest(request)}>
 							<TableCell>{request.name}</TableCell>
 							<TableCell><span class="mono">{shortenPeerID(request.peerID)}</span></TableCell>
 							<TableCell><span class="mono">{request.infraAddr ?? '—'}</span></TableCell>
