@@ -232,6 +232,25 @@ test('a download of a stored protected LISH runs on its lishnet whatever lishnet
 	}
 });
 
+/** A `download <lishPath>` moved to another lishnet was stopped and never started again: it had no "enabled" flag. */
+test('a download started from a .lish file goes on in the lishnet its scope moves to', async () => {
+	const w = world('cli-moved', []);
+	const lishPath = join(tmpdir(), `cli-moved-${Date.now()}.lish`);
+	await writeFile(lishPath, JSON.stringify({ id: 'cli-moved', name: 'download', files: [] }));
+	try {
+		await w.handlers.download({ networkID: 'public', lishPath }, undefined);
+		await w.started(1);
+		expect(w.used[0]?.node).toBe(w.nodes.get('public'));
+		initLISHScopes(new Map([['cli-moved', ['net-b']]]), () => {});
+		await w.handlers.rehomeDownload('cli-moved');
+		await w.started(2);
+		expect(w.used[1]?.node).toBe(w.nodes.get('net-b'));
+	} finally {
+		await rm(lishPath, { force: true });
+		await w.cleanup();
+	}
+});
+
 /** A protected lishnet joined again runs on a new node; the download held on to the stopped one. */
 test("a download follows its protected lishnet's new node", async () => {
 	const w = world('new-node', ['net-b']);

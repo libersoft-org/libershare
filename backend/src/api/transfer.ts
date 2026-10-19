@@ -668,7 +668,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const dl = activeDownloaders.get(lishID);
 		const suspended = networkSuspended.has(lishID);
 		if (dl ? onRightNode(lishID, dl) : !suspended) return;
-		const wanted = downloadEnabledLishs.has(lishID) || suspended;
+		// A download started with `download <lishPath>` runs without the stored "enabled" flag: running counts too.
+		const wanted = downloadEnabledLishs.has(lishID) || suspended || (dl !== undefined && !dl.isDisabled());
 		if (dl) {
 			await dl.destroy();
 			if (activeDownloaders.get(lishID) === dl) activeDownloaders.delete(lishID);
