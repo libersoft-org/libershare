@@ -83,6 +83,11 @@ export interface FounderData {
 	lanes?: number[];
 	/** Invites not yet expired. */
 	invites?: FounderInvite[];
+	/**
+	 * Certificates issued on a renewal handed in over the lishnet, by peer ID, sent out again every minute for a while:
+	 * the member may be offline when it is approved. `requestCreated` ties one to the request it answers.
+	 */
+	renewals?: Record<string, { bundle: OverlayCertificateBundle; requestCreated: string; issued: string }>;
 }
 
 /** A network ID is used as a directory name, so it must not be able to name anything but one directory. */

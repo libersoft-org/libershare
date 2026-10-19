@@ -139,6 +139,80 @@ describe('invite delivery — invited node', () => {
 	});
 });
 
+/** A member renews over the lishnet itself: its request goes to the founder and the certificate comes back the same way. */
+describe('renewal over the lishnet', () => {
+	async function founderSetup() {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-renewal-'));
+		const sent: any[] = [];
+		const events: string[] = [];
+		const access = new OverlayAccess({
+			nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), broadcastAccess: async (_id: string, message: any) => (sent.push(message), true) } as any,
+			getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+			addNetwork: async () => {},
+			listOverlayIDs: () => [],
+			refresh: async () => {},
+			emit: event => void events.push(event),
+		});
+		const store = new OverlayStore(dir, NET);
+		await store.ensureDir();
+		await store.writeText('ca.key', 'key');
+		// Ends in ten days: the renewal makes it longer.
+		await store.writeJSON('founder.json', { nextHost: 2, lane: 0, members: [{ name: 'm', peerID: b58('A'), vpnIP: '100.64.0.7', roles: [], notAfter: new Date(Date.now() + 10 * 86_400_000).toISOString(), fingerprint: 'a'.repeat(64), issued: '', revoked: false }], requests: [] });
+		return { dir, access, store, sent, events };
+	}
+
+	// Renewing meant copying JSON by hand both ways, though the member is in the lishnet already.
+	it('queues a renewal only from the member it names, once, and sends its certificate back', async () => {
+		const f = await founderSetup();
+		const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (...args: unknown[]) => ({ cert: 'renewed', fingerprint: 'c'.repeat(64), notAfter: args[5] as string }));
+		try {
+			// Signed by another node, or by a node that is no member: ignored.
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('B'));
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('B')) }, b58('B'));
+			expect((await f.store.readFounder()).requests).toHaveLength(0);
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('A'));
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('A'));
+			const queued = (await f.store.readFounder()).requests;
+			expect(queued.map(r => r.renewal)).toEqual([true]);
+			expect(f.events).toEqual(['overlay:request']);
+			const bundle = await f.access.approve(NET, queued[0]!.id);
+			expect(f.sent).toEqual([{ type: 'overlayCertificate', peerID: b58('A'), requestCreated: '2026-01-01T00:00:00Z', bundle }]);
+			// Sent again every minute for a member that was offline when it was approved.
+			await f.access.repeatAccess(NET);
+			expect(f.sent).toHaveLength(2);
+		} finally {
+			issue.mockRestore();
+			await rm(f.dir, { recursive: true, force: true });
+		}
+	});
+
+	it('takes the certificate for its own pending request only', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-renewed-'));
+		const imported: unknown[] = [];
+		const take = spyOn(OverlayAccess.prototype, 'importCertificate').mockImplementation(async (bundle: unknown) => (imported.push(bundle), {}) as any);
+		try {
+			const access = new OverlayAccess({
+				nodes: { store: (id: string) => new OverlayStore(dir, id) } as any,
+				getRow: () => undefined,
+				addNetwork: async () => {},
+				listOverlayIDs: () => [],
+				refresh: async () => {},
+				emit: () => {},
+			});
+			const store = new OverlayStore(dir, NET);
+			await store.ensureDir();
+			await store.writeJSON('request.json', request(b58('A')));
+			await access.onAccessMessage(NET, { type: 'overlayCertificate', peerID: b58('B'), requestCreated: '2026-01-01T00:00:00Z', bundle: 'other' }, b58('F'));
+			await access.onAccessMessage(NET, { type: 'overlayCertificate', peerID: b58('A'), requestCreated: '2025-01-01T00:00:00Z', bundle: 'older' }, b58('F'));
+			await access.onAccessMessage(NET, { type: 'overlayCertificate', peerID: b58('A'), requestCreated: '2026-01-01T00:00:00Z', bundle: 'mine' }, b58('F'));
+			expect(imported).toEqual(['mine']);
+		} finally {
+			take.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('invite text', () => {
 	it('round-trips and rejects anything that is not an invite', () => {
 		const invite: OverlayInvite = { type: 'lish-overlay-invite', id: INVITE, network: { networkID: NET, name: 'Síť', description: '', bootstrapPeers: [], overlay: { type: 'nebula', caCert: '-----BEGIN NEBULA CERTIFICATE V2-----\nAA\n-----END NEBULA CERTIFICATE V2-----\n', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }, founder: '100.64.0.1', cert: '-----BEGIN NEBULA CERTIFICATE V2-----\nBB\n-----END NEBULA CERTIFICATE V2-----\n', key: '-----BEGIN NEBULA X25519 PRIVATE KEY-----\nCC\n-----END NEBULA X25519 PRIVATE KEY-----\n', expires: '2099-01-01T00:00:00Z' };

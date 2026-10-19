@@ -102,6 +102,8 @@ export interface OverlayPendingRequest extends OverlayAccessRequest {
 	received: string;
 	/** The invite it came through; its certificate then goes back the same way. */
 	invite?: string;
+	/** A member's renewal, handed in over the lishnet itself; its certificate goes back the same way. */
+	renewal?: boolean;
 }
 
 /**

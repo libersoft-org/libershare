@@ -50,6 +50,10 @@ export interface OverlayNodesDeps {
 	onNodeReplaced?(networkID: string): void;
 	/** A connection from an invite's guest reached this node: serve it (true) or leave it to libp2p (false). */
 	serveGuest?(networkID: string, socket: Socket, remoteIP: string): Promise<boolean>;
+	/** A message of the access exchange ({@link broadcastAccess}) arrived from the signed author `from`. */
+	onAccessMessage?(networkID: string, message: Record<string, any>, from: string | undefined): Promise<void>;
+	/** Runs every {@link STATE_REPUBLISH_MS} on a running lishnet: the access exchange repeats what may have been missed. */
+	onRepublish?(networkID: string): Promise<void>;
 }
 
 interface RunningOverlay {
@@ -315,7 +319,7 @@ export class OverlayNodes {
 				const node = entry.network.getNodeInfo();
 				if (node && node.peerID !== cert.name) console.warn(`[Overlay ${row.networkID.slice(0, 8)}] node identity ${node.peerID} differs from the certificate name ${cert.name}`);
 				if (!entry.network.subscribeTopic(row.networkID)) throw new Error('could not subscribe the lishnet topic');
-				await entry.network.subscribe(stateTopic(row.networkID), message => void this.onStateMessage(row.networkID, message));
+				await entry.network.subscribe(stateTopic(row.networkID), (message, from) => void this.onStateMessage(row.networkID, message, from));
 			} catch (err) {
 				// A helper that died meanwhile has a restart scheduled, for an entry nothing would ever stop.
 				entry.stopped = true;
@@ -331,6 +335,7 @@ export class OverlayNodes {
 				void this.publishState(row.networkID, true);
 				const applied = entry.unapplied ? this.reconfigure(row.networkID) : this.followInfraAddresses(row.networkID).then(() => this.sweepRevokedPeers(row.networkID));
 				void applied.catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] reconfiguration failed: ${err?.message ?? err}`));
+				void this.deps.onRepublish?.(row.networkID).catch(err => console.warn(`[Overlay ${row.networkID.slice(0, 8)}] access exchange: ${err?.message ?? err}`));
 			}, STATE_REPUBLISH_MS);
 			this.running.set(row.networkID, entry);
 			const bootstrap = this.bootstrapPeers(row, overlay, cert.name);
@@ -468,7 +473,19 @@ export class OverlayNodes {
 		});
 	}
 
-	private async onStateMessage(networkID: string, message: any): Promise<void> {
+	/** Send a message of the access exchange (a renewal, its certificate) on the lishnet's state topic; false when not running. */
+	async broadcastAccess(networkID: string, message: Record<string, unknown>): Promise<boolean> {
+		const entry = this.running.get(networkID);
+		if (!entry) return false;
+		await entry.network.broadcast(stateTopic(networkID), message).catch(() => {});
+		return true;
+	}
+
+	private async onStateMessage(networkID: string, message: any, from?: string): Promise<void> {
+		if (message?.type === 'overlayRenewal' || message?.type === 'overlayCertificate') {
+			await this.deps.onAccessMessage?.(networkID, message, from).catch(err => console.warn(`[Overlay ${networkID.slice(0, 8)}] access exchange: ${err?.message ?? err}`));
+			return;
+		}
 		if (message?.type !== 'overlayState') return;
 		await this.acceptState(networkID, message.signed).catch(err => console.warn(`[Overlay ${networkID.slice(0, 8)}] rejected a state: ${err?.message ?? err}`));
 	}

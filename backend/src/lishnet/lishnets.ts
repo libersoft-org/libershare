@@ -293,6 +293,8 @@ export class Networks {
 			onBootstrapStatusChange: (id, status) => this._onBootstrapStatusChange?.(id, status),
 			onStateChange: (id, state) => this._onOverlayEvent?.('overlay:state', { networkID: id, version: state.version }),
 			serveGuest: (id, socket, remoteIP) => this.overlay.serveGuest(id, socket, remoteIP),
+			onAccessMessage: (id, message, from) => this.overlay.onAccessMessage(id, message, from),
+			onRepublish: id => this.overlay.repeatAccess(id),
 			// Still joined, on a new node: the transfer layer moves the lishnet's downloads to it as on a rejoin.
 			onNodeReplaced: id => {
 				try {

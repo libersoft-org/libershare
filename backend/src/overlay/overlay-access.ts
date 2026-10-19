@@ -29,6 +29,8 @@ const MEMBERS_END = '-----END LISH OVERLAY MEMBERS-----';
 const LANE_SIZE = 256;
 const DEFAULT_INVITE_DAYS = 7;
 const MAX_INVITE_DAYS = 30;
+/** How long the founder keeps sending a certificate issued on a renewal ({@link OverlayAccess.repeatAccess}). */
+const RENEWAL_DELIVERY_MS = 7 * 86_400_000;
 /** An invited node asks the founder again this often, while it waits for the tunnel and then for the approval. */
 const INVITE_RETRY_MS = 15_000;
 
@@ -296,7 +298,66 @@ export class OverlayAccess {
 		const request = validateAccessRequest({ type: 'lish-overlay-request', networkID, name, peerID: await this.nodePeerID(networkID, store), publicKey: await this.memberKey(store), ...(infraAddr !== undefined ? { infraAddr } : {}), created: new Date().toISOString() });
 		await store.writeJSON('request.json', request);
 		this.deps.emit('overlay:status', { networkID });
+		// A member asking for a renewal is in the lishnet already: the request goes to the founder through it.
+		void this.sendRenewal(networkID).catch(() => {});
 		return request;
+	}
+
+	/** Member: hand its renewal request to the founder over the lishnet (signed by its node, so it cannot be forged). */
+	private async sendRenewal(networkID: string): Promise<void> {
+		const store = this.deps.nodes.store(networkID);
+		if (store.has('ca.key') || store.has('invite.json')) return;
+		const request = await store.readRequest();
+		if (request) await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayRenewal', request });
+	}
+
+	/**
+	 * Every minute on a running lishnet: a member repeats its renewal request, the founder the certificates it issued on
+	 * renewals in the last {@link RENEWAL_DELIVERY_MS} (a member that was offline when approved picks it up later).
+	 */
+	async repeatAccess(networkID: string): Promise<void> {
+		const store = this.deps.nodes.store(networkID);
+		if (!store.has('ca.key')) return await this.sendRenewal(networkID);
+		const renewals = (await store.readFounder()).renewals ?? {};
+		for (const [peerID, renewal] of Object.entries(renewals)) if (Date.now() - Date.parse(renewal.issued) < RENEWAL_DELIVERY_MS) await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayCertificate', peerID, requestCreated: renewal.requestCreated, bundle: renewal.bundle });
+	}
+
+	/** A message of the access exchange from the lishnet's state topic; `from` is the author gossipsub verified. */
+	async onAccessMessage(networkID: string, message: Record<string, any>, from: string | undefined): Promise<void> {
+		if (message['type'] === 'overlayRenewal') await this.takeRenewal(networkID, message['request'], from);
+		else if (message['type'] === 'overlayCertificate') await this.takeRenewedCertificate(networkID, message);
+	}
+
+	/** Founder: queue a member's renewal; only the member itself can hand in one, and only a member at all. */
+	private async takeRenewal(networkID: string, raw: unknown, from: string | undefined): Promise<void> {
+		const store = this.deps.nodes.store(networkID);
+		if (!store.has('ca.key') || !from) return;
+		const request = validateAccessRequest(raw);
+		if (request.networkID !== networkID || request.peerID !== from) return;
+		const created = await this.founderLock(networkID).runExclusive(async (): Promise<OverlayPendingRequest | null> => {
+			const data = await store.readFounder();
+			if (!data.members.some(m => m.peerID === from && !m.revoked)) return null;
+			// The same request repeated every minute is queued once.
+			if (data.requests.some(r => r.peerID === from && r.created === request.created)) return null;
+			const kept = data.requests.filter(r => r.peerID !== from);
+			if (kept.length >= MAX_PENDING_REQUESTS) return null;
+			const entry: OverlayPendingRequest = { ...request, id: randomUUID(), received: new Date().toISOString(), renewal: true };
+			data.requests = [...kept, entry];
+			await store.writeJSON('founder.json', data);
+			return entry;
+		});
+		if (created) this.deps.emit('overlay:request', created);
+	}
+
+	/** Member: import the certificate issued on its own pending renewal. */
+	private async takeRenewedCertificate(networkID: string, message: Record<string, any>): Promise<void> {
+		const store = this.deps.nodes.store(networkID);
+		if (store.has('ca.key')) return;
+		const request = await store.readRequest();
+		// Only the answer to the request this node is waiting on: an older one would replace a newer certificate.
+		if (!request || message['peerID'] !== request.peerID || message['requestCreated'] !== request.created) return;
+		await this.importCertificate(message['bundle']);
+		console.log(`[Overlay ${networkID.slice(0, 8)}] the renewed certificate came over the lishnet`);
 	}
 
 	/** Founder: take a member's request into the queue. A newer request of the same node replaces its older one. */
@@ -406,7 +467,7 @@ export class OverlayAccess {
 					superseded.map(m => m.fingerprint)
 				);
 			}
-			return { member, cert: cert.cert, invite: request.invite };
+			return { member, cert: cert.cert, invite: request.invite, renewal: request.renewal ? request : undefined };
 		});
 		const state = await store.readState();
 		const bundle: OverlayCertificateBundle = { type: 'lish-overlay-certificate', networkID, certificate: bundleMember.cert, ...(state ? { state } : {}) };
@@ -419,6 +480,17 @@ export class OverlayAccess {
 				invite.bundle = bundle;
 				await store.writeJSON('founder.json', data);
 			});
+		// A renewal handed in over the lishnet gets its certificate over the lishnet: now, and again every minute for a while.
+		const renewal = bundleMember.renewal;
+		if (renewal) {
+			const entry = { bundle, requestCreated: renewal.created, issued: new Date().toISOString() };
+			await this.founderLock(networkID).runExclusive(async () => {
+				const data = await store.readFounder();
+				data.renewals = { ...Object.fromEntries(Object.entries(data.renewals ?? {}).filter(([, r]) => Date.now() - Date.parse(r.issued) < RENEWAL_DELIVERY_MS)), [renewal.peerID]: entry };
+				await store.writeJSON('founder.json', data);
+			});
+			await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayCertificate', peerID: renewal.peerID, requestCreated: entry.requestCreated, bundle });
+		}
 		this.deps.emit('overlay:members', { networkID });
 		return bundle;
 	}
