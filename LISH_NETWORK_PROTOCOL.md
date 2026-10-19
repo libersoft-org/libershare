@@ -316,9 +316,9 @@ A network whose definition carries an `overlay` (see [**LISH network structure f
 3. The founder approves it: a certificate for the request's key, with the next free overlay address, the expiry and optional roles. The answer is `{ type: "lish-overlay-certificate", networkID, certificate, state? }`.
 4. The member imports it. The node checks that the certificate is signed by the network's CA and issued for its own key and peer ID, then joins.
 
-A member may ask for a renewal the same way within 30 days before its certificate ends. While its node runs it needs no channel of its own: it publishes `{ type: "overlayRenewal", request }` on the state topic every minute; the founder's node queues it only when gossipsub's verified author is the request's peer ID and a member. On approval the founder publishes `{ type: "overlayCertificate", peerID, requestCreated, bundle }` and repeats it every minute for 7 days; the member imports only the answer to the request it is waiting on.
+A member may ask for a renewal the same way within 30 days before its certificate ends. While its node runs it needs no channel of its own: it publishes `{ type: "overlayRenewal", request }` on the state topic every minute; the founder's node queues it only when gossipsub's verified author is the request's peer ID and a member, and once only (a decided request is not queued again). The founder's decision goes back the same way and is repeated every minute for 7 days: `{ type: "overlayCertificate", peerID, requestCreated, bundle, signature }` or `{ type: "overlayRefusal", peerID, requestCreated, signature }`. The signature is the CA key's over `"lish-overlay-answer/1\n"` + JSON `[networkID, peerID, requestCreated, sha256(certificate) or null]`, so no other member can pass an older certificate or a refusal off as the answer. The member takes only the signed answer to the request it is waiting on; after a refusal it stops asking and may make a new request.
 
-A renewal that ends sooner than a certificate the member holds revokes the member by peer ID (see below), so a longer certificate another device issued is revoked too.
+Every approval also limits the member's older certificates to the new one's end (see below): the newest decision on how long a member stays holds for a longer certificate too, also one another device holding the CA key issued.
 
 ### Invites
 
@@ -339,7 +339,7 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 {
 	type: 'overlayState',
 	signed: {
-		state: string, // JSON: { networkID, version, lighthouses, relays, revoked: string[] (certificate fingerprints), revokedPeers?: { [peerID]: ISO time } }
+		state: string, // JSON: { networkID, version, lighthouses, relays, revoked: string[] (certificate fingerprints), revokedPeers?: { [peerID]: ISO time }, limits?: { [peerID]: [before, until][] } }
 		signature: string // hex ed25519 signature by the CA key over "lish-overlay-state/1\n" + state
 	}
 }
@@ -357,7 +357,8 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 - Revoking a member revokes every certificate its node holds, not only the one named: an earlier certificate stays valid after a renewal. The state also lists the member's peer ID with the time of the revocation (`revokedPeers`): every certificate with that name and a start of validity before that time is revoked, also one issued by another device holding the CA key.
 - Every node keeps every revocation it has verified in any state; a newer state that lacks one does not lift it.
 - A libp2p connection over the overlay stands only when the certificate of the tunnel it came through names the connecting peer ID and is not revoked.
-- A renewal keeps the member's overlay address. If it ends sooner than a certificate the member still holds, that certificate is revoked in the same state, so a shorter term takes effect at once; the member is cut off until it imports the new certificate.
+- Every approval adds a limit to the state: `limits[peerID]` gets `[before, until]`, the new certificate's start and end. Every certificate with that name and a start of validity before `before` counts as revoked from `until` on. The new certificate starts after every earlier revocation and limit of the member, so a later, longer approval is not bounded by an earlier one. A shorter term thus ends every certificate of the member on the new date, also a longer one another device issued, and a member that was offline still reaches the network with its older certificate to fetch the new one. A limit whose `until` has passed is kept as a revocation of the member at its `before`.
+- A renewal keeps the member's overlay address.
 - A member approved again after a revocation gets a new overlay address.
 - A certificate past its expiry is refused by every node without any state.
 
@@ -368,6 +369,8 @@ Each shared LISH has a scope: the public networks (the default), or a list of pr
 - The public node serves (lists, answers searches and `want`s for, and sends manifests and chunks of) public LISHs only; the node of a protected network serves only the LISHs whose scope names that network. A request for a LISH outside the node's scope is answered as if the LISH were not shared.
 - A LISH added from a protected network's peer gets that network as its scope, so a member never shares it back outside.
 - The scope is set when a LISH is created (`lishs.create`, parameter `scope`) and can be changed with `lishs.setScope`.
+- With the setting `network.privateOnly` no LISH is created, imported or switched to the public scope (`OVERLAY_PRIVATE_ONLY`): the sealed public node would not serve it, but it would once public networks are used again.
+- A search result keeps the network its answer came through: an answer on a protected network's node is a result of that network, even when the same peer ID is on a public network too.
 
 ### Addresses
 
@@ -375,14 +378,14 @@ Each shared LISH has a scope: the public networks (the default), or a list of pr
 - A member exchanges packets only with the network's lighthouses and relays (`lighthouse.remote_allow_list`), so it never sends a packet to an address another member could have planted.
 - With the definition's `lanDirect`, members behind the same public address are told each other's LAN addresses and connect directly.
 - The public addresses of members are known to the lighthouses and relays the founder chose, and to nobody else.
+- Overlay addresses are handed out in lanes of 256. The founding device may use every lane but the last (the guest block); each CA key backup hands the top sixteenth of its lanes (at least one) to the device that restores it, so two devices holding the CA key never give two members one address. A device whose lanes are full takes the next lane of its own range, and reports the addresses exhausted when none is left. Restoring one backup on two devices, or a subnet smaller than `/23`, gives no such guarantee.
 
 ### Limitations
 
 - The CA key is the network: whoever holds it can admit anyone. A leaked key can only be answered with a new network.
 - Lighthouses and relays see the public addresses of the members who use them. Members with such a role see them too.
 - A member can still change a LISH's scope to public on purpose; the protocol cannot stop a member from copying what it received.
-- The signed state has no expiry. A part of the network cut off from every node that holds a newer state keeps the older one, and does not learn of a revocation until it reconnects.
-- An invite is a secret until it expires: whoever holds it can hand in a request (the founder still decides). It cannot be withdrawn before it expires; rejecting its request ends it.
+- The signed state has no expiry. A part of the network cut off from every node that holds a newer state keeps the older one, and does not learn of a revocation until it reconnects.- An invite is a secret until it expires: whoever holds it can hand in a request (the founder still decides). It cannot be withdrawn before it expires; rejecting its request ends it.
 - A guest can complete a Nebula handshake with a member (through a relay) and so learn that member's overlay address and certificate name (its peer ID in the lishnet), though the member's firewall then drops all its traffic.
 - Lighthouses and relays given by host name are resolved through the system's DNS; give them as IP addresses to avoid any lookup.
 - Transfers are encrypted (Nebula and libp2p Noise); files, the database and an exported CA key backup are stored unencrypted.
