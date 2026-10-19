@@ -244,6 +244,24 @@ describe('protected lishnet on loopback', () => {
 		for (const addr of info.addresses!) expect(addr).toContain(`/ip4/${status.certificate!.vpnIP}/`);
 	}, 150_000);
 
+	// Renewing took JSON copied by hand both ways, though the member is in the lishnet already.
+	it('a member renews over the lishnet: the request and the certificate travel by themselves', async () => {
+		const held = (await bob.api.overlay.status(network.networkID)).certificate!;
+		await bob.api.overlay.requestAccess(network.networkID, 'Bob');
+		const pending = await until('the renewal reaches the founder', async () => (await founder.api.overlay.listRequests(network.networkID)).find(r => r.renewal && r.name === 'Bob'), 90_000);
+		await founder.api.overlay.approve(network.networkID, pending.id, { validUntil: new Date(Date.now() + 400 * 86_400_000).toISOString() });
+		const renewed = await until(
+			'bob takes the renewed certificate',
+			async () => {
+				const s = await bob.api.overlay.status(network.networkID);
+				return s.certificate && s.certificate.fingerprint !== held.fingerprint && !s.request ? s : null;
+			},
+			90_000
+		);
+		expect(renewed.certificate!.vpnIP).toBe(held.vpnIP);
+		expect(renewed.certificate!.revoked).toBe(false);
+	}, 200_000);
+
 	it('a renewal that ends sooner revokes the longer certificate it replaces', async () => {
 		const held = (await bob.api.overlay.status(network.networkID)).certificate!;
 		const request = await bob.api.overlay.requestAccess(network.networkID, 'Bob');
