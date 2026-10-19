@@ -492,9 +492,21 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['networkID', 'lishPath']);
 		const network = networks.networkFor(p.networkID);
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
-		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
+		let downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
 		await downloader.init(p.lishPath);
 		const lishID = downloader.getLISHID();
+		// A LISH already stored for protected lishnets downloads on their node, whichever lishnet the caller named
+		// (the CLI names the first enabled one): asking a public lishnet for it would tell it what this member wants.
+		const target = downloadNode(lishID, [p.networkID]);
+		if (!target) {
+			await downloader.destroy();
+			throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, `none of the protected lishnets of ${lishID} is joined`);
+		}
+		if (isPublicNode(target.node) ? !isPublicNode(network) : target.node !== network) {
+			await downloader.destroy();
+			downloader = new Downloader(downloadDir, target.node, dataServer, target.networkIDs);
+			await downloader.init(p.lishPath);
+		}
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
 

@@ -1,5 +1,7 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
+import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CodedError, ErrorCodes } from '@shared';
 import { initDownloadState, initTransferHandlers, removeDownloadState } from '../../../src/api/transfer.ts';
 import { initLISHScopes, initUploadState } from '../../../src/protocol/lish-protocol.ts';
@@ -178,6 +180,22 @@ test('a download moves to its lishnet when its scope changes', async () => {
 		expect(w.used[1]?.node).toBe(w.nodes.get('net-b'));
 		expect(w.used[1]?.downloader.getNetworkIDs()).toEqual(['net-b']);
 	} finally {
+		await w.cleanup();
+	}
+});
+
+/** `download <lishPath>` names the first enabled lishnet: a public one asked the public lishnet for a protected LISH. */
+test('a download of a stored protected LISH runs on its lishnet whatever lishnet the caller names', async () => {
+	const w = world('cli-scoped', ['net-b']);
+	const lishPath = join(tmpdir(), `cli-scoped-${Date.now()}.lish`);
+	await writeFile(lishPath, JSON.stringify({ id: 'cli-scoped', name: 'download', files: [] }));
+	try {
+		await w.handlers.download({ networkID: 'public', lishPath }, undefined);
+		await w.started(1);
+		expect(w.used[0]?.node).toBe(w.nodes.get('net-b'));
+		expect(w.used[0]?.downloader.getNetworkIDs()).toEqual(['net-b']);
+	} finally {
+		await rm(lishPath, { force: true });
 		await w.cleanup();
 	}
 });
