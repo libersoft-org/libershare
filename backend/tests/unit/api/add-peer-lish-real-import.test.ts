@@ -80,7 +80,7 @@ beforeAll(async () => {
 		settings
 	);
 	const networks = {
-		get: () => undefined,
+		get: () => ({ networkID: 'net-1' }),
 		networkFor(this: any) {
 			return this.getRunningNetwork();
 		},

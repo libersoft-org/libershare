@@ -292,8 +292,11 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		// Decided before the manifest is on its way: a protected lishnet deleted meanwhile is no longer found, and its
-		// content would be stored public.
-		const fromProtected = networks.get(p.networkID)?.overlay !== undefined;
+		// content would be stored public. A lishnet whose row is already gone (a deletion still stopping its node) is
+		// refused outright; the node the request goes through counts as well as the row.
+		const row = networks.get(p.networkID);
+		if (!row) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
+		const fromProtected = row.overlay !== undefined || networks.networkFor(p.networkID).lishScope === p.networkID;
 		let manifest;
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);

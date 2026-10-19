@@ -41,7 +41,7 @@ function heldStream(): { stream: any; deliver: () => void } {
 
 function makeHandlers(gate: LISHMutationGate, importManifest: (...args: any[]) => Promise<any>, stream: any): ReturnType<typeof initLISHnetsHandlers> {
 	const networks = {
-		get: () => undefined,
+		get: () => ({ networkID: 'net-1' }),
 		networkFor(this: any) {
 			return this.getRunningNetwork();
 		},
@@ -114,6 +114,31 @@ describe('adding a peer LISH while a factory reset closes the gate', () => {
 		protectedRow = undefined;
 		held.deliver();
 		await expect(adding).rejects.toThrow();
+		expect(imported).toEqual([]);
+	});
+
+	// A deletion had already removed the row but was still stopping the node: the request went through the protected
+	// node, its origin was judged from the missing row, and the content was stored public.
+	it('refuses to take a LISH from a lishnet whose row is already gone', async () => {
+		const held = heldStream();
+		held.deliver();
+		const imported: unknown[] = [];
+		const networks = {
+			get: () => undefined,
+			networkFor: () => ({ lishScope: 'net-p', dialProtocolByPeerId: async () => ({ stream: held.stream }) }),
+			protectedNodes: () => [],
+			getRunningNetwork: () => ({}),
+		} as never;
+		const handlers = initLISHnetsHandlers(
+			networks,
+			{} as never,
+			() => {},
+			{ get: () => undefined } as never,
+			(async (_lish: IStoredLISH, _dir: string, opts: unknown) => (imported.push(opts), { lishID: MANIFEST.id })) as never,
+			async <T>(operation: () => Promise<T>): Promise<T> => operation(),
+			new AbortController().signal
+		);
+		await expect(handlers.addPeerLish({ lishID: MANIFEST.id, peerID: 'peer-1', networkID: 'net-p' })).rejects.toThrow();
 		expect(imported).toEqual([]);
 	});
 
