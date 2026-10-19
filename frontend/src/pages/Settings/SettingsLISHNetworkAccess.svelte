@@ -268,13 +268,13 @@
 						<ButtonBar basePosition={[0, 2]}>
 							<Button icon="/img/copy.svg" label={$t('settings.lishNetwork.protected.copy')} onConfirm={() => copyToClipboard(requestJSON, $t('settings.lishNetwork.protected.copied'))} />
 						</ButtonBar>
+						<div role="group" data-mouse-activate-area={areaID}>
+							<Input bind:value={certificate} label={$t('settings.lishNetwork.protected.certificateText')} multiline rows={4} fontSize="1.6vh" fontFamily="var(--font-mono)" placeholder={'{"type": "lish-overlay-certificate", ...}'} position={[0, 3]} />
+						</div>
+						<ButtonBar basePosition={[0, 4]}>
+							<Button icon="/img/import.svg" label={$t('settings.lishNetwork.protected.importCertificate')} disabled={busy || !certificate.trim()} onConfirm={importCertificate} />
+						</ButtonBar>
 					{/if}
-					<div role="group" data-mouse-activate-area={areaID}>
-						<Input bind:value={certificate} label={$t('settings.lishNetwork.protected.certificateText')} multiline rows={4} fontSize="1.6vh" fontFamily="var(--font-mono)" placeholder={'{"type": "lish-overlay-certificate", ...}'} position={[0, 3]} />
-					</div>
-					<ButtonBar basePosition={[0, 4]}>
-						<Button icon="/img/import.svg" label={$t('settings.lishNetwork.protected.importCertificate')} disabled={busy || !certificate.trim()} onConfirm={importCertificate} />
-					</ButtonBar>
 				{/if}
 			{/if}
 		</div>
