@@ -725,6 +725,9 @@ export class OverlayAccess {
 		await this.ensureOwnMembership(networkID);
 		// A node already running keeps its old blocklist otherwise: the backup's revocations apply now, not with the next state.
 		await this.deps.nodes.reconfigure(networkID);
+		// An open tunnel of a member the backup revokes may run on a certificate the backup does not list (issued by another
+		// device): it is found and blocked now, not with the next periodic sweep a minute later.
+		await this.deps.nodes.sweepRevokedPeers(networkID);
 		this.deps.emit('overlay:status', { networkID });
 	}
 
