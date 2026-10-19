@@ -421,9 +421,11 @@ export class OverlayAccess {
 			await store.writeJSON('founder.json', data);
 		});
 		// A clean device has no certificate of its own, and the screens offer a founder no request to make: it signs
-		// its own membership here, so it can join its lishnet as well as approve others.
+		// its own membership here, so it can join its lishnet as well as approve others. So does a device whose
+		// certificate expired or was revoked.
 		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
-		if (!own) {
+		const revoked = own ? ((await this.deps.nodes.currentState(networkID, overlay))?.revoked.includes(own.fingerprint) ?? false) : false;
+		if (!own || revoked || Date.parse(own.notAfter) <= Date.now()) {
 			const { row } = this.overlayOf(networkID);
 			await this.importCertificate(await this.issue(await this.requestAccess(networkID, row.name.slice(0, 64))));
 		}
