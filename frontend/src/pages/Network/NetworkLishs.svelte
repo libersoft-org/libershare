@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { t } from '../../scripts/language.ts';
-	import { type LishSearchResult } from '@shared';
+	import { type LishSearchResult, type LISHNetworkConfig } from '@shared';
+	import { getNetworks } from '../../scripts/lishNetwork.ts';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
 	import { networkSummary } from '../../scripts/networks.ts';
@@ -20,6 +21,8 @@
 		onOpenLishPeers: (row: LishSearchResult) => void;
 	}
 	let { baseY, search, onOpenLishPeers }: Props = $props();
+	const PUBLIC = 'public';
+	const EVERYWHERE = 'everywhere';
 
 	// Elapsed-time progress of the current search window. The backend ends a search after
 	// `network.searchTimeout` ms and emits `search:lishs:complete`; we drive the bar from the
@@ -51,6 +54,24 @@
 	let searchTimeText = $derived.by((): string => {
 		if (!search.searching || search.startedAt === null || $searchTimeout <= 0) return '';
 		return `${Math.floor(searchElapsed / 1000)} s / ${Math.round($searchTimeout / 1000)} s`;
+	});
+
+	// Where to search: the query tells every lishnet it reaches what this user looks for, so with protected lishnets
+	// joined it goes to one place at a time — the public lishnets first, a protected one or everywhere when chosen.
+	let networks = $state<LISHNetworkConfig[]>([]);
+	let place = $state<string>('');
+	onMount(() => {
+		getNetworks()
+			.then(list => {
+				networks = list.filter(n => n.enabled);
+				const hasPublic = networks.some(n => !n.overlay);
+				place = networks.some(n => n.overlay) ? (hasPublic ? PUBLIC : networks.find(n => n.overlay)!.networkID) : EVERYWHERE;
+			})
+			.catch(() => {});
+	});
+	let protectedNets = $derived(networks.filter(n => n.overlay));
+	$effect(() => {
+		search.networkIDs = place === EVERYWHERE || place === '' ? null : place === PUBLIC ? networks.filter(n => !n.overlay).map(n => n.networkID) : [place];
 	});
 
 	function handleStart(): void {
@@ -115,8 +136,18 @@
 <div class="filters">
 	<Input bind:value={search.query} placeholder={$t('network.searchLishsPlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, baseY]} flex />
 	<Button icon="/img/search.svg" label={$t('common.search')} onConfirm={handleStart} position={[1, baseY]} width="auto" disabled={search.searching || search.query.trim().length === 0} />
+	{#if protectedNets.length > 0}
+		<span class="search-status">{$t('network.searchIn')}:</span>
+		{#if networks.some(n => !n.overlay)}
+			<Button label={$t('network.searchPublic')} active={place === PUBLIC} onConfirm={() => (place = PUBLIC)} position={[2, baseY]} width="auto" />
+		{/if}
+		{#each protectedNets as net, i}
+			<Button icon="/img/lock.svg" label={net.name} active={place === net.networkID} onConfirm={() => (place = net.networkID)} position={[3 + i, baseY]} width="auto" />
+		{/each}
+		<Button label={$t('network.searchEverywhere')} active={place === EVERYWHERE} onConfirm={() => (place = EVERYWHERE)} position={[3 + protectedNets.length, baseY]} width="auto" />
+	{/if}
 	{#if search.searching}
-		<Button icon="/img/cross.svg" label={$t('common.cancel')} onConfirm={handleCancel} position={[2, baseY]} width="auto" />
+		<Button icon="/img/cross.svg" label={$t('common.cancel')} onConfirm={handleCancel} position={[4 + protectedNets.length, baseY]} width="auto" />
 	{/if}
 </div>
 {#if search.error}
