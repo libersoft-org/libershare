@@ -3,6 +3,9 @@ import { type LISHOverlayDefinition, type LISHOverlayHost } from '@shared';
 
 /** TCP port of every lishnet node inside its overlay. Each overlay has its own netstack, so one port fits all. */
 export const OVERLAY_LIBP2P_PORT = 9090;
+/** Certificate group of an invite's guest ({@link OverlayInvite}); its name is `guest-<invite ID>`. */
+export const GUEST_GROUP = 'guest';
+export const GUEST_NAME_PREFIX = 'guest-';
 /**
  * UDP socket buffers of every node. With the OS defaults a relay dropped hundreds of thousands of packets in fast
  * transfers, and a receiving member tens of thousands (measured: one 256 MiB download through a relay stalled for
@@ -25,6 +28,8 @@ export interface NebulaConfigInput {
 	revoked: string[];
 	/** Underlay IPv4 addresses of the lishnet's lighthouses and relays (their `addr` hosts, resolved). */
 	infraIPs: string[];
+	/** A device holding the CA key lets invited guests in, to the invite exchange only. */
+	acceptGuests?: boolean;
 	logLevel?: 'debug' | 'info' | 'warning' | 'error';
 }
 
@@ -93,7 +98,8 @@ export function buildNebulaConfig(input: NebulaConfigInput): Record<string, unkn
 		relay: { am_relay: isRelay, use_relays: true, relays: isRelay ? [] : orderRelays(overlay.relays, input.peerID) },
 		firewall: {
 			outbound: [{ port: 'any', proto: 'any', host: 'any' }],
-			inbound: [{ port: OVERLAY_LIBP2P_PORT, proto: 'tcp', host: 'any' }],
+			// Members only (every member certificate carries the group); an invite's guest certificate reaches the founder alone.
+			inbound: [{ port: OVERLAY_LIBP2P_PORT, proto: 'tcp', group: 'member' }, ...(input.acceptGuests ? [{ port: OVERLAY_LIBP2P_PORT, proto: 'tcp', group: GUEST_GROUP }] : [])],
 		},
 		logging: { level: input.logLevel ?? 'info', format: 'json' },
 	};

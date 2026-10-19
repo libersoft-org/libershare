@@ -45,7 +45,16 @@ describe('buildNebulaConfig — member', () => {
 		expect(config.listen).toEqual({ host: '0.0.0.0', port: 0, read_buffer: 32 * 1024 * 1024, write_buffer: 32 * 1024 * 1024 });
 		expect(config.relay).toMatchObject({ am_relay: false, use_relays: true });
 		expect([...config.relay.relays].sort()).toEqual(['100.64.0.1', '100.64.0.3']);
-		expect(config.firewall.inbound).toEqual([{ port: 9090, proto: 'tcp', host: 'any' }]);
+		expect(config.firewall.inbound).toEqual([{ port: 9090, proto: 'tcp', group: 'member' }]);
+	});
+
+	// An invite's guest certificate is signed by the same CA: a firewall open to any host let it reach every member.
+	it('admits members only, and guests on a device holding the CA key', () => {
+		const founder: any = buildNebulaConfig({ pki, overlay, vpnIP: '100.64.0.1', peerID: PEER, revoked: [], infraIPs: [], acceptGuests: true });
+		expect(founder.firewall.inbound).toEqual([
+			{ port: 9090, proto: 'tcp', group: 'member' },
+			{ port: 9090, proto: 'tcp', group: 'guest' },
+		]);
 	});
 });
 
