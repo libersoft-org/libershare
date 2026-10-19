@@ -274,6 +274,22 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// A revocation that came late, in an older state, waited a minute for the periodic sweep of the open tunnels.
+	it('checks the open tunnels at once when an older state brings a revocation', async () => {
+		const h = await harness();
+		const swept: string[] = [];
+		(h.nodes as any).reconfigure = async () => {};
+		(h.nodes as any).sweepRevokedPeers = async (id: string) => void swept.push(id);
+		try {
+			await h.nodes.acceptState(NET, await h.sign(6, []));
+			swept.length = 0;
+			expect(await h.nodes.acceptState(NET, await h.sign(5, [FP]))).toBe(false);
+			expect(swept).toEqual([NET]);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
 	/** A tunnel to one member: its certificate's name, fingerprint and start, as the helper reports them. */
 	function tunnel(h: Awaited<ReturnType<typeof harness>>, host: { name: string; fingerprint: string; notBefore: string }) {
 		let reloads = 0;

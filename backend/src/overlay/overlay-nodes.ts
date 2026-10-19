@@ -520,6 +520,8 @@ export class OverlayNodes {
 			// Stored but never applied (writing the configuration or the reload failed), or an older state that still
 			// carried a revocation this node lacked: this copy is the chance to apply it.
 			if (revokes || this.running.get(networkID)?.unapplied) await this.reconfigure(networkID);
+			// An open tunnel of the newly revoked member may run on a certificate no state lists: found now, not a minute later.
+			if (revokes) await this.sweepRevokedPeers(networkID);
 			return false;
 		}
 		console.log(`[Overlay ${networkID.slice(0, 8)}] accepted network state v${incoming.version} (${incoming.lighthouses.length} lighthouse(s), ${incoming.relays.length} relay(s), ${incoming.revoked.length} revoked)`);
