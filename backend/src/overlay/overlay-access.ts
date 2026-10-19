@@ -467,6 +467,8 @@ export class OverlayAccess {
 		});
 		// A clean device has no certificate of its own, and the screens offer a founder no request to make.
 		await this.ensureOwnMembership(networkID);
+		// A node already running keeps its old blocklist otherwise: the backup's revocations apply now, not with the next state.
+		await this.deps.nodes.reconfigure(networkID);
 		this.deps.emit('overlay:status', { networkID });
 	}
 
