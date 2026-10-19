@@ -16,10 +16,10 @@ const overlay: OverlayNodeOptions = {
 	authorize: async (peerID, overlayIP) => (authorized.push([peerID, overlayIP]), peerID === 'member-ok'),
 };
 
-async function build(withOverlay: boolean) {
+async function build(withOverlay: boolean, privateOnly = false) {
 	const privateKey = await generateKeyPair('Ed25519');
-	const settings = { network: { mdnsEnabled: true, mdnsInterval: 10_000, upnpEnabled: true, allowRelay: true, maxRelayReservations: 5, useRelayClients: true, peerExchange: { enabled: true } } } as any;
-	return buildLibp2pConfig({ privateKey, datastore: {}, allSettings: settings, bootstrapPeers: [], myPeerID: privateKey.publicKey.toString(), ...(withOverlay ? { overlay } : {}) });
+	const settings = { network: { privateOnly, mdnsEnabled: true, mdnsInterval: 10_000, upnpEnabled: true, allowRelay: true, maxRelayReservations: 5, useRelayClients: true, peerExchange: { enabled: true } } } as any;
+	return buildLibp2pConfig({ privateKey, datastore: {}, allSettings: settings, bootstrapPeers: privateOnly ? ['/ip4/203.0.113.7/tcp/9090/p2p/12D3KooWGzBWFfYTeG2kvP1vS6ZwR3sEJMh9Bvc6oc2BG5mfMjVm'] : [], myPeerID: privateKey.publicKey.toString(), ...(withOverlay ? { overlay } : {}) });
 }
 
 describe('buildLibp2pConfig — overlay node', () => {
@@ -69,6 +69,21 @@ describe('buildLibp2pConfig — overlay node names', () => {
 	it('resolves no names', async () => {
 		expect((await build(true)).config.connectionManager.resolvers).toEqual({});
 		expect((await build(false)).config.connectionManager.resolvers).toBeUndefined();
+	});
+});
+
+// Protected lishnets only: the public node must not listen, dial, resolve, discover or open anything.
+describe('buildLibp2pConfig — public node sealed', () => {
+	it('listens on nothing, refuses every dial and inbound connection, and runs no discovery or public service', async () => {
+		const { config } = await build(false, true);
+		expect(config.addresses.listen).toEqual([]);
+		expect(config.addresses.appendAnnounce).toBeUndefined();
+		expect(config.connectionManager.resolvers).toEqual({});
+		// Not even a configured bootstrap peer gets through.
+		expect(await config.connectionGater.denyDialMultiaddr(multiaddr('/ip4/203.0.113.7/tcp/9090/p2p/12D3KooWGzBWFfYTeG2kvP1vS6ZwR3sEJMh9Bvc6oc2BG5mfMjVm'))).toBe(true);
+		expect(await config.connectionGater.denyInboundConnection()).toBe(true);
+		for (const service of ['relay', 'autonat', 'dcutr', 'upnpNAT']) expect(config.services[service]).toBeUndefined();
+		expect(config.peerDiscovery ?? []).toHaveLength(0);
 	});
 });
 

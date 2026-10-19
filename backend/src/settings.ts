@@ -92,6 +92,11 @@ export interface SettingsData {
 		 * become reachable out of the box; set false to leave router state untouched.
 		 */
 		upnpEnabled: boolean;
+		/**
+		 * Protected lishnets only: the public node listens on nothing, dials nothing and resolves no
+		 * names, and the internet connectivity check (requests to Google and Microsoft) stays off.
+		 */
+		privateOnly: boolean;
 		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
 		/**
 		 * GossipSub Peer Exchange (PX) local operator policy.
@@ -218,6 +223,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		mdnsInterval: 30000,
 		// UPnP enabled by default so NAT'd nodes auto-open their port for reachability.
 		upnpEnabled: true,
+		privateOnly: false,
 		searchTimeout: 30_000,
 		peerExchange: {
 			// Enabled by default: bootstrap peers (operator-configured in lishnet joins)

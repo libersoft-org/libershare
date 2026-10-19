@@ -445,7 +445,8 @@
 			"autoConnectNewNetworks": "Automatically connect to newly added networks",
 			"mdnsEnabled": "Discover peers on local network (mDNS)",
 			"mdnsInterval": "Local network discovery interval (s)",
-			"upnpEnabled": "Automatic router port forwarding (UPnP)"
+			"upnpEnabled": "Automatic router port forwarding (UPnP)",
+			"privateOnly": "Protected lishnets only (no public network, no internet checks)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",

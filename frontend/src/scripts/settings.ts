@@ -58,6 +58,7 @@ export const primaryInterface = writable('');
 export const mdnsEnabled = writable(true);
 export const mdnsInterval = writable(10000);
 export const upnpEnabled = writable(true);
+export const privateOnly = writable(false);
 export const searchTimeout = writable(30000);
 export const autoStartOnBoot = writable(true);
 export const showInTray = writable(true);
@@ -156,6 +157,7 @@ export async function loadSettings(options: { throwOnError?: boolean } = {}): Pr
 		mdnsEnabled.set(settings.network.mdnsEnabled ?? true);
 		mdnsInterval.set(settings.network.mdnsInterval ?? 10000);
 		upnpEnabled.set(settings.network.upnpEnabled ?? false);
+		privateOnly.set(settings.network.privateOnly === true);
 		searchTimeout.set(settings.network.searchTimeout ?? 30000);
 
 		// System
@@ -359,6 +361,10 @@ export function setMdnsEnabled(enabled: boolean): void {
 export function setMdnsInterval(value: number): void {
 	const clampedValue = Math.max(1000, Math.min(600000, value || 10000));
 	updateSetting(mdnsInterval, 'network.mdnsInterval', clampedValue);
+}
+
+export function setPrivateOnly(enabled: boolean): void {
+	updateSetting(privateOnly, 'network.privateOnly', enabled);
 }
 
 export function setUpnpEnabled(enabled: boolean): void {

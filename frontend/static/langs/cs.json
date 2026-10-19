@@ -445,7 +445,8 @@
 			"autoConnectNewNetworks": "Po přidání nové sítě se k ní automaticky připojit",
 			"mdnsEnabled": "Vyhledávat účastníky v místní síti (mDNS)",
 			"mdnsInterval": "Interval vyhledávání v místní síti (s)",
-			"upnpEnabled": "Automatické přesměrování portu na routeru (UPnP)"
+			"upnpEnabled": "Automatické přesměrování portu na routeru (UPnP)",
+			"privateOnly": "Jen chráněné sítě (bez veřejné sítě a kontrol internetu)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

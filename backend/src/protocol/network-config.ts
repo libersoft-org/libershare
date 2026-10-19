@@ -213,7 +213,10 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	const trustedPXPeerIDs = new Set(effective.peerExchange.trustedPeerIds);
 	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
 	else console.debug('[NET] PX disabled by local policy');
-	const { transports, port, listenAddresses, appendAnnounceAddresses } = overlay ? overlayAddressing(overlay) : publicAddressing(effective);
+	// Protected lishnets only: the public node keeps its identity and lifecycle but touches no network.
+	const sealed = !overlay && effective.privateOnly;
+	if (sealed) console.log('✓ Protected lishnets only: the public node listens on nothing and dials nothing');
+	const { transports, port, listenAddresses, appendAnnounceAddresses } = overlay ? overlayAddressing(overlay) : sealed ? { transports: [tcp()], port: 0, listenAddresses: [], appendAnnounceAddresses: [] } : publicAddressing(effective);
 	const config: any = {
 		privateKey,
 		datastore,
@@ -265,7 +268,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			maxParallelReconnects: 15,
 			// A protected lishnet's node resolves no names: a /dnsaddr a peer announced was looked up in public DNS
 			// before the dial filter refused it.
-			...(overlay ? { resolvers: {} } : {}),
+			...(overlay || sealed ? { resolvers: {} } : {}),
 		},
 		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
 		// node's own interfaces. Peers advertise every known multiaddr (via
@@ -283,6 +286,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
 				// The overlay node dials overlay addresses only, trusted peer or not.
 				if (overlay) return overlayTarget(ma, overlay.bridge.subnet) === null;
+				if (sealed) return true;
 				// Bypass gater for trusted peers (configured bootstrap ∪ configured trustedPeerIds).
 				// Multi-subnet fleets (e.g. 192.168.10.x + 192.168.20.x) would otherwise have
 				// trusted peers blocked when their advertised addr lives on a LAN segment
@@ -317,6 +321,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 						denyOutboundEncryptedConnection: async (peerId: any, maConn: any): Promise<boolean> => !(await overlay.authorize(peerId.toString(), overlayTarget(maConn.remoteAddr, overlay.bridge.subnet)?.ip ?? '')),
 					}
 				: {}),
+			...(sealed ? { denyInboundConnection: async (): Promise<boolean> => true } : {}),
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
@@ -467,12 +472,12 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	};
 	// Relay server, AutoNAT, DCUtR and UPnP all exist to learn, verify or open a PUBLIC address — none of which an
 	// overlay node may have.
-	if (!overlay) addPublicServices(config, effective);
+	if (!overlay && !sealed) addPublicServices(config, effective);
 	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
 	const peerDiscovery: any[] = [];
 
 	// uniqueBootstrapPeers computed at top of function (used above for directPeers seed).
-	if (uniqueBootstrapPeers.length > 0) {
+	if (uniqueBootstrapPeers.length > 0 && !sealed) {
 		console.log('Configuring bootstrap peers:');
 		const validBootstrapPeers: string[] = [];
 		for (const peer of uniqueBootstrapPeers) {
@@ -508,7 +513,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// via mDNS — bootstrap + gossipsub mesh handles WAN.
 	// Default ON since cost is negligible (~1 packet / interval) and gain
 	// (zero-config LAN peer discovery) is high.
-	if (effective.mdnsInterval !== null && !overlay) {
+	if (effective.mdnsInterval !== null && !overlay && !sealed) {
 		const mdnsInterval = effective.mdnsInterval;
 		peerDiscovery.push(
 			mdns({

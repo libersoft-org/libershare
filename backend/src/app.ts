@@ -152,7 +152,10 @@ setUploadBroadcast((event, data) => apiServer.broadcastEvent(event, data));
 
 // Periodic internet connectivity check
 import { startConnectivityCheck } from './connectivity.ts';
-const stopConnectivityCheck = startConnectivityCheck((event, data) => apiServer.broadcastEvent(event, data));
+const stopConnectivityCheck = startConnectivityCheck(
+	(event, data) => apiServer.broadcastEvent(event, data),
+	() => settings.get().network.privateOnly !== true
+);
 
 // Memory profiling: JSONL log RSS/heap/internal sizes. MEMTRACE=0 disables.
 // Diagnostic env vars use stable, un-branded names (set by the operator on a

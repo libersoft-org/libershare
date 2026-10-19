@@ -35,7 +35,8 @@ async function checkOnline(): Promise<boolean> {
 	return false;
 }
 
-export function startConnectivityCheck(broadcast: BroadcastFn): () => void {
+/** `enabled` is read before every check: with protected lishnets only, nothing may reach Google or Microsoft. */
+export function startConnectivityCheck(broadcast: BroadcastFn, enabled: () => boolean = () => true): () => void {
 	let online = true; // assume online at start
 	let consecutiveFailures = 0;
 	let running = false;
@@ -43,7 +44,7 @@ export function startConnectivityCheck(broadcast: BroadcastFn): () => void {
 	let initialTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	const check = async (): Promise<void> => {
-		if (running) return;
+		if (running || !enabled()) return;
 		running = true;
 		try {
 			const result = await checkOnline();
