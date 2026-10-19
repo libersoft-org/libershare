@@ -433,7 +433,9 @@ export class OverlayAccess {
 		// its own membership here, so it can join its lishnet as well as approve others. So does a device whose
 		// certificate expired or was revoked.
 		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
-		const revoked = own ? ((await this.deps.nodes.currentState(networkID, overlay))?.revoked.includes(own.fingerprint) ?? false) : false;
+		// Revoked as far as anything here knows: the signed state, and the member list and revocations just restored.
+		const known = await store.readFounder();
+		const revoked = own ? [...((await this.deps.nodes.currentState(networkID, overlay))?.revoked ?? []), ...known.members.filter(m => m.revoked).map(m => m.fingerprint), ...(known.revoked ?? [])].includes(own.fingerprint) : false;
 		if (!own || revoked || Date.parse(own.notAfter) <= Date.now()) {
 			const { row } = this.overlayOf(networkID);
 			await this.importCertificate(await this.issue(await this.requestAccess(networkID, row.name.slice(0, 64))));

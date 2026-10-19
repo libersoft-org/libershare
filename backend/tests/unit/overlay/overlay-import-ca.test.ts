@@ -77,17 +77,19 @@ describe('importing a CA key', () => {
 
 	/** A founder restored on a clean device could approve others but had no certificate, and no screen to get one. */
 	// The device may also hold a certificate it can no longer use: one that expired, or one revoked meanwhile.
-	const unusable: Array<[string, unknown, string[]]> = [
-		['without a certificate', null, []],
-		['with an expired certificate', { ...MEMBER_CERT, notAfter: '2020-01-01T00:00:00Z' }, []],
-		['with a revoked certificate', MEMBER_CERT, [MEMBER_CERT.fingerprint]],
+	// The last case: revoked while the device was offline, known only from the backup being restored.
+	const unusable: Array<[string, unknown, string[], string[]]> = [
+		['without a certificate', null, [], []],
+		['with an expired certificate', { ...MEMBER_CERT, notAfter: '2020-01-01T00:00:00Z' }, [], []],
+		['with a revoked certificate', MEMBER_CERT, [MEMBER_CERT.fingerprint], []],
+		['whose certificate the backup revokes', MEMBER_CERT, [], [MEMBER_CERT.fingerprint]],
 	];
-	for (const [what, own, revoked] of unusable)
+	for (const [what, own, revoked, backupRevoked] of unusable)
 		it(`a founder restored on a device ${what} signs its own membership and imports it`, async () => {
-			await restoredFounderSignsItself(own, revoked);
+			await restoredFounderSignsItself(own, revoked, backupRevoked);
 		});
 
-	async function restoredFounderSignsItself(own: unknown, revoked: string[]): Promise<void> {
+	async function restoredFounderSignsItself(own: unknown, revoked: string[], backupRevoked: string[]): Promise<void> {
 		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
 		const request = { type: 'lish-overlay-request', networkID: NET, name: 'Network', peerID: '1'.repeat(46), publicKey: 'pub', created: '2026-01-01T00:00:00Z' };
 		const bundle = { type: 'lish-overlay-certificate', networkID: NET, certificate: 'crt' };
@@ -104,7 +106,8 @@ describe('importing a CA key', () => {
 				refresh: async () => {},
 				emit: () => {},
 			});
-			await access.importCA(NET, pem(ca.raw));
+			const list = Buffer.from(JSON.stringify({ nextHost: 2, members: [], revoked: backupRevoked })).toString('base64');
+			await access.importCA(NET, `${pem(ca.raw)}-----BEGIN LISH OVERLAY MEMBERS-----\n${list}\n-----END LISH OVERLAY MEMBERS-----\n`);
 			expect(calls).toEqual([
 				['request', NET, 'Network'],
 				['issue', request],
