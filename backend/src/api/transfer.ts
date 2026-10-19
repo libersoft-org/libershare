@@ -497,18 +497,34 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const lishID = downloader.getLISHID();
 		// Starting it is the user's latest word: an older switch-off must not stop a later move of this download.
 		lastManualIntent.set(lishID, true);
-		// A LISH already stored for protected lishnets downloads on their node, whichever lishnet the caller named
-		// (the CLI names the first enabled one): asking a public lishnet for it would tell it what this member wants.
-		const target = downloadNode(lishID, [p.networkID]);
-		if (!target) {
-			await downloader.destroy();
-			throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, `none of the protected lishnets of ${lishID} is joined`);
+		// A scope change while this start is not active yet finds nothing to move: it waits for the start instead.
+		let started!: () => void;
+		const starting = new Promise<void>(resolve => (started = resolve));
+		directStarts.set(lishID, starting);
+		try {
+			// A LISH already stored for protected lishnets downloads on their node, whichever lishnet the caller named
+			// (the CLI names the first enabled one): asking a public lishnet for it would tell it what this member wants.
+			// Checked again after every read of the manifest: the scope can move meanwhile.
+			for (;;) {
+				const target = downloadNode(lishID, [p.networkID]);
+				if (!target) {
+					await downloader.destroy();
+					throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, `none of the protected lishnets of ${lishID} is joined`);
+				}
+				const node = downloader.getNetwork();
+				if (isPublicNode(target.node) ? isPublicNode(node) : target.node === node) break;
+				await downloader.destroy();
+				downloader = new Downloader(downloadDir, target.node, dataServer, target.networkIDs);
+				await downloader.init(p.lishPath);
+			}
+			return await launchDirectDownload(lishID, downloader, downloadDir, client);
+		} finally {
+			if (directStarts.get(lishID) === starting) directStarts.delete(lishID);
+			started();
 		}
-		if (isPublicNode(target.node) ? !isPublicNode(network) : target.node !== network) {
-			await downloader.destroy();
-			downloader = new Downloader(downloadDir, target.node, dataServer, target.networkIDs);
-			await downloader.init(p.lishPath);
-		}
+	}
+
+	async function launchDirectDownload(lishID: string, downloader: Downloader, downloadDir: string, client: any): Promise<DownloadResponse> {
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
 
@@ -567,6 +583,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * fails, nothing is left to resume the download from.
 	 */
 	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
+	/** Starts from a `.lish` file ({@link downloadAdmitted}) not registered as active yet, keyed by LISH. */
+	const directStarts = new Map<string, Promise<void>>();
 	/**
 	 * The last state the USER asked for, kept apart from whatever attempt is in flight.
 	 *
@@ -672,6 +690,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	async function rehomeDownload(lishID: string): Promise<void> {
 		// A start still reading its manifest is not active yet; it gives up when the scope moved, and is started below.
 		await pendingDownloads.get(lishID)?.catch(() => {});
+		await directStarts.get(lishID);
 		const dl = activeDownloaders.get(lishID);
 		const suspended = networkSuspended.has(lishID);
 		if (dl ? onRightNode(lishID, dl) : !suspended && !downloadEnabledLishs.has(lishID)) return;

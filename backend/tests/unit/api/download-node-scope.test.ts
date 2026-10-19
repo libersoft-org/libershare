@@ -294,6 +294,34 @@ test('a start under way when the scope moves gives up and runs in the new lishne
 	}
 });
 
+/** A start from a .lish file read its file while the scope moved from A to B: the move saw nothing and it asked A. */
+test('a start from a .lish file under way when the scope moves runs in the new lishnet', async () => {
+	const w = world('cli-moved-while-starting', ['net-a']);
+	const lishPath = join(tmpdir(), `cli-moved-starting-${Date.now()}.lish`);
+	await writeFile(lishPath, JSON.stringify({ id: 'cli-moved-while-starting', name: 'download', files: [] }));
+	let rehoming: Promise<void> | undefined;
+	const original = Downloader.prototype.init;
+	// The scope moves (and the move is asked for) while the start reads the file on lishnet A's node.
+	const read = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string) {
+		const result = await original.call(this, path);
+		if (!rehoming && (this as any).network === w.nodes.get('net-a')) {
+			initLISHScopes(new Map([['cli-moved-while-starting', ['net-b']]]), () => {});
+			rehoming = w.handlers.rehomeDownload('cli-moved-while-starting');
+		}
+		return result;
+	});
+	try {
+		await w.handlers.download({ networkID: 'public', lishPath }, undefined);
+		await rehoming;
+		await w.started(1);
+		expect(w.used.map(u => u.node)).toEqual([w.nodes.get('net-b')]);
+	} finally {
+		read.mockRestore();
+		await rm(lishPath, { force: true });
+		await w.cleanup();
+	}
+});
+
 /** A protected lishnet joined again runs on a new node; the download held on to the stopped one. */
 test("a download follows its protected lishnet's new node", async () => {
 	const w = world('new-node', ['net-b']);
