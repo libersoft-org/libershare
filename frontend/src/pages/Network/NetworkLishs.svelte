@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type LishSearchResult, type LISHNetworkConfig } from '@shared';
 	import { getNetworks } from '../../scripts/lishNetwork.ts';
 	import { formatSize } from '../../scripts/utils.ts';
@@ -59,7 +59,9 @@
 	// Where to search: the query tells every lishnet it reaches what this user looks for, so with protected lishnets
 	// joined it goes to one place at a time — the public lishnets first, a protected one or everywhere when chosen.
 	let networks = $state<LISHNetworkConfig[]>([]);
+	// Empty until the lishnets are known: searching then would have gone everywhere, which nobody chose.
 	let place = $state<string>('');
+	let placeError = $state('');
 	onMount(() => {
 		getNetworks()
 			.then(list => {
@@ -67,14 +69,15 @@
 				const hasPublic = networks.some(n => !n.overlay);
 				place = networks.some(n => n.overlay) ? (hasPublic ? PUBLIC : networks.find(n => n.overlay)!.networkID) : EVERYWHERE;
 			})
-			.catch(() => {});
+			.catch(e => (placeError = translateError(e)));
 	});
 	let protectedNets = $derived(networks.filter(n => n.overlay));
 	$effect(() => {
-		search.networkIDs = place === EVERYWHERE || place === '' ? null : place === PUBLIC ? networks.filter(n => !n.overlay).map(n => n.networkID) : [place];
+		search.networkIDs = place === EVERYWHERE ? null : place === PUBLIC ? networks.filter(n => !n.overlay).map(n => n.networkID) : [place];
 	});
 
 	function handleStart(): void {
+		if (place === '') return;
 		void search.start();
 	}
 
@@ -135,7 +138,7 @@
 
 <div class="filters">
 	<Input bind:value={search.query} placeholder={$t('network.searchLishsPlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, baseY]} flex />
-	<Button icon="/img/search.svg" label={$t('common.search')} onConfirm={handleStart} position={[1, baseY]} width="auto" disabled={search.searching || search.query.trim().length === 0} />
+	<Button icon="/img/search.svg" label={$t('common.search')} onConfirm={handleStart} position={[1, baseY]} width="auto" disabled={search.searching || search.query.trim().length === 0 || place === ''} />
 	{#if protectedNets.length > 0}
 		<span class="search-status">{$t('network.searchIn')}:</span>
 		{#if networks.some(n => !n.overlay)}
@@ -150,6 +153,9 @@
 		<Button icon="/img/cross.svg" label={$t('common.cancel')} onConfirm={handleCancel} position={[4 + protectedNets.length, baseY]} width="auto" />
 	{/if}
 </div>
+{#if placeError}
+	<Alert type="error" message={placeError} />
+{/if}
 {#if search.error}
 	<Alert type="error" message={search.error} />
 {:else}
