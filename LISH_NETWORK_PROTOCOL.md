@@ -346,6 +346,7 @@ The founder publishes the network's current lighthouses, relays and revoked cert
 - Topic: `lish-overlay-state/<networkID>` on the protected network's node.
 - Every node verifies the signature against the CA certificate of the network's definition, never against a key that came with the message, and keeps the highest `version` it has verified. A newer state replaces the stored hosts of the network and updates the overlay configuration without a restart.
 - Nodes publish the state they hold when a peer subscribes to the topic and every minute, so late joiners catch up. A node that receives an older version answers with its own.
+- An older state that carries a revocation the newest one lacks is kept and published along with it, so a node catching up learns that revocation too (it applies the revocations of every state it verifies, whatever the version).
 - A founder's node that receives a state missing revocations it holds answers with a merged state, so two devices holding the CA cannot drop each other's revocations.
 
 ### Revocation and expiry
