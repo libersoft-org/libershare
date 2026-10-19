@@ -411,12 +411,15 @@ export class Networks {
 
 	/**
 	 * The node a lishnet lives on: its own node for a running protected lishnet, the public node otherwise. A
-	 * protected lishnet that is not running has no node — never the public one, which must not reach its peers.
+	 * protected lishnet that is not running has no node — never the public one, which must not reach its peers — and
+	 * neither has one no longer here: a read begun in a protected lishnet deleted meanwhile must not go public.
 	 */
 	networkFor(id: string): Network {
 		const own = this.overlayNodes.network(id);
 		if (own) return own;
-		if (this.get(id)?.overlay) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, id);
+		const row = this.get(id);
+		if (!row) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
+		if (row.overlay) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, id);
 		return this.getRunningNetwork();
 	}
 
