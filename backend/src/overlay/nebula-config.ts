@@ -90,7 +90,9 @@ export function buildNebulaConfig(input: NebulaConfigInput): Record<string, unkn
 		pki: { ca: input.pki.ca, cert: input.pki.cert, key: input.pki.key, blocklist: input.revoked, disconnect_invalid: true },
 		static_host_map: staticHostMap,
 		lighthouse,
-		listen: { host: '0.0.0.0', port: own ? hostPort(own.addr).port : 0, read_buffer: UDP_BUFFER_BYTES, write_buffer: UDP_BUFFER_BYTES },
+		// A member answers no packet it cannot place: Nebula's default sent any outside address a short error reply. Hosts
+		// keep it, so a member whose host restarted learns at once that the tunnel is gone.
+		listen: { host: '0.0.0.0', port: own ? hostPort(own.addr).port : 0, read_buffer: UDP_BUFFER_BYTES, write_buffer: UDP_BUFFER_BYTES, send_recv_error: isInfra ? 'always' : 'never' },
 		punchy: { punch: !isInfra && overlay.lanDirect, respond: !isInfra && overlay.lanDirect },
 		// A tunnel whose traffic stopped is tested after 2 s and dropped 4 s later (defaults 5 + 10): a member then
 		// moves to the next relay in about 6 s when one goes down, instead of about 20 s (measured on the fleet).
