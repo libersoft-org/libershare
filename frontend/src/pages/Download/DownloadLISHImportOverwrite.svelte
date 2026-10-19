@@ -24,7 +24,7 @@
 	let processing = $state(true);
 	let currentOverwriteLISH = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
 	// Where the imported LISHs are shared, asked when protected lishnets are joined: imported without a choice they
-	// were always public. Undefined keeps a known LISH's scope and makes a new one public.
+	// were always public. Undefined (no protected lishnet, nothing asked) keeps a known LISH's scope and makes a new one public.
 	let protectedNets = $state<LISHNetworkConfig[]>([]);
 	let scopeOptions = $state<Array<{ value: string; label: string; icon?: string }>>([]);
 	let scopeInitial = $state(0);
@@ -79,7 +79,14 @@
 
 	onMount(() => {
 		void (async () => {
-			const nets = await getNetworks().catch(() => [] as LISHNetworkConfig[]);
+			let nets: LISHNetworkConfig[];
+			try {
+				nets = await getNetworks();
+			} catch (error) {
+				// Unknown lishnets are no answer to where the LISHs go: taken as none, the import shared them publicly.
+				onError(error);
+				return;
+			}
 			protectedNets = nets.filter(n => n.overlay);
 			if (protectedNets.length === 0) return runImport(processLISHs);
 			const hasPublic = nets.some(n => !n.overlay && n.enabled);
