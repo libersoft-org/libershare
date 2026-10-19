@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CodedError, ErrorCodes, type OverlayAccessRequest, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type SignedOverlayState } from '@shared';
+import { CodedError, ErrorCodes, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type SignedOverlayState } from '@shared';
 
 /** Files of one protected lishnet. Keys are written once, owner-readable only, and never leave this directory. */
 export type OverlayFile =
@@ -29,7 +29,33 @@ export type OverlayFile =
 	| 'revoked.json'
 	/** Scratch files of one certificate issue or import, removed right after. */
 	| 'issue.pub'
-	| 'issue.crt';
+	| 'issue.crt'
+	| 'issue.key'
+	/** An invited node: its invite ({@link InviteFile}), guest certificate and key, and the guest Nebula configuration. */
+	| 'invite.json'
+	| 'guest.crt'
+	| 'guest.key'
+	| 'guest.yml';
+
+/** What an invited node keeps of its invite until its certificate arrives. */
+export interface InviteFile {
+	id: string;
+	founder: string;
+	expires: string;
+}
+
+/** An invite the founder made ({@link OverlayInvite}). */
+export interface FounderInvite {
+	id: string;
+	/** The guest certificate's address. */
+	vpnIP: string;
+	expires: string;
+	/** The node whose request came in through it; the invite serves that node only. */
+	peerID?: string;
+	/** The certificate issued on it, handed out when the node asks again. */
+	bundle?: OverlayCertificateBundle;
+	refused?: boolean;
+}
 
 /** What the founder keeps about the lishnet's members. */
 export interface FounderData {
@@ -51,6 +77,8 @@ export interface FounderData {
 	lane?: number;
 	/** The lanes this device knows to be taken by devices holding the CA key, carried in backups. */
 	lanes?: number[];
+	/** Invites not yet expired. */
+	invites?: FounderInvite[];
 }
 
 /** A network ID is used as a directory name, so it must not be able to name anything but one directory. */

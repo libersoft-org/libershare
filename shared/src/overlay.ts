@@ -100,6 +100,67 @@ export interface SignedOverlayState {
 export interface OverlayPendingRequest extends OverlayAccessRequest {
 	id: string;
 	received: string;
+	/** The invite it came through; its certificate then goes back the same way. */
+	invite?: string;
+}
+
+/**
+ * The founder's invitation to a protected lishnet. Its guest certificate (group `guest`, short-lived) lets the
+ * invited node reach the founder inside the overlay and nothing else: every node's firewall admits members only,
+ * the founder's also guests, and the founder's node answers a guest with the invite exchange alone. Over it the
+ * node hands in its access request and later picks up its certificate. A secret: whoever holds it can ask for
+ * access in its name until it expires or is used.
+ */
+export interface OverlayInvite {
+	type: 'lish-overlay-invite';
+	id: string;
+	/** The lishnet definition, as in a `.lishnet` file. */
+	network: { networkID: string; name: string; description: string; bootstrapPeers: string[]; overlay: LISHOverlayDefinition };
+	/** Overlay address of the founder's device that made the invite. */
+	founder: string;
+	/** The guest certificate and its private key (PEM). */
+	cert: string;
+	key: string;
+	expires: string;
+}
+
+/** How far an invited node got: the founder not reached yet, the request handed in, or the end of the invite. */
+export type OverlayInviteState = 'delivering' | 'pending' | 'refused' | 'expired';
+
+/** One message of the invite exchange, guest to founder, and the answer. */
+export interface OverlayInviteMessage {
+	invite: string;
+	request: OverlayAccessRequest;
+}
+export type OverlayInviteAnswer = { status: 'pending' } | { status: 'approved'; bundle: OverlayCertificateBundle } | { status: 'refused'; reason: string };
+
+const INVITE_PREFIX = 'lishinvite:';
+
+/** The invite as one line of text to pass on. */
+export function encodeInvite(invite: OverlayInvite): string {
+	return INVITE_PREFIX + btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(invite))));
+}
+
+/** Read an invite (text from {@link encodeInvite}, or its JSON) and validate its shape. Throws NETWORK_INVALID. */
+export function decodeInvite(text: string): OverlayInvite {
+	const trimmed = text.trim();
+	let raw: any;
+	try {
+		raw = JSON.parse(trimmed.startsWith(INVITE_PREFIX) ? new TextDecoder().decode(Uint8Array.from(atob(trimmed.slice(INVITE_PREFIX.length).replace(/\s+/g, '')), c => c.charCodeAt(0))) : trimmed);
+	} catch {
+		throw invalid('not an invite');
+	}
+	if (raw?.type !== 'lish-overlay-invite') throw invalid('not an invite');
+	const { id, network, founder, cert, key, expires } = raw;
+	if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw invalid('invite without an ID');
+	if (typeof network !== 'object' || network === null || typeof network.networkID !== 'string' || typeof network.name !== 'string') throw invalid('invite without a lishnet');
+	const overlay = validateOverlayDefinition(network.overlay);
+	if (typeof founder !== 'string' || !ipInSubnet(founder, overlay.subnet)) throw invalid('invite founder address is not in the lishnet');
+	if (typeof cert !== 'string' || cert.length > 8192 || !cert.trimStart().startsWith('-----BEGIN NEBULA CERTIFICATE')) throw invalid('invite certificate is malformed');
+	if (typeof key !== 'string' || key.length > 1024 || !key.trimStart().startsWith('-----BEGIN NEBULA X25519 PRIVATE KEY')) throw invalid('invite key is malformed');
+	if (typeof expires !== 'string' || Number.isNaN(Date.parse(expires))) throw invalid('invite without an expiry');
+	const bootstrapPeers = Array.isArray(network.bootstrapPeers) ? network.bootstrapPeers.filter((p: unknown) => typeof p === 'string') : [];
+	return { type: 'lish-overlay-invite', id, network: { networkID: network.networkID, name: network.name, description: typeof network.description === 'string' ? network.description : '', bootstrapPeers, overlay }, founder, cert, key, expires };
 }
 
 /** A certificate the founder issued. */
@@ -141,6 +202,8 @@ export interface OverlayStatus {
 	certificate?: { name: string; vpnIP: string; groups: string[]; notBefore: string; notAfter: string; fingerprint: string; revoked: boolean };
 	/** A request was created and no certificate has been imported yet. */
 	request?: OverlayAccessRequest;
+	/** The request goes through an invite: where its delivery stands. */
+	invite?: { expires: string; state: OverlayInviteState };
 	running: boolean;
 	stateVersion: number;
 	hosts: OverlayHostStatus[];
