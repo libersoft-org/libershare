@@ -20,8 +20,10 @@ const TARGETS: ConnectivityTarget[] = [
 	},
 ];
 
-async function checkOnline(): Promise<boolean> {
+/** Null when the check was switched off part-way: no further server is asked, and nothing is concluded. */
+export async function checkOnline(enabled: () => boolean): Promise<boolean | null> {
 	for (const target of TARGETS) {
+		if (!enabled()) return null;
 		try {
 			const response = await fetch(target.url, {
 				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -47,7 +49,8 @@ export function startConnectivityCheck(broadcast: BroadcastFn, enabled: () => bo
 		if (running || !enabled()) return;
 		running = true;
 		try {
-			const result = await checkOnline();
+			const result = await checkOnline(enabled);
+			if (result === null) return;
 			if (result) {
 				consecutiveFailures = 0;
 				if (!online) {

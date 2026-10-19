@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, spyOn } from 'bun:test';
+import { checkOnline } from '../../src/connectivity.ts';
 
 // ============================================================================
 // Integration tests — verify real connectivity endpoints respond as expected
@@ -189,6 +190,29 @@ describe('connectivity check — initial state', () => {
 		const checker = createChecker(() => {});
 		expect(checker.state.online).toBe(true);
 		expect(checker.state.consecutiveFailures).toBe(0);
+	});
+});
+
+// ============================================================================
+// Switched off part-way (protected lishnets only)
+// ============================================================================
+
+describe('connectivity check — switched off part-way', () => {
+	// The check running when the user sealed the node went on from Google to Microsoft.
+	it('asks no further server once the check is switched off', async () => {
+		let enabled = true;
+		const asked: string[] = [];
+		const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => {
+			asked.push(String(url));
+			enabled = false;
+			throw new Error('no answer');
+		}) as any);
+		try {
+			expect(await checkOnline(() => enabled)).toBeNull();
+			expect(asked).toEqual(['http://connectivitycheck.gstatic.com/generate_204']);
+		} finally {
+			fetchSpy.mockRestore();
+		}
 	});
 });
 
