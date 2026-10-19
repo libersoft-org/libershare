@@ -216,7 +216,8 @@
 			// Update existing
 			await updateNetworkFromAPI(network);
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
-			if (index !== -1) networks[index] = network;
+			// Merged, not replaced: the form holds no overlay, and a renamed protected lishnet lost its lock and access button.
+			if (index !== -1) networks[index] = { ...networks[index]!, ...network };
 			await closeAddEdit();
 		} else {
 			// Add new - backend generates networkID and key if empty. Detect the new
