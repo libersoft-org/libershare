@@ -62,6 +62,8 @@ interface RunningOverlay {
 	unapplied: boolean;
 	/** The infrastructure addresses the written configuration allows ({@link OverlayNodes.followInfraAddresses}). */
 	infraIPs: string[];
+	/** The same per host name, the last ones each name resolved to. */
+	infraByHost: Map<string, string[]>;
 }
 
 /**
@@ -143,25 +145,30 @@ export class OverlayNodes {
 		}
 	}
 
-	/** The underlay addresses of the lishnet's lighthouses and relays, sorted; `complete` is false when a name did not resolve. */
-	private async resolveInfra(networkID: string, overlay: LISHOverlayDefinition): Promise<{ ips: string[]; complete: boolean }> {
-		const ips = new Set<string>();
-		let complete = true;
+	/**
+	 * The underlay addresses of the lishnet's lighthouses and relays, per host name and all of them sorted. A name
+	 * that does not resolve right now keeps the addresses it had (`known`): dropping them would cut the member off
+	 * over a passing DNS failure, and holding back the others would keep a moved host locked out.
+	 */
+	private async resolveInfra(networkID: string, overlay: LISHOverlayDefinition, known: Map<string, string[]>): Promise<{ byHost: Map<string, string[]>; ips: string[] }> {
+		const byHost = new Map<string, string[]>();
 		for (const host of infraHosts(overlay)) {
 			try {
-				for (const r of await dns.lookup(host, { all: true, family: 4 })) ips.add(r.address);
+				byHost.set(host, [...new Set((await dns.lookup(host, { all: true, family: 4 })).map(r => r.address))].sort());
 			} catch (err: any) {
-				complete = false;
-				console.warn(`[Overlay ${networkID.slice(0, 8)}] cannot resolve ${host}: ${err?.message ?? err}`);
+				const last = known.get(host);
+				if (last) byHost.set(host, last);
+				console.warn(`[Overlay ${networkID.slice(0, 8)}] cannot resolve ${host}${last ? ', keeping its last addresses' : ''}: ${err?.message ?? err}`);
 			}
 		}
-		return { ips: [...ips].sort(), complete };
+		return { byHost, ips: [...new Set([...byHost.values()].flat())].sort() };
 	}
 
 	/** Write the Nebula configuration; returns the infrastructure addresses it allows. */
-	private async writeConfig(entry: { networkID: string; store: OverlayStore; vpnIP: string; peerID: string }, overlay: LISHOverlayDefinition): Promise<string[]> {
+	private async writeConfig(entry: { networkID: string; store: OverlayStore; vpnIP: string; peerID: string }, overlay: LISHOverlayDefinition, known: Map<string, string[]>): Promise<{ byHost: Map<string, string[]>; ips: string[] }> {
 		const state = await this.currentState(entry.networkID, overlay);
-		const { ips } = await this.resolveInfra(entry.networkID, overlay);
+		const resolved = await this.resolveInfra(entry.networkID, overlay, known);
+		const { ips } = resolved;
 		const config = buildNebulaConfig({
 			pki: { ca: entry.store.path('ca.crt'), cert: entry.store.path('member.crt'), key: entry.store.path('member.key') },
 			overlay,
@@ -171,20 +178,19 @@ export class OverlayNodes {
 			infraIPs: ips,
 		});
 		await entry.store.writeJSON('nebula.yml', config);
-		return ips;
+		return resolved;
 	}
 
 	/**
 	 * A lighthouse or relay given by name can move to another address; the allow list of a member names addresses, so
-	 * it has to follow, or every packet from the new one is dropped. A name that does not resolve right now changes
-	 * nothing: dropping its old address would cut the member off over a passing DNS failure.
+	 * it has to follow, or every packet from the new one is dropped.
 	 */
 	private async followInfraAddresses(networkID: string): Promise<void> {
 		const entry = this.running.get(networkID);
 		const row = this.deps.getRow(networkID);
 		if (!entry || !row?.overlay) return;
-		const { ips, complete } = await this.resolveInfra(networkID, row.overlay);
-		if (complete && ips.join(',') !== entry.infraIPs.join(',')) await this.reconfigure(networkID);
+		const { ips } = await this.resolveInfra(networkID, row.overlay, entry.infraByHost);
+		if (ips.join(',') !== entry.infraIPs.join(',')) await this.reconfigure(networkID);
 	}
 
 	/** libp2p bootstrap addresses: the definition's own list plus every host that names its peer ID. */
@@ -210,8 +216,8 @@ export class OverlayNodes {
 			}
 			const vpnIP = cert.networks[0]!.split('/')[0]!;
 			const base = { networkID: row.networkID, store, vpnIP, peerID: cert.name };
-			const infraIPs = await this.writeConfig(base, overlay);
-			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP), unapplied: false, infraIPs } as RunningOverlay;
+			const infra = await this.writeConfig(base, overlay, new Map());
+			const entry = { ...base, inboundPort: 0, stopped: false, restartDelay: RESTART_DELAY_MIN_MS, restartTimer: null, lastPublish: 0, startOnly: startOnlySettings(overlay, vpnIP), unapplied: false, infraIPs: infra.ips, infraByHost: infra.byHost } as RunningOverlay;
 			entry.helper = await this.startHelper(entry);
 			const bridge: OverlayBridge = {
 				get dialPort() {
@@ -358,7 +364,9 @@ export class OverlayNodes {
 			const row = this.deps.getRow(networkID);
 			if (!entry || !row?.overlay) return;
 			try {
-				entry.infraIPs = await this.writeConfig(entry, row.overlay);
+				const infra = await this.writeConfig(entry, row.overlay, entry.infraByHost);
+				entry.infraIPs = infra.ips;
+				entry.infraByHost = infra.byHost;
 				if (entry.helper.isRunning()) await entry.helper.reload();
 				entry.unapplied = false;
 			} catch (err) {

@@ -50,6 +50,7 @@ async function harness() {
 		startOnly: 'false|0',
 		unapplied: false,
 		infraIPs: [],
+		infraByHost: new Map(),
 	});
 	const sign = (version: number, revoked: string[] = [FP]) => signState({ networkID: NET, version, lighthouses: [{ vpnIP: '100.64.0.1', addr: '203.0.113.7:4242' }], relays: [], revoked }, caKey);
 	return { nodes, store, broadcasts, changes, sign, caKey, overlay: () => overlay, cleanup: () => rm(dataDir, { recursive: true, force: true }) };
@@ -164,6 +165,32 @@ describe('OverlayNodes network state', () => {
 			answer = null;
 			await (h.nodes as any).followInfraAddresses(NET);
 			expect(await allowed()).toEqual(['198.51.100.2/32']);
+		} finally {
+			lookup.mockRestore();
+			await h.cleanup();
+		}
+	});
+
+	// One name that stopped resolving held back the whole list, so another host's new address stayed locked out.
+	it("follows one host's new address while another host's name does not resolve", async () => {
+		const h = await harness();
+		const answers = new Map<string, string | null>([
+			['lighthouse.example.test', '198.51.100.1'],
+			['relay.example.test', '198.51.100.5'],
+		]);
+		const lookup = spyOn(dns, 'lookup').mockImplementation((async (host: string) => {
+			const answer = answers.get(host);
+			if (!answer) throw new Error('ENOTFOUND');
+			return [{ address: answer, family: 4 }];
+		}) as any);
+		const allowed = async (): Promise<string[]> => Object.keys((await h.store.readJSON<any>('nebula.yml'))?.lighthouse.remote_allow_list ?? {}).filter(k => k.endsWith('/32'));
+		try {
+			await h.nodes.acceptState(NET, await signState({ networkID: NET, version: 5, lighthouses: [{ vpnIP: '100.64.0.1', addr: 'lighthouse.example.test:4242' }], relays: [{ vpnIP: '100.64.0.5', addr: 'relay.example.test:4242' }], revoked: [] }, h.caKey));
+			expect(await allowed()).toEqual(['198.51.100.1/32', '198.51.100.5/32']);
+			answers.set('lighthouse.example.test', null);
+			answers.set('relay.example.test', '198.51.100.6');
+			await (h.nodes as any).followInfraAddresses(NET);
+			expect(await allowed()).toEqual(['198.51.100.1/32', '198.51.100.6/32']);
 		} finally {
 			lookup.mockRestore();
 			await h.cleanup();
