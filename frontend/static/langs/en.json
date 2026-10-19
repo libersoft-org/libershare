@@ -601,6 +601,7 @@
 				"inviteRefused": "The founder refused your request.",
 				"inviteExpired": "The invite expired on {date}. Ask the founder for a new one.",
 				"accessUntil": "You have access until {date}.",
+				"renewalPending": "Your renewal request goes to the founder over the lishnet. The new certificate arrives by itself once approved.",
 				"approvedByInvite": "Access for {name} approved. The certificate reaches the member by itself.",
 				"certificateImported": "Certificate imported",
 				"requests": "Requests",

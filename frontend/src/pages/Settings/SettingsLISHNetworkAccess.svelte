@@ -41,6 +41,8 @@
 	let relayed = $derived(status?.peers.filter(p => p.path === 'relay').length ?? 0);
 	let direct = $derived(status?.peers.filter(p => p.path === 'direct').length ?? 0);
 	let expired = $derived(!!status?.certificate && Date.parse(status.certificate.notAfter) <= Date.now());
+	/** A member still in the lishnet hands its renewal in over it, and gets the certificate back the same way. */
+	let renewingOnline = $derived(!!status?.request && !!status.certificate && !status.certificate.revoked && !expired && status.running && !status.invite);
 	let endingSoon = $derived(!!status?.certificate && !expired && Date.parse(status.certificate.notAfter) - Date.now() <= MEMBER_RENEWAL_WINDOW_MS);
 	/** A member out of the lishnet (revoked or expired), or about to be, asks again the same way as the first time. */
 	let canRequest = $derived(!!status && !status.request && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired || endingSoon))));
@@ -260,8 +262,10 @@
 						<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.requestAccess')} disabled={busy} onConfirm={requestAccess} />
 					</ButtonBar>
 				{:else if !founder}
-					<!-- An invite carries the request and the certificate by itself; the JSON is for passing them by hand. -->
-					{#if requestJSON && !status.invite}
+					<!-- An invite or a running member carries the request and the certificate by itself; the JSON is for passing them by hand. -->
+					{#if renewingOnline}
+						<Alert type="info" message={$t('settings.lishNetwork.protected.renewalPending')} />
+					{:else if requestJSON && !status.invite}
 						<div role="group" data-mouse-activate-area={areaID}>
 							<Input value={requestJSON} label={$t('settings.lishNetwork.protected.requestText')} multiline rows={4} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 1]} />
 						</div>

@@ -99,7 +99,7 @@
 			const roles: OverlayRole[] = [...(lighthouse ? (['lighthouse'] as const) : []), ...(relay ? (['relay'] as const) : [])];
 			const validUntil = new Date(Date.now() + Number(days) * 86_400_000).toISOString();
 			const bundle = await api.overlay.approve(network.networkID, selected.id, { validUntil, roles });
-			issued = { name: selected.name, certificate: JSON.stringify(bundle), byInvite: !!selected.invite };
+			issued = { name: selected.name, certificate: JSON.stringify(bundle), byInvite: !!(selected.invite || selected.renewal) };
 			addNotification(tt(issued.byInvite ? 'settings.lishNetwork.protected.approvedByInvite' : 'settings.lishNetwork.protected.approved', { name: selected.name }), 'success');
 		});
 	}

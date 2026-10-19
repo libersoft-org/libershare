@@ -601,6 +601,7 @@
 				"inviteRefused": "Zakladatel tvou žádost odmítl.",
 				"inviteExpired": "Pozvánka vypršela {date}. Požádej zakladatele o novou.",
 				"accessUntil": "Přístup máš do {date}.",
+				"renewalPending": "Žádost o prodloužení jde zakladateli přes síť. Po schválení se nový certifikát nahraje sám.",
 				"approvedByInvite": "Přístup pro {name} je schválený. Certifikát se členovi doručí sám.",
 				"certificateImported": "Certifikát je vložený",
 				"requests": "Žádosti",
