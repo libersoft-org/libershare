@@ -34,7 +34,7 @@ describe('shortening a membership', () => {
 			const data = await store.readFounder();
 			const revokedAt = data.revokedPeers?.[peerID];
 			expect(Date.parse(revokedAt!)).toBeGreaterThanOrEqual(before - 1000);
-			expect(published.at(-1)?.[peerID]).toBe(revokedAt!);
+			expect(published[published.length - 1]?.[peerID]).toBe(revokedAt!);
 			// Valid only after the revocation, so the revocation keeps every earlier certificate out, and not this one.
 			expect(Date.parse(issued[0]!)).toBeGreaterThan(Date.parse(revokedAt!));
 		} finally {
