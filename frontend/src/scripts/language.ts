@@ -141,6 +141,7 @@ const errorCodeKeys: Record<string, string> = {
 	OVERLAY_HELPER_UNAVAILABLE: 'settings.lishNetwork.protected.errorHelperUnavailable',
 	OVERLAY_REQUEST_NOT_FOUND: 'settings.lishNetwork.protected.errorRequestNotFound',
 	OVERLAY_ADDRESSES_EXHAUSTED: 'settings.lishNetwork.protected.errorAddressesExhausted',
+	OVERLAY_PRIVATE_ONLY: 'settings.lishNetwork.protected.errorPrivateOnly',
 	// Host network configuration → settings.network
 	NETCONFIG_INVALID: 'settings.network.errorInvalid',
 	NETCONFIG_UNSUPPORTED: 'settings.network.errorUnsupported',

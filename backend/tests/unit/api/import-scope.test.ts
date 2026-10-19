@@ -12,6 +12,7 @@ let dataDir: string;
 let downloadDir: string;
 let db: ReturnType<typeof openDatabase>;
 let handlers: ReturnType<typeof initLISHsHandlers>;
+let settings: Settings;
 
 beforeAll(async () => {
 	dataDir = await mkdtemp(join(tmpdir(), 'lish-import-scope-'));
@@ -19,13 +20,8 @@ beforeAll(async () => {
 	db = openDatabase(dataDir);
 	const dataServer = new DataServer(db);
 	initLISHScopes(new Map(), (id, ids) => dataServer.setLISHScope(id as any, ids));
-	handlers = initLISHsHandlers(
-		dataServer,
-		() => {},
-		() => {},
-		await Settings.create(dataDir),
-		id => id === 'net-p'
-	);
+	settings = await Settings.create(dataDir);
+	handlers = initLISHsHandlers(dataServer, () => {}, () => {}, settings, id => id === 'net-p');
 });
 
 afterAll(async () => {
@@ -46,4 +42,21 @@ test('an imported LISH can be shared in a protected lishnet, and only in one thi
 	await handlers.importFromJSON({ json: manifest('import-public'), downloadPath: downloadDir, enableSharing: true });
 	expect(getLISHScope('import-public')).toEqual([]);
 	await expect(handlers.importFromJSON({ json: manifest('import-unknown'), downloadPath: downloadDir, enableSharing: true, scope: ['net-x'] })).rejects.toThrow('protected lishnets only');
+});
+
+/** With no protected lishnet to pick (or the list still loading) the screens sent no scope, and the LISH was stored public. */
+test('with protected lishnets only, no LISH is created, imported or switched public', async () => {
+	await settings.set('network.privateOnly', true);
+	try {
+		await expect(handlers.create({ dataPath: downloadDir, addToSharing: true }, null)).rejects.toMatchObject({ code: 'OVERLAY_PRIVATE_ONLY' });
+		await expect(handlers.importFromJSON({ json: manifest('private-only-public'), downloadPath: downloadDir, enableSharing: true })).rejects.toMatchObject({ code: 'OVERLAY_PRIVATE_ONLY' });
+		await expect(handlers.importFromJSON({ json: manifest('private-only-explicit'), downloadPath: downloadDir, scope: [] })).rejects.toMatchObject({ code: 'OVERLAY_PRIVATE_ONLY' });
+		await handlers.importFromJSON({ json: manifest('private-only-scoped'), downloadPath: downloadDir, enableSharing: true, scope: ['net-p'] });
+		// Added again without a scope it keeps its protected one.
+		await handlers.importFromJSON({ json: manifest('private-only-scoped'), downloadPath: downloadDir, overwrite: true });
+		expect(getLISHScope('private-only-scoped')).toEqual(['net-p']);
+		expect(() => handlers.setScope({ lishID: 'private-only-scoped', networkIDs: [] })).toThrow('protected lishnet');
+	} finally {
+		await settings.set('network.privateOnly', false);
+	}
 });

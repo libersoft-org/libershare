@@ -640,7 +640,8 @@
 				"errorCertificateInvalid": "The certificate is not valid for this computer",
 				"errorHelperUnavailable": "The protected network component is not available",
 				"errorRequestNotFound": "The request no longer exists",
-				"errorAddressesExhausted": "The network has no free address left"
+				"errorAddressesExhausted": "The network has no free address left",
+				"errorPrivateOnly": "With protected lishnets only, a LISH must belong to a protected lishnet. Add or choose one."
 			}
 		},
 		"lishNetworkImport": {

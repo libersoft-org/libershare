@@ -172,6 +172,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	/**
+	 * With protected lishnets only, no LISH is added public: the sealed node does not offer it yet, but it would be the
+	 * moment public lishnets are used again, without the user ever having chosen that.
+	 */
+	function refusePublicWhenPrivateOnly(scope: string[] | undefined): void {
+		if (settings.get('network.privateOnly') === true && !scope?.length) throw new CodedError(ErrorCodes.OVERLAY_PRIVATE_ONLY, 'a LISH must belong to a protected lishnet');
+	}
+
+	/**
 	 * Every creation admitted and not yet finished.
 	 *
 	 * A single slot held the last one only: two creations admitted together left the earlier
@@ -273,6 +281,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
 		const scope = checkedScope(p.scope);
+		// Before the hashing pass, which addLISH would otherwise refuse only at its end.
+		refusePublicWhenPrivateOnly(scope);
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;
@@ -423,6 +433,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		// Validate structure early to fail fast before any disk operations.
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
+		// Without a scope a LISH added again keeps the one it had (addLISH).
+		refusePublicWhenPrivateOnly(scope ?? getLISHScope(lish.id));
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		const dirName = datasetRootName(lish);
@@ -880,6 +892,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	function setScope(p: { lishID: string; networkIDs: string[] }): SuccessResponse {
 		assert(p, ['lishID', 'networkIDs']);
 		const scope = checkedScope(p.networkIDs)!;
+		refusePublicWhenPrivateOnly(scope);
 		if (!dataServer.get(p.lishID)) throw new CodedError(ErrorCodes.LISH_NOT_FOUND, p.lishID);
 		setLISHScope(p.lishID, scope);
 		broadcast('lishs:scope', { lishID: p.lishID, scope });

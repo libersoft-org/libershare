@@ -48,6 +48,8 @@ const errorCodes = [
 	'OVERLAY_HELPER_UNAVAILABLE',
 	'OVERLAY_REQUEST_NOT_FOUND',
 	'OVERLAY_ADDRESSES_EXHAUSTED',
+	// A public LISH while only protected lishnets may be used.
+	'OVERLAY_PRIVATE_ONLY',
 
 	// Host network configuration (Settings -> Network). Distinct from the LISH
 	// network codes above: these are about the operating system's own interfaces.

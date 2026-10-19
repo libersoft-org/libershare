@@ -640,7 +640,8 @@
 				"errorCertificateInvalid": "Certifikát pro tento počítač neplatí",
 				"errorHelperUnavailable": "Součást pro chráněné sítě není k dispozici",
 				"errorRequestNotFound": "Žádost už neexistuje",
-				"errorAddressesExhausted": "V síti už nezbývá volná adresa"
+				"errorAddressesExhausted": "V síti už nezbývá volná adresa",
+				"errorPrivateOnly": "V režimu Jen chráněné sítě musí LISH patřit do chráněné sítě. Přidej nebo vyber chráněnou síť."
 			}
 		},
 		"lishNetworkImport": {
