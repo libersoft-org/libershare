@@ -18,7 +18,8 @@ export type OverlayFile =
 	| 'nebula.yml'
 	/** This node's own access request ({@link OverlayAccessRequest}). */
 	| 'request.json'
-	/** Founder bookkeeping ({@link FounderData}). */
+	/** The founder's signed refusal of this node's renewal request ({@link RenewalRefusal}). */
+	| 'refusal.json'	/** Founder bookkeeping ({@link FounderData}). */
 	| 'founder.json'
 	/** The newest signed state this node has verified ({@link SignedOverlayState}). */
 	| 'state.json'
@@ -44,6 +45,24 @@ export interface InviteFile {
 	id: string;
 	founder: string;
 	expires: string;
+}
+
+/** A member's record that the founder refused its renewal request made at `requestCreated`. */
+export interface RenewalRefusal {
+	requestCreated: string;
+}
+
+/**
+ * The founder's decision on a renewal handed in over the lishnet: the certificate issued on it, or a refusal. The CA
+ * key signs it together with the request it answers ({@link signAnswer}), so no other member can pass an older
+ * certificate or a refusal off as the answer.
+ */
+export interface RenewalDecision {
+	requestCreated: string;
+	issued: string;
+	signature: string;
+	bundle?: OverlayCertificateBundle;
+	refused?: boolean;
 }
 
 /** An invite the founder made ({@link OverlayInvite}). */
@@ -84,10 +103,10 @@ export interface FounderData {
 	/** Invites not yet expired. */
 	invites?: FounderInvite[];
 	/**
-	 * Certificates issued on a renewal handed in over the lishnet, by peer ID, sent out again every minute for a while:
-	 * the member may be offline when it is approved. `requestCreated` ties one to the request it answers.
+	 * Decisions on renewals handed in over the lishnet, by peer ID, sent out again every minute for a while: the member
+	 * may be offline when it is decided. The same request handed in again is not queued again.
 	 */
-	renewals?: Record<string, { bundle: OverlayCertificateBundle; requestCreated: string; issued: string }>;
+	renewals?: Record<string, RenewalDecision>;
 }
 
 /** A network ID is used as a directory name, so it must not be able to name anything but one directory. */

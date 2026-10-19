@@ -13,7 +13,8 @@ import { GUEST_GROUP, GUEST_NAME_PREFIX, OVERLAY_LIBP2P_PORT } from './nebula-co
 import { type OverlayHelper } from './overlay-helper.ts';
 import { answerGuest, askFounder } from './overlay-invite.ts';
 import { type OverlayNodes } from './overlay-nodes.ts';
-import { type FounderData, type InviteFile, type OverlayStore } from './overlay-store.ts';
+import { signAnswer, verifyAnswer } from './overlay-state.ts';
+import { type FounderData, type InviteFile, type OverlayStore, type RenewalDecision, type RenewalRefusal } from './overlay-store.ts';
 
 const DEFAULT_SUBNET = '100.64.0.0/16';
 const DEFAULT_MEMBER_DAYS = 365;
@@ -297,6 +298,7 @@ export class OverlayAccess {
 		if (infraAddr !== undefined && !this.deps.nodes.isRunning(networkID) && !(await udpPortFree(infraAddr))) throw new CodedError(ErrorCodes.NETWORK_INVALID, `the UDP port of ${infraAddr} is already in use on this computer`);
 		const request = validateAccessRequest({ type: 'lish-overlay-request', networkID, name, peerID: await this.nodePeerID(networkID, store), publicKey: await this.memberKey(store), ...(infraAddr !== undefined ? { infraAddr } : {}), created: new Date().toISOString() });
 		await store.writeJSON('request.json', request);
+		await store.remove('refusal.json');
 		this.deps.emit('overlay:status', { networkID });
 		// A member asking for a renewal is in the lishnet already: the request goes to the founder through it.
 		void this.sendRenewal(networkID).catch(() => {});
@@ -308,24 +310,39 @@ export class OverlayAccess {
 		const store = this.deps.nodes.store(networkID);
 		if (store.has('ca.key') || store.has('invite.json')) return;
 		const request = await store.readRequest();
-		if (request) await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayRenewal', request });
+		if (!request || (await store.readJSON<RenewalRefusal>('refusal.json'))?.requestCreated === request.created) return;
+		await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayRenewal', request });
 	}
 
 	/**
-	 * Every minute on a running lishnet: a member repeats its renewal request, the founder the certificates it issued on
-	 * renewals in the last {@link RENEWAL_DELIVERY_MS} (a member that was offline when approved picks it up later).
+	 * Every minute on a running lishnet: a member repeats its renewal request, the founder its decisions on renewals of
+	 * the last {@link RENEWAL_DELIVERY_MS} (a member that was offline when they were made picks them up later).
 	 */
 	async repeatAccess(networkID: string): Promise<void> {
 		const store = this.deps.nodes.store(networkID);
 		if (!store.has('ca.key')) return await this.sendRenewal(networkID);
 		const renewals = (await store.readFounder()).renewals ?? {};
-		for (const [peerID, renewal] of Object.entries(renewals)) if (Date.now() - Date.parse(renewal.issued) < RENEWAL_DELIVERY_MS) await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayCertificate', peerID, requestCreated: renewal.requestCreated, bundle: renewal.bundle });
+		for (const [peerID, decision] of Object.entries(renewals)) if (Date.now() - Date.parse(decision.issued) < RENEWAL_DELIVERY_MS) await this.sendDecision(networkID, peerID, decision);
+	}
+
+	private async sendDecision(networkID: string, peerID: string, decision: RenewalDecision): Promise<void> {
+		const answer = { peerID, requestCreated: decision.requestCreated, signature: decision.signature };
+		await this.deps.nodes.broadcastAccess(networkID, decision.refused ? { type: 'overlayRefusal', ...answer } : { type: 'overlayCertificate', ...answer, bundle: decision.bundle });
+	}
+
+	/** Founder: sign a decision on a member's renewal and keep it to send out again ({@link repeatAccess}); under the founder lock. */
+	private async decideRenewal(networkID: string, data: FounderData, request: OverlayAccessRequest, bundle?: OverlayCertificateBundle): Promise<RenewalDecision> {
+		const caKey = (await this.deps.nodes.store(networkID).readText('ca.key'))!;
+		const signature = await signAnswer({ networkID, peerID: request.peerID, requestCreated: request.created, ...(bundle ? { certificate: bundle.certificate } : {}) }, caKey);
+		const decision: RenewalDecision = { requestCreated: request.created, issued: new Date().toISOString(), signature, ...(bundle ? { bundle } : { refused: true }) };
+		data.renewals = { ...Object.fromEntries(Object.entries(data.renewals ?? {}).filter(([, d]) => Date.now() - Date.parse(d.issued) < RENEWAL_DELIVERY_MS)), [request.peerID]: decision };
+		return decision;
 	}
 
 	/** A message of the access exchange from the lishnet's state topic; `from` is the author gossipsub verified. */
 	async onAccessMessage(networkID: string, message: Record<string, any>, from: string | undefined): Promise<void> {
 		if (message['type'] === 'overlayRenewal') await this.takeRenewal(networkID, message['request'], from);
-		else if (message['type'] === 'overlayCertificate') await this.takeRenewedCertificate(networkID, message);
+		else if (message['type'] === 'overlayCertificate' || message['type'] === 'overlayRefusal') await this.takeDecision(networkID, message);
 	}
 
 	/** Founder: queue a member's renewal; only the member itself can hand in one, and only a member at all. */
@@ -337,8 +354,8 @@ export class OverlayAccess {
 		const created = await this.founderLock(networkID).runExclusive(async (): Promise<OverlayPendingRequest | null> => {
 			const data = await store.readFounder();
 			if (!data.members.some(m => m.peerID === from && !m.revoked)) return null;
-			// The same request repeated every minute is queued once.
-			if (data.requests.some(r => r.peerID === from && r.created === request.created)) return null;
+			// The same request repeated every minute is queued once, and not again once decided.
+			if (data.requests.some(r => r.peerID === from && r.created === request.created) || data.renewals?.[from]?.requestCreated === request.created) return null;
 			const kept = data.requests.filter(r => r.peerID !== from);
 			if (kept.length >= MAX_PENDING_REQUESTS) return null;
 			const entry: OverlayPendingRequest = { ...request, id: randomUUID(), received: new Date().toISOString(), renewal: true };
@@ -349,13 +366,26 @@ export class OverlayAccess {
 		if (created) this.deps.emit('overlay:request', created);
 	}
 
-	/** Member: import the certificate issued on its own pending renewal. */
-	private async takeRenewedCertificate(networkID: string, message: Record<string, any>): Promise<void> {
-		const store = this.deps.nodes.store(networkID);
+	/**
+	 * Member: the founder's decision on its own pending renewal — the certificate to import, or a refusal to show. Only
+	 * the one the CA signed for the request this node is waiting on: anyone in the lishnet can send these messages.
+	 */
+	private async takeDecision(networkID: string, message: Record<string, any>): Promise<void> {
+		const { overlay, store } = this.overlayOf(networkID);
 		if (store.has('ca.key')) return;
 		const request = await store.readRequest();
-		// Only the answer to the request this node is waiting on: an older one would replace a newer certificate.
 		if (!request || message['peerID'] !== request.peerID || message['requestCreated'] !== request.created) return;
+		const refused = message['type'] === 'overlayRefusal';
+		const certificate = message['bundle']?.certificate;
+		if (!refused && typeof certificate !== 'string') return;
+		const answer = { networkID, peerID: request.peerID, requestCreated: request.created, ...(refused ? {} : { certificate }) };
+		if (!(await verifyAnswer(answer, message['signature'], await this.deps.nodes.caPublicKey(store, overlay.caCert)))) return void console.warn(`[Overlay ${networkID.slice(0, 8)}] ignored a renewal answer the CA did not sign`);
+		if (refused) {
+			if ((await store.readJSON<RenewalRefusal>('refusal.json'))?.requestCreated === request.created) return;
+			await store.writeJSON('refusal.json', { requestCreated: request.created } satisfies RenewalRefusal);
+			this.deps.emit('overlay:status', { networkID });
+			return void console.log(`[Overlay ${networkID.slice(0, 8)}] the founder refused the renewal`);
+		}
 		await this.importCertificate(message['bundle']);
 		console.log(`[Overlay ${networkID.slice(0, 8)}] the renewed certificate came over the lishnet`);
 	}
@@ -385,18 +415,20 @@ export class OverlayAccess {
 		const { store } = this.founderOf(networkID);
 		const removed = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
-			const kept = data.requests.filter(r => r.id !== requestID);
-			if (kept.length === data.requests.length) return false;
+			const request = data.requests.find(r => r.id === requestID);
+			if (!request) return null;
 			// The invited node learns of it the next time it asks.
-			const inviteID = data.requests.find(r => r.id === requestID)?.invite;
-			const invite = data.invites?.find(i => i.id === inviteID);
+			const invite = data.invites?.find(i => i.id === request.invite);
 			if (invite) invite.refused = true;
-			data.requests = kept;
+			// A member renewing over the lishnet is told, and its request repeated every minute stays decided.
+			const decision = request.renewal ? await this.decideRenewal(networkID, data, request) : null;
+			data.requests = data.requests.filter(r => r.id !== requestID);
 			await store.writeJSON('founder.json', data);
-			return true;
+			return { peerID: request.peerID, decision };
 		});
+		if (removed?.decision) await this.sendDecision(networkID, removed.peerID, removed.decision);
 		if (removed) this.deps.emit('overlay:members', { networkID });
-		return removed;
+		return removed !== null;
 	}
 
 	/**
@@ -483,13 +515,13 @@ export class OverlayAccess {
 		// A renewal handed in over the lishnet gets its certificate over the lishnet: now, and again every minute for a while.
 		const renewal = bundleMember.renewal;
 		if (renewal) {
-			const entry = { bundle, requestCreated: renewal.created, issued: new Date().toISOString() };
-			await this.founderLock(networkID).runExclusive(async () => {
+			const decision = await this.founderLock(networkID).runExclusive(async () => {
 				const data = await store.readFounder();
-				data.renewals = { ...Object.fromEntries(Object.entries(data.renewals ?? {}).filter(([, r]) => Date.now() - Date.parse(r.issued) < RENEWAL_DELIVERY_MS)), [renewal.peerID]: entry };
+				const made = await this.decideRenewal(networkID, data, renewal, bundle);
 				await store.writeJSON('founder.json', data);
+				return made;
 			});
-			await this.deps.nodes.broadcastAccess(networkID, { type: 'overlayCertificate', peerID: renewal.peerID, requestCreated: entry.requestCreated, bundle });
+			await this.sendDecision(networkID, renewal.peerID, decision);
 		}
 		this.deps.emit('overlay:members', { networkID });
 		return bundle;
@@ -773,6 +805,7 @@ export class OverlayAccess {
 			if (bundle.state) await this.deps.nodes.acceptState(bundle.networkID, bundle.state);
 			await store.writeText('member.crt', info.cert);
 			await store.remove('request.json');
+			await store.remove('refusal.json');
 		} finally {
 			await store.remove('issue.crt');
 		}
@@ -871,12 +904,13 @@ export class OverlayAccess {
 		const ownIP = cert?.networks[0]?.split('/')[0];
 		const invite = request ? await store.readJSON<InviteFile>('invite.json').catch(() => null) : null;
 		const inviteState: OverlayInviteState = invite && Date.parse(invite.expires) <= Date.now() ? 'expired' : (this.inviteStates.get(networkID) ?? 'delivering');
-		return {
+		const refused = request ? (await store.readJSON<RenewalRefusal>('refusal.json').catch(() => null))?.requestCreated === request.created : false;		return {
 			networkID,
 			role: store.has('ca.key') ? 'founder' : cert ? 'member' : 'none',
 			...(cert ? { certificate: { name: cert.name, vpnIP: cert.networks[0]!.split('/')[0]!, groups: cert.groups, notBefore: cert.notBefore, notAfter: cert.notAfter, fingerprint: cert.fingerprint, revoked } } : {}),
 			...(request ? { request } : {}),
 			...(invite ? { invite: { expires: invite.expires, state: inviteState } } : {}),
+			...(refused ? { renewalRefused: true } : {}),
 			running: nodes.isRunning(networkID),
 			stateVersion: state?.version ?? overlay.version,
 			hosts: [...overlay.lighthouses.map(h => ({ ...h, role: 'lighthouse' as const })), ...overlay.relays.map(h => ({ ...h, role: 'relay' as const }))].map(h => (h.vpnIP === ownIP ? { ...h, connected: true, self: true } : { ...h, connected: tunnels.has(h.vpnIP) })),

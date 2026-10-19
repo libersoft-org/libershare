@@ -206,7 +206,8 @@ export interface OverlayStatus {
 	request?: OverlayAccessRequest;
 	/** The request goes through an invite: where its delivery stands. */
 	invite?: { expires: string; state: OverlayInviteState };
-	running: boolean;
+	/** The founder refused the renewal {@link request}; a new request can be made. */
+	renewalRefused?: boolean;	running: boolean;
 	stateVersion: number;
 	hosts: OverlayHostStatus[];
 	peers: OverlayPeerStatus[];

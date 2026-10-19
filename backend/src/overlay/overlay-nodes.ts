@@ -482,7 +482,7 @@ export class OverlayNodes {
 	}
 
 	private async onStateMessage(networkID: string, message: any, from?: string): Promise<void> {
-		if (message?.type === 'overlayRenewal' || message?.type === 'overlayCertificate') {
+		if (message?.type === 'overlayRenewal' || message?.type === 'overlayCertificate' || message?.type === 'overlayRefusal') {
 			await this.deps.onAccessMessage?.(networkID, message, from).catch(err => console.warn(`[Overlay ${networkID.slice(0, 8)}] access exchange: ${err?.message ?? err}`));
 			return;
 		}
