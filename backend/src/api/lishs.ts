@@ -38,6 +38,8 @@ interface ImportFromFileParams {
 	overwrite?: boolean;
 	enableSharing?: boolean;
 	enableDownloading?: boolean;
+	/** Protected lishnets to share the LISH in; absent, a new one is public and a known one keeps its scope. */
+	scope?: string[];
 }
 interface ImportFromJSONParams {
 	json: string;
@@ -45,6 +47,8 @@ interface ImportFromJSONParams {
 	overwrite?: boolean;
 	enableSharing?: boolean;
 	enableDownloading?: boolean;
+	/** Protected lishnets to share the LISH in; absent, a new one is public and a known one keeps its scope. */
+	scope?: string[];
 }
 interface ImportFromURLParams {
 	url: string;
@@ -52,6 +56,8 @@ interface ImportFromURLParams {
 	overwrite?: boolean;
 	enableSharing?: boolean;
 	enableDownloading?: boolean;
+	/** Protected lishnets to share the LISH in; absent, a new one is public and a known one keeps its scope. */
+	scope?: string[];
 }
 interface ExportToFileParams {
 	lishID: string;
@@ -472,7 +478,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading, checkedScope(p.scope));
 		return lastResponse;
 	}
 
@@ -484,7 +490,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading, checkedScope(p.scope));
 		return lastResponse;
 	}
 
@@ -497,7 +503,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading, checkedScope(p.scope));
 		return lastResponse;
 	}
 

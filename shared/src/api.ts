@@ -569,16 +569,16 @@ class LISHsAPI {
 		return this.client.call<boolean>('lishs.delete', { lishID, deleteLISH: deleteLISH, deleteData });
 	}
 
-	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 	}
 
-	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 	}
 
-	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 	}
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
