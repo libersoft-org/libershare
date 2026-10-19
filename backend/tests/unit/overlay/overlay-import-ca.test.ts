@@ -109,8 +109,8 @@ describe('importing a CA key', () => {
 			const list = Buffer.from(JSON.stringify({ nextHost: 2, members: [], revoked: backupRevoked })).toString('base64');
 			await access.importCA(NET, `${pem(ca.raw)}-----BEGIN LISH OVERLAY MEMBERS-----\n${list}\n-----END LISH OVERLAY MEMBERS-----\n`);
 			expect(calls).toEqual([
-				['request', NET, 'Network'],
-				['issue', request],
+				['request', NET, 'Network', undefined],
+				['issue', request, {}],
 				['import', bundle],
 			]);
 		} finally {
@@ -159,6 +159,48 @@ describe('importing a CA key', () => {
 		} finally {
 			await rm(dirA, { recursive: true, force: true });
 			await rm(dirB, { recursive: true, force: true });
+		}
+	});
+
+	// A founder whose certificate ran out after the restore had no screen to renew it and stayed out of its lishnet.
+	it("a founder renews its own membership before it ends, and only a founder's", async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
+		let own: { notAfter: string; fingerprint: string } = { ...MEMBER_CERT, notAfter: new Date(Date.now() + 86_400_000).toISOString() };
+		const renewed: unknown[] = [];
+		const asked: unknown[][] = [];
+		const signed: unknown[] = [];
+		const ask = spyOn(OverlayAccess.prototype, 'requestAccess').mockImplementation((async (...args: unknown[]) => (asked.push(args), {})) as any);
+		const sign = spyOn(OverlayAccess.prototype, 'issue').mockImplementation((async (_request: unknown, opts: unknown) => (signed.push(opts), {})) as any);
+		const take = spyOn(OverlayAccess.prototype, 'importCertificate').mockImplementation((async (bundle: unknown) => (renewed.push(bundle), {})) as any);
+		try {
+			const ca = await generateKeyPair('Ed25519');
+			const access = new OverlayAccess({
+				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => own, currentState: async () => null } as any,
+				getRow: () => ({ networkID: NET, name: 'Network', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+				addNetwork: async () => {},
+				refresh: async () => {},
+				emit: () => {},
+			});
+			// The usual founder: its own node is the lighthouse and relay, and a renewal must keep it so.
+			const hostRow = { networkID: NET, name: 'Network', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [{ vpnIP: '100.64.0.9', addr: '203.0.113.9:4242' }], relays: [{ vpnIP: '100.64.0.9', addr: '203.0.113.9:4242' }], lanDirect: false, version: 0 } };
+			(access as any).deps.getRow = () => hostRow;
+			// Not a founder yet: nothing to sign with.
+			expect(await access.ensureOwnMembership(NET)).toBe(false);
+			const store = new OverlayStore(dir, NET);
+			await store.ensureDir();
+			await store.writeText('ca.key', pem(ca.raw));
+			// Ends tomorrow: renewed.
+			expect(await access.ensureOwnMembership(NET)).toBe(true);
+			own = { ...MEMBER_CERT, notAfter: new Date(Date.now() + 30 * 86_400_000).toISOString() };
+			expect(await access.ensureOwnMembership(NET)).toBe(false);
+			expect(renewed).toHaveLength(1);
+			expect(asked).toEqual([[NET, 'Network', '203.0.113.9:4242']]);
+			expect(signed).toEqual([{ roles: ['lighthouse', 'relay'] }]);
+		} finally {
+			ask.mockRestore();
+			sign.mockRestore();
+			take.mockRestore();
+			await rm(dir, { recursive: true, force: true });
 		}
 	});
 

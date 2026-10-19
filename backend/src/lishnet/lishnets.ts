@@ -12,6 +12,9 @@ import { OverlayAccess } from '../overlay/overlay-access.ts';
 import { confirmPeerCleanup, listPeerCleanup } from '../db/peer-cleanup.ts';
 import { type PeerId } from '@libp2p/interface';
 
+/** How often a founder checks that its own certificate is still usable (see `startOwnMembershipRenewal`). */
+const OWN_MEMBERSHIP_CHECK_MS = 3_600_000;
+
 /**
  * Outcome of {@link Networks.setEnabled}.
  *
@@ -271,6 +274,8 @@ export class Networks {
 	// Callback fired after a lishnet is (re-)joined in-process. Lets higher layers
 	// resume downloads that were suspended when this lishnet was previously left.
 	private _onNetworkJoined: ((networkID: string) => void) | null = null;
+	/** {@link startOwnMembershipRenewal}'s hourly check. */
+	private ownMembershipTimer: ReturnType<typeof setInterval> | null = null;
 	// Callback for protected-lishnet events (requests, members, state) the API broadcasts.
 	private _onOverlayEvent: ((event: string, data: unknown) => void) | null = null;
 
@@ -445,6 +450,22 @@ export class Networks {
 	}
 
 	/**
+	 * A founder's own certificate is renewed by the founder itself, now and every hour: no screen offers it a request
+	 * to make, so one that ran out would leave the founder outside its own lishnet.
+	 */
+	private startOwnMembershipRenewal(): void {
+		if (this.ownMembershipTimer) return;
+		const renew = (): void => {
+			for (const row of this.list()) {
+				if (!row.overlay) continue;
+				void this.overlay.ensureOwnMembership(row.networkID).catch(err => console.error(`[Networks] renewing the founder's own membership of ${row.networkID} failed:`, err?.message ?? err));
+			}
+		};
+		renew();
+		this.ownMembershipTimer = setInterval(renew, OWN_MEMBERSHIP_CHECK_MS);
+	}
+
+	/**
 	 * Get the underlying libp2p node (for low-level event listening / stats).
 	 */
 	getLibp2pNode(): any {
@@ -580,7 +601,10 @@ export class Networks {
 			startupError = err;
 		}
 
-		if (startupError === undefined) return;
+		if (startupError === undefined) {
+			this.startOwnMembershipRenewal();
+			return;
+		}
 
 		// If this call brought the shared node up, a failed membership phase must take it
 		// back down. Keeping an otherwise healthy node with only the prefix of enabled
@@ -1201,6 +1225,8 @@ export class Networks {
 		// until the next microtask, so `isRunning()` alone still reads true for a moment
 		// and a startup loop in that moment would subscribe onto a node about to die.
 		this.stopRequested = true;
+		if (this.ownMembershipTimer) clearInterval(this.ownMembershipTimer);
+		this.ownMembershipTimer = null;
 		// The door is closed from INSIDE the catalog, not here: a writer already queued on
 		// the catalog reaches its database write before this call reaches the catalog at
 		// all, and it has to get its reservation so the drain below covers it — see
