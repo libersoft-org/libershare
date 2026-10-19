@@ -646,8 +646,9 @@ class SearchAPI {
 		this.client = client;
 	}
 
-	startSearch(query: string): Promise<{ searchID: string }> {
-		return this.client.call<{ searchID: string }>('search.startSearch', { query });
+	/** `networkIDs` limits the search to these lishnets; without it every joined lishnet is asked. */
+	startSearch(query: string, networkIDs?: string[]): Promise<{ searchID: string }> {
+		return this.client.call<{ searchID: string }>('search.startSearch', { query, ...(networkIDs ? { networkIDs } : {}) });
 	}
 
 	cancelSearch(searchID: string): Promise<{ ok: true }> {

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { initSearchManager } from '../../../src/api/search.ts';
 import { getSearchResultHandler } from '../../../src/protocol/lish-protocol.ts';
+import { lishTopic } from '../../../src/protocol/constants.ts';
 
 const LISH_ID = 'dddddddd-3333-4444-8555-666666666666';
 
@@ -16,6 +17,36 @@ function node(peerID: string, sent: Array<{ topic: string; searchID: string }>) 
 		},
 	};
 }
+
+/** A search for a private file's name went out on the public lishnet too, telling it what the member looks for. */
+test('a search limited to a protected lishnet asks nothing on the public node', async () => {
+	const sent: Array<{ topic: string; searchID: string }> = [];
+	const publicNode = { ...node('public-peer', sent), getPeers: (): string[] => ['public-member'], lishScope: null };
+	const protectedNode = { ...node('protected-peer', sent), lishScope: 'protected' };
+	const dialed: string[] = [];
+	(publicNode as any).dialProtocolByPeerId = async (peerID: string) => {
+		dialed.push(peerID);
+		throw new Error('unreachable');
+	};
+	const networks = {
+		getNetwork: () => publicNode,
+		getRunningNetwork: () => publicNode,
+		protectedNodes: () => [protectedNode],
+		networkFor: (id: string) => (id === 'protected' ? protectedNode : publicNode),
+		get: (id: string) => (id === 'protected' ? { overlay: {} } : undefined),
+		list: () => [
+			{ networkID: 'public', enabled: true },
+			{ networkID: 'protected', enabled: true, overlay: {} },
+		],
+		isJoined: () => true,
+	};
+	const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, () => {});
+	await manager.startSearch({ query: 'secret plans', networkIDs: ['protected'] });
+	await Bun.sleep(20);
+	expect(sent.map(s => s.topic)).toEqual([lishTopic('protected')]);
+	expect(dialed).toEqual([]);
+	manager.stopAll();
+});
 
 /** One search ID on the public and a protected lishnet told a member of both that the two identities were one machine. */
 test('each node sends a search under its own ID and the answers reach one session', async () => {

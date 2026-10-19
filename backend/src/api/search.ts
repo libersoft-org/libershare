@@ -91,6 +91,8 @@ interface SearchSession {
 	abort: AbortController;
 	/** The search IDs the protected lishnets' nodes sent the query under ({@link SearchSession.searchID} is the public node's). */
 	aliases: string[];
+	/** The nodes of the lishnets the search was asked for: their peers are the ones queried directly. */
+	searchNodes: Network[];
 }
 
 /**
@@ -108,7 +110,8 @@ interface RefusalState {
 }
 
 export interface SearchManager {
-	startSearch: (p: { query: string }) => Promise<{ searchID: string }>;
+	/** `networkIDs`: search these lishnets only; absent, every joined one. */
+	startSearch: (p: { query: string; networkIDs?: string[] }) => Promise<{ searchID: string }>;
 	cancelSearch: (p: { searchID: string }) => { ok: true };
 	stopAll: () => void;
 }
@@ -235,17 +238,23 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		return '';
 	}
 
-	async function startSearch(p: { query: string }): Promise<{ searchID: string }> {
+	async function startSearch(p: { query: string; networkIDs?: string[] }): Promise<{ searchID: string }> {
 		const query = (p.query ?? '').trim();
 		if (query.length === 0) throw new Error('search query is empty');
 		// Refuse here what every responder refuses anyway. Without this the search is sent,
 		// each peer drops it on the same bound and answers with an empty list, and the user is
 		// told nothing was found — which is not what happened.
 		if (query.length > MAX_SEARCH_QUERY_LENGTH) throw new CodedError(ErrorCodes.SEARCH_QUERY_TOO_LONG, String(query.length));
+		if (p.networkIDs !== undefined && (!Array.isArray(p.networkIDs) || p.networkIDs.some(id => typeof id !== 'string'))) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'networkIDs must be a list of lishnet IDs');
 		const searchID = randomUUID();
 		const timeoutMs = settings.get('network.searchTimeout') ?? 30_000;
 		const network = networks.getRunningNetwork();
-		const nodes = [network, ...networks.protectedNodes()];
+		// Asked only where the user chose: the query itself tells the lishnets it reaches what this member looks for, so a
+		// search in a protected lishnet must not go out on the public one too.
+		const chosen = p.networkIDs ? new Set(p.networkIDs) : null;
+		const inScope = (networkID: string): boolean => chosen === null || chosen.has(networkID);
+		const publicChosen = chosen === null || networks.list().some(c => !c.overlay && chosen.has(c.networkID));
+		const nodes = [...(publicChosen ? [network] : []), ...networks.protectedNodes().filter(node => inScope(node.lishScope ?? ''))];
 		const selfPeerIDs = new Set(nodes.map(node => node.getNodeInfo()?.peerID ?? ''));
 		const queried: Queried = new Set();
 		const peerNodes = new Map<string, Network>();
@@ -293,6 +302,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			inFlightClients: new Set<LISHClient>(),
 			abort: new AbortController(),
 			aliases: [],
+			searchNodes: nodes,
 		};
 		sessions.set(searchID, session);
 		registerSearchResultHandler(searchID, handleResult);
@@ -312,7 +322,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// Broadcast the query on every joined network topic. If broadcast fails on a particular
 		// topic, log and continue — the search is still useful on other networks.
 		for (const config of networks.list()) {
-			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
+			if (!config.enabled || !networks.isJoined(config.networkID) || !inScope(config.networkID)) continue;
 			try {
 				const node = config.overlay ? networks.networkFor(config.networkID) : network;
 				await node.broadcast(lishTopic(config.networkID), { type: 'searchLishs', searchID: idFor(node), query });
@@ -343,7 +353,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	 */
 	async function runUnicastFallback(session: SearchSession): Promise<void> {
 		const { searchID, query, queried } = session;
-		const nodes = [networks.getRunningNetwork(), ...networks.protectedNodes()];
+		const nodes = session.searchNodes;
 		const selfPeerIDs = new Set(nodes.map(node => node.getNodeInfo()?.peerID ?? ''));
 		// `getPeers()` is the libp2p-connection peer set, NOT the gossipsub
 		// subscriber set. Includes peers freshly dialed via mDNS for whom
