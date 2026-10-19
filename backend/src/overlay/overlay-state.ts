@@ -4,7 +4,9 @@ import { CodedError, ErrorCodes, type LISHOverlayDefinition, type OverlayState, 
 
 /** Prefix of every signed state, so a state signature can never pass for a Nebula certificate signature. */
 const DOMAIN = 'lish-overlay-state/1\n';
-const MAX_STATE_BYTES = 200 * 1024;
+/** Every approval adds a member limit (about 110 bytes) until it is compacted when it ends: room for thousands of members. */
+const MAX_STATE_BYTES = 1024 * 1024;
+const MAX_LIMITS_PER_MEMBER = 64;
 const FINGERPRINT = /^[0-9a-f]{64}$/;
 /** A certificate name: the member's libp2p peer ID (base58). */
 const PEER_NAME = /^[1-9A-HJ-NP-Za-km-z]{40,64}$/;
@@ -94,7 +96,13 @@ export async function verifyState(signed: unknown, caPublicKeyHex: string, netwo
 	if (typeof peers !== 'object' || peers === null || Array.isArray(peers)) throw invalid('state member revocations must be an object');
 	for (const [peerID, at] of Object.entries(peers)) if (!PEER_NAME.test(peerID) || typeof at !== 'string' || Number.isNaN(Date.parse(at))) throw invalid('state member revocations must map peer IDs to times');
 	const revokedPeers = peers as Record<string, string>;
-	return { networkID, version, lighthouses, relays, revoked: [...new Set(revoked as string[])], ...(Object.keys(revokedPeers).length > 0 ? { revokedPeers } : {}) };
+	// States signed before approvals limited older certificates have none.
+	const limits = parsed['limits'] ?? {};
+	const time = (t: unknown): boolean => typeof t === 'string' && !Number.isNaN(Date.parse(t));
+	if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) throw invalid('state limits must be an object');
+	for (const [peerID, list] of Object.entries(limits)) if (!PEER_NAME.test(peerID) || !Array.isArray(list) || list.length > MAX_LIMITS_PER_MEMBER || list.some(l => !Array.isArray(l) || l.length !== 2 || !time(l[0]) || !time(l[1]))) throw invalid('state limits must map peer IDs to [before, until] times');
+	const memberLimits = limits as Record<string, Array<[string, string]>>;
+	return { networkID, version, lighthouses, relays, revoked: [...new Set(revoked as string[])], ...(Object.keys(revokedPeers).length > 0 ? { revokedPeers } : {}), ...(Object.keys(memberLimits).length > 0 ? { limits: memberLimits } : {}) };
 }
 
 /** The definition with the hosts of a newer verified state. */

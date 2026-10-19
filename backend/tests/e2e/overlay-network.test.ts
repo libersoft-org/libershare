@@ -262,19 +262,33 @@ describe('protected lishnet on loopback', () => {
 		expect(renewed.certificate!.revoked).toBe(false);
 	}, 200_000);
 
-	it('a renewal that ends sooner revokes the longer certificate it replaces', async () => {
+	// Approved shorter while the member was switched off, it was revoked at once and could not fetch the new certificate.
+	it('a shorter renewal reaches a member that was offline, which keeps its longer certificate until then', async () => {
 		const held = (await bob.api.overlay.status(network.networkID)).certificate!;
-		const request = await bob.api.overlay.requestAccess(network.networkID, 'Bob');
-		const bundle = await founder.api.overlay.issue(request, { validUntil: new Date(Date.now() + 2 * 3600_000).toISOString() });
+		await bob.api.overlay.requestAccess(network.networkID, 'Bob');
+		const pending = await until('the renewal reaches the founder', async () => (await founder.api.overlay.listRequests(network.networkID)).find(r => r.renewal && r.name === 'Bob'), 90_000);
+		await bob.api.lishnets.setEnabled(network.networkID, false);
+		const stateBefore = (await founder.api.overlay.status(network.networkID)).stateVersion;
+		await founder.api.overlay.approve(network.networkID, pending.id, { validUntil: new Date(Date.now() + 2 * 3600_000).toISOString() });
 		const rows = (await founder.api.overlay.listMembers(network.networkID)).filter(m => m.name === 'Bob');
-		expect(rows.find(m => m.fingerprint === held.fingerprint)?.revoked).toBe(true);
-		expect((await founder.api.overlay.status(network.networkID)).stateVersion).toBeGreaterThan(0);
-		const renewed = await bob.api.overlay.importCertificate(bundle);
+		expect(rows.find(m => m.fingerprint === held.fingerprint)?.revoked).toBe(false);
+		// The limit on the longer certificate is in a new signed state.
+		expect((await founder.api.overlay.status(network.networkID)).stateVersion).toBeGreaterThan(stateBefore);
+		await bob.api.lishnets.setEnabled(network.networkID, true);
+		const renewed = await until(
+			'bob takes the shorter certificate over the lishnet',
+			async () => {
+				const s = await bob.api.overlay.status(network.networkID);
+				return s.certificate && s.certificate.fingerprint !== held.fingerprint && !s.request ? s : null;
+			},
+			120_000
+		);
+		expect(Date.parse(renewed.certificate!.notAfter) - Date.now()).toBeLessThan(3 * 3600_000);
 		expect(renewed.certificate!.vpnIP).toBe(held.vpnIP);
 		expect(renewed.certificate!.revoked).toBe(false);
 		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
 		await until('alice sees bob on the shorter certificate', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
-	}, 150_000);
+	}, 300_000);
 
 	it("revoking any of a member's certificates revokes the member", async () => {
 		const shorter = (await bob.api.overlay.status(network.networkID)).certificate!;

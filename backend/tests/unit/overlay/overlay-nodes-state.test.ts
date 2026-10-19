@@ -319,6 +319,31 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// A later approval limited the member's older certificates; one of them kept the member in past that end.
+	it('lets a member in on an older certificate until a signed limit ends it, then blocks it', async () => {
+		const h = await harness();
+		const older = 'e'.repeat(64);
+		tunnel(h, { name: MEMBER, fingerprint: older, notBefore: '2026-01-01T00:00:00Z' });
+		try {
+			await h.nodes.acceptState(NET, await signState({ networkID: NET, version: 5, lighthouses: [], relays: [], revoked: [], limits: { [MEMBER]: [['2026-06-01T00:00:00Z', new Date(Date.now() + 86_400_000).toISOString()]] } }, h.caKey));
+			expect(await h.nodes.authorizePeer(NET, MEMBER, '100.64.0.7')).toBe(true);
+			// The same limit, once its end has passed: refused, and the certificate blocked.
+			const h2 = await harness();
+			const t2 = tunnel(h2, { name: MEMBER, fingerprint: older, notBefore: '2026-01-01T00:00:00Z' });
+			try {
+				await h2.nodes.acceptState(NET, await signState({ networkID: NET, version: 5, lighthouses: [], relays: [], revoked: [], limits: { [MEMBER]: [['2026-06-01T00:00:00Z', new Date(Date.now() - 1000).toISOString()]] } }, h2.caKey));
+				expect(await h2.nodes.authorizePeer(NET, MEMBER, '100.64.0.7')).toBe(false);
+				await h2.nodes.sweepRevokedPeers(NET);
+				expect((await h2.store.readJSON<any>('nebula.yml'))?.pki.blocklist).toEqual([older]);
+				expect(t2.reloads()).toBeGreaterThan(0);
+			} finally {
+				await h2.cleanup();
+			}
+		} finally {
+			await h.cleanup();
+		}
+	});
+
 	it('lets the member in again on a certificate issued after the revocation', async () => {
 		const h = await harness();
 		tunnel(h, { name: MEMBER, fingerprint: 'd'.repeat(64), notBefore: '2026-10-19T10:00:01Z' });

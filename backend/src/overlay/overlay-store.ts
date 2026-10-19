@@ -93,6 +93,8 @@ export interface FounderData {
 	revoked?: string[];
 	/** Members revoked by peer ID ({@link OverlayRevocations.peers}), kept the same way. */
 	revokedPeers?: Record<string, string>;
+	/** Limits every approval puts on the member's older certificates ({@link OverlayRevocations.limits}). */
+	limits?: Record<string, Array<[string, string]>>;
 	/**
 	 * The block of addresses this device hands out (256 per lane): 0 for the founding device, another one for each
 	 * device restored from a backup, so two devices holding the CA key do not give two members one address.

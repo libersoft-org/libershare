@@ -91,7 +91,7 @@ function pickLane(size: number, taken: number[]): number {
 }
 
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
-function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers' | 'lanes'> | null {
+function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers' | 'limits' | 'lanes'> | null {
 	const body = new RegExp(`${MEMBERS_BEGIN}([\\s\\S]*?)${MEMBERS_END}`).exec(text)?.[1];
 	if (body === undefined) return null;
 	const invalid = (): CodedError => new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the member list of the backup is damaged');
@@ -112,10 +112,13 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 	if (!Array.isArray(revoked) || revoked.some((f: unknown) => typeof f !== 'string' || !FINGERPRINT.test(f))) throw invalid();
 	const revokedPeers = list.revokedPeers ?? {};
 	if (typeof revokedPeers !== 'object' || revokedPeers === null || Array.isArray(revokedPeers) || Object.entries(revokedPeers).some(([p, at]) => !str(p) || typeof at !== 'string' || Number.isNaN(Date.parse(at)))) throw invalid();
+	const time = (t: unknown): boolean => typeof t === 'string' && !Number.isNaN(Date.parse(t));
+	const limits = list.limits ?? {};
+	if (typeof limits !== 'object' || limits === null || Array.isArray(limits) || Object.entries(limits).some(([p, l]) => !str(p) || !Array.isArray(l) || l.some(e => !Array.isArray(e) || e.length !== 2 || !time(e[0]) || !time(e[1])))) throw invalid();
 	// Backups made before lanes know only the founding device's.
 	const lanes = list.lanes ?? [0];
 	if (!Array.isArray(lanes) || lanes.some((l: unknown) => !Number.isInteger(l) || (l as number) < 0)) throw invalid();
-	return { nextHost: list.nextHost, members, revoked, revokedPeers, lanes };
+	return { nextHost: list.nextHost, members, revoked, revokedPeers, limits, lanes };
 }
 
 export interface OverlayAccessDeps {
@@ -185,7 +188,7 @@ export class OverlayAccess {
 	/** Every revocation known here: the node's (all verified states) and the founder's member list and backups. */
 	private async revocations(networkID: string, overlay: LISHOverlayDefinition): Promise<OverlayRevocations> {
 		const founder = await this.deps.nodes.store(networkID).readFounder();
-		const listed = { fingerprints: [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])], peers: founder.revokedPeers ?? {} };
+		const listed = { fingerprints: [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])], peers: founder.revokedPeers ?? {}, ...(founder.limits ? { limits: founder.limits } : {}) };
 		return mergeRevocations(await this.deps.nodes.knownRevocations(networkID, overlay), listed);
 	}
 
@@ -469,36 +472,28 @@ export class OverlayAccess {
 				vpnIP = free;
 			}
 			const notAfter = until.toISOString().replace(/\.\d{3}Z$/, 'Z');
-			// A renewal that ends sooner than a certificate the node still holds would shorten nothing while that one stays
-			// valid. Another device holding the CA key may have issued a longer one this device never saw, so the member is
-			// revoked by peer ID: every certificate of it issued before now, wherever. The node is out until it imports the
-			// new one.
-			// shortcut: a shortening is noticed only against a longer certificate this device issued or knows from a backup.
-			const superseded = current.filter(m => Date.parse(m.notAfter) > Date.parse(notAfter));
-			for (const m of superseded) m.revoked = true;
-			if (superseded.length > 0) data.revokedPeers = mergeRevocations({ fingerprints: [], peers: data.revokedPeers ?? {} }, { fingerprints: [], peers: { [request.peerID]: new Date().toISOString() } }).peers;
-			// A node revoked as a member is approved again with a certificate valid only after that revocation, which
-			// keeps every older one (also one another device issued) revoked.
-			const revokedAt = mergeRevocations(await this.revocations(networkID, overlay), { fingerprints: [], peers: data.revokedPeers ?? {} }).peers[request.peerID];
-			// Certificates count whole seconds: the first one after the revocation, waited for when it is still ahead.
-			const after = revokedAt ? Math.max(Math.floor((Date.now() - 60_000) / 1000), Math.floor(Date.parse(revokedAt) / 1000) + 1) * 1000 : 0;
+			// The new certificate starts after every earlier decision on the member: after its revocation (which keeps
+			// every older certificate out, also one another device issued) and after the start of its last approval (whose
+			// limit below must not reach this one). Certificates count whole seconds; a start still ahead is waited for.
+			const known = mergeRevocations(await this.revocations(networkID, overlay), { fingerprints: [], peers: data.revokedPeers ?? {}, ...(data.limits ? { limits: data.limits } : {}) });
+			const earlier = [known.peers[request.peerID], ...(known.limits?.[request.peerID] ?? []).map(l => l[0])].filter((t): t is string => t !== undefined).map(t => Math.floor(Date.parse(t) / 1000) + 1);
+			const after = Math.max(Math.floor((Date.now() - 60_000) / 1000), ...earlier) * 1000;
 			if (after > Date.now()) await Bun.sleep(after - Date.now());
-			const notBefore = revokedAt ? new Date(after).toISOString().replace(/\.\d{3}Z$/, 'Z') : undefined;
+			const notBefore = new Date(after).toISOString().replace(/\.\d{3}Z$/, 'Z');
 			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], notAfter, notBefore);
+			// The newest decision on how long the member stays bounds its older certificates: a longer one, also one another
+			// device holding the CA key issued and this one never saw, ends with this one. They stay valid until then, so a
+			// member offline now still gets this certificate over the lishnet.
+			data.limits = { ...data.limits, [request.peerID]: [...(data.limits?.[request.peerID] ?? []), [cert.notBefore, cert.notAfter]] };
 			const member: OverlayMember = { name: request.name, peerID: request.peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false };
 			data.members.push(member);
 			data.requests = data.requests.filter(r => r.id !== requestID);
 			await store.writeJSON('founder.json', data);
-			// Roles given, taken away by a renewal without them, or an older certificate to revoke: a new signed state.
-			if (roles.length > 0 || current.some(m => m.roles.length > 0) || superseded.length > 0) {
-				const host: LISHOverlayHost = { vpnIP, addr: request.infraAddr ?? '', peerID: request.peerID };
-				const others = (list: LISHOverlayHost[]): LISHOverlayHost[] => list.filter(h => h.vpnIP !== host.vpnIP);
-				await this.publishLocked(
-					networkID,
-					o => ({ lighthouses: roles.includes('lighthouse') ? [...others(o.lighthouses), host] : others(o.lighthouses), relays: roles.includes('relay') ? [...others(o.relays), host] : others(o.relays) }),
-					superseded.map(m => m.fingerprint)
-				);
-			}
+			// Every approval signs a new state: the limit above, and the roles given or taken away by a renewal without them.
+			const host: LISHOverlayHost = { vpnIP, addr: request.infraAddr ?? '', peerID: request.peerID };
+			const others = (list: LISHOverlayHost[]): LISHOverlayHost[] => list.filter(h => h.vpnIP !== host.vpnIP);
+			const hostsChange = roles.length > 0 || current.some(m => m.roles.length > 0);
+			await this.publishLocked(networkID, o => (hostsChange ? { lighthouses: roles.includes('lighthouse') ? [...others(o.lighthouses), host] : others(o.lighthouses), relays: roles.includes('relay') ? [...others(o.relays), host] : others(o.relays) } : { lighthouses: o.lighthouses, relays: o.relays }), []);
 			return { member, cert: cert.cert, invite: request.invite, renewal: request.renewal ? request : undefined };
 		});
 		const state = await store.readState();
@@ -780,7 +775,7 @@ export class OverlayAccess {
 	private async publishLocked(networkID: string, hosts: (overlay: LISHOverlayDefinition) => Pick<LISHOverlayDefinition, 'lighthouses' | 'relays'>, revoke: string[]): Promise<void> {
 		const { overlay } = this.overlayOf(networkID);
 		const known = await this.revocations(networkID, overlay);
-		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...known.fingerprints, ...revoke])], revokedPeers: known.peers });
+		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...known.fingerprints, ...revoke])], revokedPeers: known.peers, ...(known.limits ? { limits: known.limits } : {}) });
 	}
 
 	/**
@@ -828,7 +823,7 @@ export class OverlayAccess {
 		const { nextHost, members, lane, lanes } = await store.readFounder();
 		const known = await this.revocations(networkID, overlay);
 		const taken = [...new Set([...(lanes ?? [0]), lane ?? 0])];
-		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked: known.fingerprints, revokedPeers: known.peers, lanes: taken })).toString('base64');
+		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked: known.fingerprints, revokedPeers: known.peers, limits: known.limits ?? {}, lanes: taken })).toString('base64');
 		return { networkID, caKey: `${(await store.readText('ca.key'))!.trim()}\n${MEMBERS_BEGIN}\n${list.replace(/.{1,64}/g, '$&\n')}${MEMBERS_END}\n` };
 	}
 
@@ -855,9 +850,10 @@ export class OverlayAccess {
 				else data.members.push(m);
 			}
 			data.nextHost = Math.max(data.nextHost, backup?.nextHost ?? 1);
-			const merged = mergeRevocations({ fingerprints: data.revoked ?? [], peers: data.revokedPeers ?? {} }, { fingerprints: backup?.revoked ?? [], peers: backup?.revokedPeers ?? {} });
+			const merged = mergeRevocations({ fingerprints: data.revoked ?? [], peers: data.revokedPeers ?? {}, ...(data.limits ? { limits: data.limits } : {}) }, { fingerprints: backup?.revoked ?? [], peers: backup?.revokedPeers ?? {}, ...(backup?.limits ? { limits: backup.limits } : {}) });
 			if (merged.fingerprints.length > 0) data.revoked = merged.fingerprints;
 			if (Object.keys(merged.peers).length > 0) data.revokedPeers = merged.peers;
+			if (merged.limits) data.limits = merged.limits;
 			await store.writeJSON('founder.json', data);
 		});
 		// A clean device has no certificate of its own, and the screens offer a founder no request to make.

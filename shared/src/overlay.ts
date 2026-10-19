@@ -65,6 +65,8 @@ export interface OverlayState {
 	 * this one never saw. A certificate issued later (an approval after the revocation) is not.
 	 */
 	revokedPeers?: Record<string, string>;
+	/** Limits on members' older certificates ({@link OverlayRevocations.limits}). */
+	limits?: Record<string, Array<[string, string]>>;
 }
 
 /** How long before a member's certificate ends it may ask for a renewal (the request is the one it makes to join). */
@@ -74,20 +76,57 @@ export const MEMBER_RENEWAL_WINDOW_MS: number = 30 * 86_400_000;
 export interface OverlayRevocations {
 	fingerprints: string[];
 	peers: Record<string, string>;
+	/**
+	 * Per member (peer ID), `[before, until]` pairs (ISO 8601): every certificate of the member valid from earlier than
+	 * `before` counts as revoked from `until` on. Each approval adds one with its new certificate's start and end, so the
+	 * newest decision on how long a member stays bounds every older certificate — also a longer one another device
+	 * holding the CA key issued and this one never saw — without cutting the member off before that.
+	 */
+	limits?: Record<string, Array<[string, string]>>;
 }
 
 /** Both sets of revocations together; a member revoked twice keeps the later time. Revocations are never dropped. */
 export function mergeRevocations(a: OverlayRevocations, b: OverlayRevocations): OverlayRevocations {
 	const peers = { ...a.peers };
 	for (const [peerID, at] of Object.entries(b.peers)) if (!peers[peerID] || Date.parse(at) > Date.parse(peers[peerID]!)) peers[peerID] = at;
-	return { fingerprints: [...new Set([...a.fingerprints, ...b.fingerprints])], peers };
+	const limits: Record<string, Array<[string, string]>> = {};
+	for (const source of [a.limits, b.limits])
+		for (const [peerID, list] of Object.entries(source ?? {})) {
+			const held = (limits[peerID] ??= []);
+			for (const [before, until] of list) if (!held.some(l => l[0] === before && l[1] === until)) held.push([before, until]);
+		}
+	return { fingerprints: [...new Set([...a.fingerprints, ...b.fingerprints])], peers, ...(Object.keys(limits).length > 0 ? { limits } : {}) };
 }
 
-/** Whether a certificate is revoked: by its fingerprint, or as a member's certificate issued before the member was revoked. */
-export function isRevoked(revocations: OverlayRevocations, cert: { name: string; fingerprint: string; notBefore: string }): boolean {
+/**
+ * The same revocations in their smallest form at `now`: a limit whose `until` has passed revokes, from now on, every
+ * certificate valid from before its `before` — a revocation of the member at that time — and a limit no later than the
+ * member's revocation adds nothing. States signed with it stay small; it holds the same for any later time.
+ */
+export function compactRevocations(r: OverlayRevocations, now: number = Date.now()): OverlayRevocations {
+	const peers = { ...r.peers };
+	for (const [peerID, list] of Object.entries(r.limits ?? {}))
+		for (const [before, until] of list) if (Date.parse(until) <= now && (!peers[peerID] || Date.parse(before) > Date.parse(peers[peerID]!))) peers[peerID] = before;
+	const limits: Record<string, Array<[string, string]>> = {};
+	for (const [peerID, list] of Object.entries(r.limits ?? {})) {
+		const kept = list.filter(([before, until]) => Date.parse(until) > now && (!peers[peerID] || Date.parse(before) > Date.parse(peers[peerID]!)));
+		if (kept.length > 0) limits[peerID] = [...kept].sort((x, y) => x[0].localeCompare(y[0]) || x[1].localeCompare(y[1]));
+	}
+	// Sorted throughout, so two equal sets compare equal as JSON.
+	const sorted = <T>(o: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(o).sort(([x], [y]) => x.localeCompare(y)));
+	return { fingerprints: [...new Set(r.fingerprints)].sort(), peers: sorted(peers), ...(Object.keys(limits).length > 0 ? { limits: sorted(limits) } : {}) };
+}
+
+/**
+ * Whether a certificate is revoked: by its fingerprint, as a member's certificate issued before the member was
+ * revoked, or as one a later approval limited to an end that has passed.
+ */
+export function isRevoked(revocations: OverlayRevocations, cert: { name: string; fingerprint: string; notBefore: string }, now: number = Date.now()): boolean {
 	if (revocations.fingerprints.includes(cert.fingerprint)) return true;
+	const from = Date.parse(cert.notBefore);
 	const at = revocations.peers[cert.name];
-	return at !== undefined && Date.parse(cert.notBefore) < Date.parse(at);
+	if (at !== undefined && from < Date.parse(at)) return true;
+	return (revocations.limits?.[cert.name] ?? []).some(([before, until]) => from < Date.parse(before) && now >= Date.parse(until));
 }
 
 /** An {@link OverlayState} as JSON with an ed25519 signature (hex) by the lishnet's CA key. */

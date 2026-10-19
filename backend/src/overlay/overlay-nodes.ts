@@ -3,7 +3,7 @@ import * as dns from 'node:dns/promises';
 import { rm } from 'node:fs/promises';
 import { type Socket } from 'node:net';
 import { join } from 'node:path';
-import { isRevoked, mergeRevocations, type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayRevocations, type OverlayState, type SignedOverlayState } from '@shared';
+import { compactRevocations, isRevoked, mergeRevocations, type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayRevocations, type OverlayState, type SignedOverlayState } from '@shared';
 import { Network } from '../protocol/network.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -23,12 +23,15 @@ const REVOCATION_NOTICE_MS = 1_000;
 const RESTART_DELAY_MIN_MS = 1_000;
 const RESTART_DELAY_MAX_MS = 30_000;
 
-/** Whether two sets of revocations hold the same fingerprints and the same revoked members at the same times. */
+/** Whether two sets of revocations revoke the same certificates, now and later ({@link compactRevocations}). */
 function sameRevocations(a: OverlayRevocations, b: OverlayRevocations): boolean {
-	const fingerprints = new Set(a.fingerprints);
-	if (fingerprints.size !== new Set(b.fingerprints).size || b.fingerprints.some(f => !fingerprints.has(f))) return false;
-	const peers = Object.keys(a.peers);
-	return peers.length === Object.keys(b.peers).length && peers.every(p => b.peers[p] === a.peers[p]);
+	const now = Date.now();
+	return JSON.stringify(compactRevocations(a, now)) === JSON.stringify(compactRevocations(b, now));
+}
+
+/** The revocations a signed state carries. */
+function stateRevocations(state: OverlayState): OverlayRevocations {
+	return { fingerprints: state.revoked, peers: state.revokedPeers ?? {}, ...(state.limits ? { limits: state.limits } : {}) };
 }
 
 export function stateTopic(networkID: string): string {
@@ -186,10 +189,10 @@ export class OverlayNodes {
 	async knownRevocations(networkID: string, overlay: LISHOverlayDefinition): Promise<OverlayRevocations> {
 		const store = this.store(networkID);
 		const state = await this.currentState(networkID, overlay);
-		let known = mergeRevocations(await store.readRevocations(), { fingerprints: state?.revoked ?? [], peers: state?.revokedPeers ?? {} });
+		let known = state ? mergeRevocations(await store.readRevocations(), stateRevocations(state)) : await store.readRevocations();
 		if (store.has('founder.json')) {
 			const founder = await store.readFounder();
-			known = mergeRevocations(known, { fingerprints: [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])], peers: founder.revokedPeers ?? {} });
+			known = mergeRevocations(known, { fingerprints: [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])], peers: founder.revokedPeers ?? {}, ...(founder.limits ? { limits: founder.limits } : {}) });
 		}
 		return known;
 	}
@@ -508,9 +511,9 @@ export class OverlayNodes {
 			// Every verified state adds its revocations, whatever its version: a newer one that lacks one (signed on a
 			// device restored from an older backup) does not lift it.
 			const before = await store.readRevocations();
-			const after = mergeRevocations(before, { fingerprints: incoming.revoked, peers: incoming.revokedPeers ?? {} });
+			const after = mergeRevocations(before, stateRevocations(incoming));
 			const revokes = !sameRevocations(before, after);
-			if (revokes) await store.writeJSON('revoked.json', after);
+			if (revokes) await store.writeJSON('revoked.json', compactRevocations(after));
 			const previousSigned = await store.readState();
 			const previous = await this.currentState(networkID, overlay);
 			if (previous && incoming.version <= previous.version) {
@@ -526,8 +529,8 @@ export class OverlayNodes {
 		if (store.has('ca.key')) {
 			// The founder answers a state that misses revocations it knows with one that has them all.
 			const known = await this.knownRevocations(networkID, overlay);
-			if (!sameRevocations(mergeRevocations({ fingerprints: held.revoked, peers: held.revokedPeers ?? {} }, known), { fingerprints: held.revoked, peers: held.revokedPeers ?? {} })) {
-				await this.publishNewState(networkID, { lighthouses: held.lighthouses, relays: held.relays, revoked: known.fingerprints, revokedPeers: known.peers });
+			if (!sameRevocations(mergeRevocations(stateRevocations(held), known), stateRevocations(held))) {
+				await this.publishNewState(networkID, { lighthouses: held.lighthouses, relays: held.relays, revoked: known.fingerprints, revokedPeers: known.peers, ...(known.limits ? { limits: known.limits } : {}) });
 				return true;
 			}
 		}
@@ -560,13 +563,12 @@ export class OverlayNodes {
 	 */
 	private async keepRevocationProofs(store: OverlayStore, held: OverlayState, candidates: SignedOverlayState[]): Promise<void> {
 		const stored = (await store.readJSON<SignedOverlayState[]>('revocation-proofs.json')) ?? [];
-		const covered = { fingerprints: held.revoked, peers: held.revokedPeers ?? {} };
+		const covered = stateRevocations(held);
 		const seen = new Set<string>();
 		const kept = [...stored, ...candidates].filter(proof => {
 			if (seen.has(proof.signature)) return false;
 			seen.add(proof.signature);
-			const state = JSON.parse(proof.state) as OverlayState;
-			return !sameRevocations(mergeRevocations(covered, { fingerprints: state.revoked, peers: state.revokedPeers ?? {} }), covered);
+			return !sameRevocations(mergeRevocations(covered, stateRevocations(JSON.parse(proof.state) as OverlayState)), covered);
 		});
 		if (kept.length !== stored.length || kept.some((p, i) => p.signature !== stored[i]!.signature)) await store.writeJSON('revocation-proofs.json', kept);
 	}
@@ -579,8 +581,8 @@ export class OverlayNodes {
 		const caKey = await store.readText('ca.key');
 		if (!caKey) throw new Error('only the founder can sign the network state');
 		const current = await this.currentState(networkID, row.overlay);
-		const peers = change.revokedPeers ?? {};
-		const state: OverlayState = { networkID, version: nextVersion(Math.max(current?.version ?? 0, row.overlay.version)), lighthouses: change.lighthouses, relays: change.relays, revoked: change.revoked, ...(Object.keys(peers).length > 0 ? { revokedPeers: peers } : {}) };
+		const { fingerprints, peers, limits } = compactRevocations({ fingerprints: change.revoked, peers: change.revokedPeers ?? {}, ...(change.limits ? { limits: change.limits } : {}) });
+		const state: OverlayState = { networkID, version: nextVersion(Math.max(current?.version ?? 0, row.overlay.version)), lighthouses: change.lighthouses, relays: change.relays, revoked: fingerprints, ...(Object.keys(peers).length > 0 ? { revokedPeers: peers } : {}), ...(limits ? { limits } : {}) };
 		const signed = await signState(state, caKey);
 		if (!(await this.acceptState(networkID, signed))) throw new Error('the new network state was not accepted');
 		return state;

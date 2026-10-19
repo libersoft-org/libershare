@@ -26,7 +26,7 @@ describe('invite exchange — founder', () => {
 		dir = await mkdtemp(join(tmpdir(), 'overlay-invite-'));
 		events.length = 0;
 		access = new OverlayAccess({
-			nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }) } as any,
+			nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async () => {} } as any,
 			getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 			addNetwork: async () => {},
 			listOverlayIDs: () => [],
@@ -155,7 +155,7 @@ describe('renewal over the lishnet', () => {
 		const events: string[] = [];
 		const ca = await caKeys();
 		const access = new OverlayAccess({
-			nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), broadcastAccess: async (_id: string, message: any) => (sent.push(message), true) } as any,
+			nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async () => {}, broadcastAccess: async (_id: string, message: any) => (sent.push(message), true) } as any,
 			getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 			addNetwork: async () => {},
 			listOverlayIDs: () => [],
