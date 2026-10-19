@@ -30,6 +30,8 @@ const (
 	dialTimeout   = 20 * time.Second
 	maxHeader     = 256
 	orphanSweeps  = 10 // seconds after a reload during which dead tunnels' connections are closed
+	// maxTunnelsPerPeer bounds closing every tunnel of one address; Nebula keeps one or two in practice.
+	maxTunnelsPerPeer = 16
 )
 
 // bridge connects the overlay to the backend over loopback TCP. Every connection starts with one header line
@@ -76,13 +78,22 @@ func closeDisallowed(control *nebula.Control, cfg *config.C) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	closed := 0
-	for _, h := range control.ListHostmapHosts(false) {
+	// Every tunnel counts, not only the main one of each address: a second tunnel to the same peer (left from a
+	// renewal, say) takes over when the main one closes and would carry the traffic on.
+	disallowed := map[netip.Addr]bool{}
+	for _, h := range control.ListHostmapIndexes(false) {
 		// A relayed tunnel has no underlay address of its own; the tunnel to its relay is checked instead.
-		if !h.CurrentRemote.IsValid() || len(h.VpnAddrs) == 0 || allow.AllowAll(h.VpnAddrs, h.CurrentRemote.Addr()) {
-			continue
+		if h.CurrentRemote.IsValid() && len(h.VpnAddrs) > 0 && !allow.AllowAll(h.VpnAddrs, h.CurrentRemote.Addr()) {
+			disallowed[h.VpnAddrs[0]] = true
 		}
-		if control.CloseTunnel(h.VpnAddrs[0], false) {
+	}
+	closed := 0
+	for vpn := range disallowed {
+		// CloseTunnel closes the main tunnel of the address; the next one then becomes the main one.
+		for range maxTunnelsPerPeer {
+			if !control.CloseTunnel(vpn, false) {
+				break
+			}
 			closed++
 		}
 	}
