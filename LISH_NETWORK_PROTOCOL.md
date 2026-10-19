@@ -316,7 +316,9 @@ A network whose definition carries an `overlay` (see [**LISH network structure f
 3. The founder approves it: a certificate for the request's key, with the next free overlay address, the expiry and optional roles. The answer is `{ type: "lish-overlay-certificate", networkID, certificate, state? }`.
 4. The member imports it. The node checks that the certificate is signed by the network's CA and issued for its own key and peer ID, then joins.
 
-A member may ask for a renewal the same way within 30 days before its certificate ends.
+A member may ask for a renewal the same way within 30 days before its certificate ends. While its node runs it needs no channel of its own: it publishes `{ type: "overlayRenewal", request }` on the state topic every minute; the founder's node queues it only when gossipsub's verified author is the request's peer ID and a member. On approval the founder publishes `{ type: "overlayCertificate", peerID, requestCreated, bundle }` and repeats it every minute for 7 days; the member imports only the answer to the request it is waiting on.
+
+A renewal that ends sooner than a certificate the member holds revokes the member by peer ID (see below), so a longer certificate another device issued is revoked too.
 
 ### Invites
 
@@ -381,6 +383,9 @@ Each shared LISH has a scope: the public networks (the default), or a list of pr
 - A member can still change a LISH's scope to public on purpose; the protocol cannot stop a member from copying what it received.
 - The signed state has no expiry. A part of the network cut off from every node that holds a newer state keeps the older one, and does not learn of a revocation until it reconnects.
 - An invite is a secret until it expires: whoever holds it can hand in a request (the founder still decides). It cannot be withdrawn before it expires; rejecting its request ends it.
+- A guest can complete a Nebula handshake with a member (through a relay) and so learn that member's overlay address and certificate name (its peer ID in the lishnet), though the member's firewall then drops all its traffic.
+- Lighthouses and relays given by host name are resolved through the system's DNS; give them as IP addresses to avoid any lookup.
+- Transfers are encrypted (Nebula and libp2p Noise); files, the database and an exported CA key backup are stored unencrypted.
 
 ## Transfer flow
 
