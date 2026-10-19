@@ -8,7 +8,7 @@
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { api } from '../../scripts/api.ts';
-	import { isHostPort, type LISHNetworkConfig, type OverlayStatus } from '@shared';
+	import { isHostPort, MEMBER_RENEWAL_WINDOW_MS, type LISHNetworkConfig, type OverlayStatus } from '@shared';
 	import Alert from '../../components/Alert/Alert.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -40,8 +40,9 @@
 	let relayed = $derived(status?.peers.filter(p => p.path === 'relay').length ?? 0);
 	let direct = $derived(status?.peers.filter(p => p.path === 'direct').length ?? 0);
 	let expired = $derived(!!status?.certificate && Date.parse(status.certificate.notAfter) <= Date.now());
-	/** A member out of the lishnet (revoked or expired) asks again the same way as the first time. */
-	let canRequest = $derived(!!status && !status.request && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired))));
+	let endingSoon = $derived(!!status?.certificate && !expired && Date.parse(status.certificate.notAfter) - Date.now() <= MEMBER_RENEWAL_WINDOW_MS);
+	/** A member out of the lishnet (revoked or expired), or about to be, asks again the same way as the first time. */
+	let canRequest = $derived(!!status && !status.request && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired || endingSoon))));
 	/** Running is not enough: without a lighthouse or relay reachable the node is cut off. */
 	let online = $derived(!!status?.running && status.hosts.some(h => h.connected));
 
@@ -183,6 +184,8 @@
 					<Alert type="error" message={$t('settings.lishNetwork.protected.revoked')} />
 				{:else if expired && status.certificate}
 					<Alert type="error" message={tt('settings.lishNetwork.protected.expired', { date: formatDate(status.certificate.notAfter) })} />
+				{:else if endingSoon && status.certificate && !founder}
+					<Alert type="warning" message={tt('settings.lishNetwork.protected.endingSoon', { date: formatDate(status.certificate.notAfter) })} />
 				{/if}
 				<Table columns="35vh 1fr" noBorder>
 					<TableRow>

@@ -567,6 +567,7 @@
 				"revoked": "Your access to this network was revoked.",
 				"validity": "Valid",
 				"expired": "Your certificate expired on {date}. Ask the founder for a new one.",
+				"endingSoon": "Your access ends on {date}. Request access again to have it renewed.",
 				"connection": "Connection",
 				"running": "Connected",
 				"notRunning": "Not connected",

@@ -67,6 +67,9 @@ export interface OverlayState {
 	revokedPeers?: Record<string, string>;
 }
 
+/** How long before a member's certificate ends it may ask for a renewal (the request is the one it makes to join). */
+export const MEMBER_RENEWAL_WINDOW_MS: number = 30 * 86_400_000;
+
 /** The revocations a node knows: fingerprints and revoked members ({@link OverlayState.revokedPeers}). */
 export interface OverlayRevocations {
 	fingerprints: string[];

@@ -4,7 +4,7 @@ import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { CodedError, ErrorCodes, ipInSubnet, isHostPort, isRevoked, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
+import { CodedError, ErrorCodes, ipInSubnet, isHostPort, isRevoked, MEMBER_RENEWAL_WINDOW_MS, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
 import { SqliteDatastore } from '../protocol/datastore.ts';
 import { PRIVATE_KEY_PATH, writeIdentityKey } from '../protocol/identity-store.ts';
 import { runOverlayCommand, type CertificateInfo } from './overlay-binary.ts';
@@ -537,8 +537,8 @@ export class OverlayAccess {
 		const tunnels = new Map((helper?.hosts ?? []).map(h => [h.vpnAddrs[0] ?? '', h]));
 		const infra = new Set([...overlay.lighthouses, ...overlay.relays].map(h => h.vpnIP));
 		const revoked = cert ? isRevoked(await this.revocations(networkID, overlay), cert) : false;
-		// A member whose certificate is revoked or expired asks again; its new request is shown like a first one.
-		const request = !cert || revoked || Date.parse(cert.notAfter) <= Date.now() ? await store.readRequest() : null;
+		// A member whose certificate is revoked, expired or about to end asks again; its new request is shown like a first one.
+		const request = !cert || revoked || Date.parse(cert.notAfter) - Date.now() <= MEMBER_RENEWAL_WINDOW_MS ? await store.readRequest() : null;
 		const ownIP = cert?.networks[0]?.split('/')[0];
 		return {
 			networkID,

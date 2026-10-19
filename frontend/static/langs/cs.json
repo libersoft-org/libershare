@@ -567,6 +567,7 @@
 				"revoked": "Tvůj přístup do této sítě byl odvolán.",
 				"validity": "Platnost",
 				"expired": "Tvůj certifikát vypršel {date}. Požádej zakladatele o nový.",
+				"endingSoon": "Tvůj přístup končí {date}. O prodloužení požádej znovu stejně jako o přístup.",
 				"connection": "Spojení",
 				"running": "Připojeno",
 				"notRunning": "Nepřipojeno",
