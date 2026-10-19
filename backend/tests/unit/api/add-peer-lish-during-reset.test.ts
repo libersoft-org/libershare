@@ -96,6 +96,27 @@ describe('adding a peer LISH while a factory reset closes the gate', () => {
 		expect(drained).toBe(true);
 	});
 
+	// The protected lishnet was deleted while its manifest downloaded: the content was stored public and served to all.
+	it('does not take the LISH of a protected lishnet deleted while its manifest downloads', async () => {
+		const held = heldStream();
+		const imported: unknown[] = [];
+		let protectedRow: object | undefined = { networkID: 'net-p', overlay: {} };
+		const networks = {
+			get: () => protectedRow,
+			networkFor: () => ({ dialProtocolByPeerId: async () => ({ stream: held.stream }) }),
+			protectedNodes: () => [],
+			getRunningNetwork: () => ({}),
+		} as never;
+		const runLISHMutation = async <T>(operation: () => Promise<T>): Promise<T> => operation();
+		const handlers = initLISHnetsHandlers(networks, {} as never, () => {}, { get: () => undefined } as never, (async (_lish: IStoredLISH, _dir: string, opts: unknown) => (imported.push(opts), { lishID: MANIFEST.id })) as never, runLISHMutation, new AbortController().signal);
+		const adding = handlers.addPeerLish({ lishID: MANIFEST.id, peerID: 'peer-1', networkID: 'net-p' });
+		await Promise.resolve();
+		protectedRow = undefined;
+		held.deliver();
+		await expect(adding).rejects.toThrow();
+		expect(imported).toEqual([]);
+	});
+
 	it('refuses a peer LISH that arrives after the gate is already closed', async () => {
 		const gate = new LISHMutationGate();
 		await gate.closeAndDrain();

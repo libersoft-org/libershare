@@ -291,6 +291,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
+		// Decided before the manifest is on its way: a protected lishnet deleted meanwhile is no longer found, and its
+		// content would be stored public.
+		const fromProtected = networks.get(p.networkID)?.overlay !== undefined;
 		let manifest;
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
@@ -313,8 +316,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
 		const enableSharing = settings.get('network.autoStartSharing') ?? true;
 		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
-		// What came from a protected lishnet is shared back into that lishnet only.
-		const scope = networks.get(p.networkID)?.overlay ? [p.networkID] : undefined;
+		// What came from a protected lishnet is shared back into that lishnet only; with the lishnet gone, it is not taken.
+		if (fromProtected && networks.get(p.networkID)?.overlay === undefined) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
+		const scope = fromProtected ? [p.networkID] : undefined;
 		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 		return { lishID: result.lishID };
 	}
