@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -15,10 +16,12 @@
 		onBack?: (() => void) | undefined;
 		/** The lishnet was added and its request is on its way; the caller shows its access page. */
 		onJoined?: ((status: OverlayStatus) => void) | undefined;
+		/** The name a member coming back already asked as. */
+		defaultName?: string | undefined;
 	}
-	let { areaID, position = LAYOUT.content, onBack, onJoined }: Props = $props();
+	let { areaID, position = LAYOUT.content, onBack, onJoined, defaultName = '' }: Props = $props();
 	let invite = $state('');
-	let name = $state('');
+	let name = $state(untrack(() => defaultName));
 	let busy = $state(false);
 	let submitted = $state(false);
 	let error = $state('');

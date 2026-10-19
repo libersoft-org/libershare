@@ -804,6 +804,8 @@ export class OverlayAccess {
 			if (Date.parse(info.notAfter) <= Date.now()) throw new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, `the certificate expired on ${info.notAfter}`);
 			if (bundle.state) await this.deps.nodes.acceptState(bundle.networkID, bundle.state);
 			await store.writeText('member.crt', info.cert);
+			const answered = await store.readRequest();
+			if (answered) await store.writeJSON('last-request.json', answered);
 			await store.remove('request.json');
 			await store.remove('refusal.json');
 		} finally {
@@ -904,13 +906,15 @@ export class OverlayAccess {
 		const ownIP = cert?.networks[0]?.split('/')[0];
 		const invite = request ? await store.readJSON<InviteFile>('invite.json').catch(() => null) : null;
 		const inviteState: OverlayInviteState = invite && Date.parse(invite.expires) <= Date.now() ? 'expired' : (this.inviteStates.get(networkID) ?? 'delivering');
-		const refused = request ? (await store.readJSON<RenewalRefusal>('refusal.json').catch(() => null))?.requestCreated === request.created : false;		return {
+		const refused = request ? (await store.readJSON<RenewalRefusal>('refusal.json').catch(() => null))?.requestCreated === request.created : false;
+		const last = request ? null : await store.readJSON<OverlayAccessRequest>('last-request.json').catch(() => null);		return {
 			networkID,
 			role: store.has('ca.key') ? 'founder' : cert ? 'member' : 'none',
 			...(cert ? { certificate: { name: cert.name, vpnIP: cert.networks[0]!.split('/')[0]!, groups: cert.groups, notBefore: cert.notBefore, notAfter: cert.notAfter, fingerprint: cert.fingerprint, revoked } } : {}),
 			...(request ? { request } : {}),
 			...(invite ? { invite: { expires: invite.expires, state: inviteState } } : {}),
 			...(refused ? { renewalRefused: true } : {}),
+			...(last ? { lastRequest: { name: last.name, ...(last.infraAddr !== undefined ? { infraAddr: last.infraAddr } : {}) } } : {}),
 			running: nodes.isRunning(networkID),
 			stateVersion: state?.version ?? overlay.version,
 			hosts: [...overlay.lighthouses.map(h => ({ ...h, role: 'lighthouse' as const })), ...overlay.relays.map(h => ({ ...h, role: 'relay' as const }))].map(h => (h.vpnIP === ownIP ? { ...h, connected: true, self: true } : { ...h, connected: tunnels.has(h.vpnIP) })),

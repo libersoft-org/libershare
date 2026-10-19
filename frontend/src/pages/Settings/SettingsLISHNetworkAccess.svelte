@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { t, translateError, tt } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -20,6 +20,7 @@
 	import LISHNetworkAccessRequests from './SettingsLISHNetworkAccessRequests.svelte';
 	import LISHNetworkAccessMembers from './SettingsLISHNetworkAccessMembers.svelte';
 	import LISHNetworkAccessKey from './SettingsLISHNetworkAccessKey.svelte';
+	import LISHNetworkInvite from './SettingsLISHNetworkInvite.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -42,10 +43,22 @@
 	let direct = $derived(status?.peers.filter(p => p.path === 'direct').length ?? 0);
 	let expired = $derived(!!status?.certificate && Date.parse(status.certificate.notAfter) <= Date.now());
 	/** A member still in the lishnet hands its renewal in over it, and gets the certificate back the same way. */
-	let renewingOnline = $derived(!!status?.request && !!status.certificate && !status.certificate.revoked && !expired && status.running && !status.invite);
+	let inLishnet = $derived(!!status?.certificate && !status.certificate.revoked && !expired && !!status.running);
+	let renewingOnline = $derived(!!status?.request && inLishnet && !status.invite && !status.renewalRefused);
 	let endingSoon = $derived(!!status?.certificate && !expired && Date.parse(status.certificate.notAfter) - Date.now() <= MEMBER_RENEWAL_WINDOW_MS);
 	/** A member out of the lishnet (revoked or expired), or about to be, asks again the same way as the first time. */
-	let canRequest = $derived(!!status && !status.request && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired || endingSoon))));
+	let canRequest = $derived(!!status && (!status.request || !!status.renewalRefused) && (status.role === 'none' || (!founder && (!!status.certificate?.revoked || expired || endingSoon))));
+	/** Out of the lishnet, a new invite from the founder is the simple way back in. */
+	let canRejoin = $derived(!!status && !founder && !status.invite && (status.role === 'none' || !!status.certificate?.revoked || expired));
+	// A renewal asks as the last request did.
+	$effect(() => {
+		const last = status?.request ?? status?.lastRequest;
+		if (!last) return;
+		untrack(() => {
+			if (!name) name = last.name;
+			if (!infraAddr && last.infraAddr) infraAddr = last.infraAddr;
+		});
+	});
 	/** Running is not enough: without a lighthouse or relay reachable the node is cut off. */
 	let online = $derived(!!status?.running && status.hosts.some(h => h.connected));
 
@@ -75,7 +88,8 @@
 			if (!name.trim()) throw new Error($t('settings.lishNetwork.errorNameRequired'));
 			if (infraAddr.trim() && !isHostPort(infraAddr.trim())) throw new Error($t('settings.lishNetwork.protected.addrInvalid'));
 			await api.overlay.requestAccess(network.networkID, name.trim(), infraAddr.trim() || undefined);
-			addNotification($t('settings.lishNetwork.protected.requestCreated'), 'success');
+			// A member in the lishnet hands it in by itself; only one outside has to send it.
+			addNotification($t(`settings.lishNetwork.protected.${inLishnet ? 'renewalRequested' : 'requestCreated'}`), 'success');
 			await load();
 		});
 	}
@@ -108,6 +122,7 @@
 	const requestsPage = createSubPage(navHandle, () => areaID);
 	const membersPage = createSubPage(navHandle, () => areaID);
 	const keyPage = createSubPage(navHandle, () => areaID);
+	const invitePage = createSubPage(navHandle, () => areaID);
 	const offs: Array<(() => void) | void> = [];
 	onMount(() => {
 		void load();
@@ -174,6 +189,17 @@
 	<LISHNetworkAccessMembers {areaID} {position} {network} onBack={() => void membersPage.exit()} />
 {:else if keyPage.active}
 	<LISHNetworkAccessKey {areaID} {position} {network} onBack={() => void keyPage.exit()} />
+{:else if invitePage.active}
+	<LISHNetworkInvite
+		{areaID}
+		{position}
+		defaultName={name}
+		onBack={() => void invitePage.exit()}
+		onJoined={joined => {
+			status = joined;
+			void invitePage.exit();
+		}}
+	/>
 {:else}
 	<div class="page" data-testid="overlay-access-{network.networkID}">
 		<div class="container">
@@ -183,6 +209,9 @@
 					<Button icon="/img/link.svg" label={$t('settings.lishNetwork.protected.invite')} disabled={busy} onConfirm={createInvite} padding="1vh 1.5vh" fontSize="1.6vh" />
 					<Button icon="/img/plus.svg" label={$t('settings.lishNetwork.protected.requests')} onConfirm={() => requestsPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.requests')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
 					<Button icon="/img/person.svg" label={$t('settings.lishNetwork.protected.members')} onConfirm={() => membersPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.members')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
+				{/if}
+				{#if canRejoin}
+					<Button icon="/img/link.svg" label={$t('settings.lishNetwork.protected.joinByInvite')} onConfirm={() => invitePage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.joinByInvite')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
 				{/if}
 				<Button icon="/img/key.svg" label={founder ? $t('settings.lishNetwork.protected.backupCA') : $t('settings.lishNetwork.protected.restoreCA')} onConfirm={() => keyPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.caKey')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>
@@ -206,6 +235,9 @@
 					{:else}
 						<Alert type="info" message={$t(`settings.lishNetwork.protected.${status.invite.state === 'pending' ? 'invitePending' : 'inviteDelivering'}`)} />
 					{/if}
+				{/if}
+				{#if status.renewalRefused}
+					<Alert type="error" message={$t('settings.lishNetwork.protected.renewalRefused')} />
 				{/if}
 				{#if status.certificate?.revoked}
 					<Alert type="error" message={$t('settings.lishNetwork.protected.revoked')} />
@@ -259,7 +291,7 @@
 						<Input bind:value={infraAddr} label={$t('settings.lishNetwork.protected.infraAddr')} placeholder="203.0.113.7:4242" position={[0, 2]} />
 					</div>
 					<ButtonBar basePosition={[0, 3]}>
-						<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.requestAccess')} disabled={busy} onConfirm={requestAccess} />
+						<Button icon="/img/key.svg" label={$t(`settings.lishNetwork.protected.${status.certificate && !founder ? 'requestRenewal' : 'requestAccess'}`)} disabled={busy} onConfirm={requestAccess} />
 					</ButtonBar>
 				{:else if !founder}
 					<!-- An invite or a running member carries the request and the certificate by itself; the JSON is for passing them by hand. -->

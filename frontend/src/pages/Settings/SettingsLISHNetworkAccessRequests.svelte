@@ -35,7 +35,11 @@
 	let days = $state(DEFAULT_DAYS);
 	let lighthouse = $state(false);
 	let relay = $state(false);
-	let issued = $state<{ name: string; certificate: string; byInvite: boolean } | null>(null);
+	let issued = $state<{ name: string; certificate: string; byInvite: boolean; renewal: boolean } | null>(null);
+
+	function approvedText(i: { byInvite: boolean; renewal: boolean }): string {
+		return `settings.lishNetwork.protected.${i.byInvite ? 'approvedByInvite' : i.renewal ? 'approvedRenewal' : 'approved'}`;
+	}
 	let daysValid = $derived(Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 3650);
 
 	async function load(): Promise<void> {
@@ -99,8 +103,9 @@
 			const roles: OverlayRole[] = [...(lighthouse ? (['lighthouse'] as const) : []), ...(relay ? (['relay'] as const) : [])];
 			const validUntil = new Date(Date.now() + Number(days) * 86_400_000).toISOString();
 			const bundle = await api.overlay.approve(network.networkID, selected.id, { validUntil, roles });
-			issued = { name: selected.name, certificate: JSON.stringify(bundle), byInvite: !!(selected.invite || selected.renewal) };
-			addNotification(tt(issued.byInvite ? 'settings.lishNetwork.protected.approvedByInvite' : 'settings.lishNetwork.protected.approved', { name: selected.name }), 'success');
+			// A renewal goes back over the lishnet, but a member out of it (switched off, cut off) needs the certificate by hand.
+			issued = { name: selected.name, certificate: JSON.stringify(bundle), byInvite: !!selected.invite, renewal: !!selected.renewal };
+			addNotification(tt(approvedText(issued), { name: selected.name }), 'success');
 		});
 	}
 
@@ -164,7 +169,7 @@
 					· <span class="mono">{selected.infraAddr}</span>{/if}
 			</div>
 			{#if issued}
-				<Alert type="info" message={tt(issued.byInvite ? 'settings.lishNetwork.protected.approvedByInvite' : 'settings.lishNetwork.protected.approved', { name: issued.name })} />
+				<Alert type="info" message={tt(approvedText(issued), { name: issued.name })} />
 				{#if !issued.byInvite}
 					<div role="group" data-mouse-activate-area={areaID}>
 						<Input value={issued.certificate} label={tt('settings.lishNetwork.protected.certificateFor', { name: issued.name })} multiline rows={5} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 0]} />

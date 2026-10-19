@@ -19,7 +19,9 @@ export type OverlayFile =
 	/** This node's own access request ({@link OverlayAccessRequest}). */
 	| 'request.json'
 	/** The founder's signed refusal of this node's renewal request ({@link RenewalRefusal}). */
-	| 'refusal.json'	/** Founder bookkeeping ({@link FounderData}). */
+	| 'refusal.json'
+	/** This node's last request whose certificate arrived; its name and address fill in the next one. */
+	| 'last-request.json'	/** Founder bookkeeping ({@link FounderData}). */
 	| 'founder.json'
 	/** The newest signed state this node has verified ({@link SignedOverlayState}). */
 	| 'state.json'
