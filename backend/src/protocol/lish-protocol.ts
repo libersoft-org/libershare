@@ -142,20 +142,25 @@ export interface SearchResultAnnouncement {
 	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
 }
 type SearchResultHandler = (ann: SearchResultAnnouncement) => void;
-const searchResultHandlers = new Map<string, SearchResultHandler>();
+const searchResultHandlers = new Map<string, { handler: SearchResultHandler; scope: string | null }>();
 
-/** Register a handler for incoming unicast search results for a given searchID. Only one handler per searchID. */
-export function registerSearchResultHandler(searchID: string, handler: SearchResultHandler): void {
-	searchResultHandlers.set(searchID, handler);
+/**
+ * Register a handler for incoming unicast search results for a given searchID, with the scope of the node that sent the
+ * query under it. Only answers arriving on a node of that scope reach it: a member that saw a protected lishnet's search
+ * ID could otherwise slip a public offer into a search limited to that lishnet. Only one handler per searchID.
+ */
+export function registerSearchResultHandler(searchID: string, handler: SearchResultHandler, scope: string | null = null): void {
+	searchResultHandlers.set(searchID, { handler, scope });
 }
 
 export function unregisterSearchResultHandler(searchID: string): void {
 	searchResultHandlers.delete(searchID);
 }
 
-/** The handler a `searchResult` message would be delivered to, or undefined if the search is over. */
-export function getSearchResultHandler(searchID: string): SearchResultHandler | undefined {
-	return searchResultHandlers.get(searchID);
+/** The handler a `searchResult` arriving on a node of `scope` would be delivered to, or undefined. */
+export function getSearchResultHandler(searchID: string, scope: string | null = null): SearchResultHandler | undefined {
+	const registered = searchResultHandlers.get(searchID);
+	return registered?.scope === scope ? registered.handler : undefined;
 }
 
 // Client-side stream wrapper that can send multiple requests
@@ -855,7 +860,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'searchResult') {
 				// Unicast search response from a peer in reply to our pubsub `searchLishs` query.
 				// peerID is the verified stream remote (anti-spoofing).
-				const handler = searchResultHandlers.get(request.searchID);
+				const handler = getSearchResultHandler(request.searchID, scope);
 				if (handler && remotePeerID) {
 					try {
 						handler({

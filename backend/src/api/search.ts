@@ -315,7 +315,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				id = randomUUID();
 				nodeSearchIDs.set(node, id);
 				session.aliases.push(id);
-				registerSearchResultHandler(id, ann => handleResult({ ...ann, searchID }));
+				registerSearchResultHandler(id, ann => handleResult({ ...ann, searchID }), node.lishScope ?? null);
 			}
 			return id;
 		};

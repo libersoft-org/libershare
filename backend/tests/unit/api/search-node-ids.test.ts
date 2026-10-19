@@ -52,7 +52,7 @@ test('a search limited to a protected lishnet asks nothing on the public node', 
 test('each node sends a search under its own ID and the answers reach one session', async () => {
 	const sent: Array<{ topic: string; searchID: string }> = [];
 	const publicNode = node('public-peer', sent);
-	const protectedNode = node('protected-peer', sent);
+	const protectedNode = { ...node('protected-peer', sent), lishScope: 'protected' };
 	const events: Array<{ event: string; data: any }> = [];
 	const networks = {
 		getNetwork: () => publicNode,
@@ -72,10 +72,13 @@ test('each node sends a search under its own ID and the answers reach one sessio
 	const [onPublic, onProtected] = sent;
 	expect(onPublic!.searchID).toBe(searchID);
 	expect(onProtected!.searchID).not.toBe(searchID);
-	// An answer to the protected node's ID is part of the same search for the UI.
-	getSearchResultHandler(onProtected!.searchID)?.({ searchID: onProtected!.searchID, peerID: 'member', lishs: [{ id: LISH_ID, name: 'Shared' }] });
+	// An answer to the protected node's ID arriving on the public node is refused: whoever saw the ID could slip a public
+	// offer into a search limited to the protected lishnet.
+	expect(getSearchResultHandler(onProtected!.searchID, null)).toBeUndefined();
+	// On the protected node it is part of the same search for the UI.
+	getSearchResultHandler(onProtected!.searchID, 'protected')?.({ searchID: onProtected!.searchID, peerID: 'member', lishs: [{ id: LISH_ID, name: 'Shared' }] });
 	expect(events.find(e => e.event === 'search:lishs:update')?.data.searchID).toBe(searchID);
 	manager.cancelSearch({ searchID });
-	expect(getSearchResultHandler(onProtected!.searchID)).toBeUndefined();
+	expect(getSearchResultHandler(onProtected!.searchID, 'protected')).toBeUndefined();
 	manager.stopAll();
 });
