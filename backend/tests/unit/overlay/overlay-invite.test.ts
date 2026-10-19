@@ -216,6 +216,51 @@ describe('renewal over the lishnet', () => {
 		}
 	});
 
+	// A decision was dropped once its week of repeats was over and another member was decided on: the member, offline
+	// all that time, asked again and the founder found the request waiting as if new.
+	it('answers a request decided long ago again rather than queuing it', async () => {
+		const f = await founderSetup();
+		try {
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('A'));
+			await f.access.rejectRequest(NET, (await f.store.readFounder()).requests[0]!.id);
+			const data = await f.store.readFounder();
+			data.renewals![b58('A')]!.issued = new Date(Date.now() - 8 * 86_400_000).toISOString();
+			data.members.push({ ...data.members[0]!, name: 'b', peerID: b58('B'), vpnIP: '100.64.0.8', fingerprint: 'b'.repeat(64) });
+			await f.store.writeJSON('founder.json', data);
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('B')) }, b58('B'));
+			await f.access.rejectRequest(NET, (await f.store.readFounder()).requests[0]!.id);
+			f.sent.length = 0;
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('A'));
+			expect((await f.store.readFounder()).requests).toHaveLength(0);
+			expect(f.sent).toEqual([{ type: 'overlayRefusal', peerID: b58('A'), requestCreated: '2026-01-01T00:00:00Z', signature: expect.any(String) }]);
+		} finally {
+			await rm(f.dir, { recursive: true, force: true });
+		}
+	});
+
+	// The request left the queue before the decision was written: a copy arriving in between was queued again, and the
+	// founder saw a request it had approved already.
+	it('does not queue a copy that arrives while the renewal is being approved', async () => {
+		const f = await founderSetup();
+		const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (...args: unknown[]) => ({ cert: 'renewed', fingerprint: 'c'.repeat(64), notBefore: args[6] as string, notAfter: args[5] as string }));
+		let copy: Promise<void> | undefined;
+		const read = spyOn(OverlayStore.prototype, 'readState').mockImplementation(async () => {
+			copy ??= f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('A'));
+			return null;
+		});
+		try {
+			await f.access.onAccessMessage(NET, { type: 'overlayRenewal', request: request(b58('A')) }, b58('A'));
+			await f.access.approve(NET, (await f.store.readFounder()).requests[0]!.id);
+			await copy;
+			expect(copy).toBeDefined();
+			expect((await f.store.readFounder()).requests).toHaveLength(0);
+		} finally {
+			read.mockRestore();
+			issue.mockRestore();
+			await rm(f.dir, { recursive: true, force: true });
+		}
+	});
+
 	async function memberSetup() {
 		const dir = await mkdtemp(join(tmpdir(), 'overlay-renewed-'));
 		const ca = await caKeys();

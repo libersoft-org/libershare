@@ -355,15 +355,17 @@ export class OverlayAccess {
 
 	private async sendDecision(networkID: string, peerID: string, decision: RenewalDecision): Promise<void> {
 		const answer = { peerID, requestCreated: decision.requestCreated, signature: decision.signature };
-		await this.deps.nodes.broadcastAccess(networkID, decision.refused ? { type: 'overlayRefusal', ...answer } : { type: 'overlayCertificate', ...answer, bundle: decision.bundle });
+		const state = decision.bundle ? await this.deps.nodes.store(networkID).readState() : null;
+		await this.deps.nodes.broadcastAccess(networkID, decision.refused ? { type: 'overlayRefusal', ...answer } : { type: 'overlayCertificate', ...answer, bundle: { ...decision.bundle, ...(state ? { state } : {}) } });
 	}
 
 	/** Founder: sign a decision on a member's renewal and keep it to send out again ({@link repeatAccess}); under the founder lock. */
 	private async decideRenewal(networkID: string, data: FounderData, request: OverlayAccessRequest, bundle?: OverlayCertificateBundle): Promise<RenewalDecision> {
 		const caKey = (await this.deps.nodes.store(networkID).readText('ca.key'))!;
 		const signature = await signAnswer({ networkID, peerID: request.peerID, requestCreated: request.created, ...(bundle ? { certificate: bundle.certificate } : {}) }, caKey);
-		const decision: RenewalDecision = { requestCreated: request.created, issued: new Date().toISOString(), signature, ...(bundle ? { bundle } : { refused: true }) };
-		data.renewals = { ...Object.fromEntries(Object.entries(data.renewals ?? {}).filter(([, d]) => Date.now() - Date.parse(d.issued) < RENEWAL_DELIVERY_MS)), [request.peerID]: decision };
+		// Kept for good, one per member: without the state, which goes along as it is when the decision is sent.
+		const decision: RenewalDecision = { requestCreated: request.created, issued: new Date().toISOString(), signature, ...(bundle ? { bundle: { type: bundle.type, networkID: bundle.networkID, certificate: bundle.certificate } } : { refused: true }) };
+		data.renewals = { ...data.renewals, [request.peerID]: decision };
 		return decision;
 	}
 
@@ -379,19 +381,23 @@ export class OverlayAccess {
 		if (!store.has('ca.key') || !from) return;
 		const request = validateAccessRequest(raw);
 		if (request.networkID !== networkID || request.peerID !== from) return;
-		const created = await this.founderLock(networkID).runExclusive(async (): Promise<OverlayPendingRequest | null> => {
+		const taken = await this.founderLock(networkID).runExclusive(async (): Promise<{ created?: OverlayPendingRequest; decided?: RenewalDecision } | null> => {
 			const data = await store.readFounder();
 			if (!data.members.some(m => m.peerID === from && !m.revoked)) return null;
-			// The same request repeated every minute is queued once, and not again once decided.
-			if (data.requests.some(r => r.peerID === from && r.created === request.created) || data.renewals?.[from]?.requestCreated === request.created) return null;
+			// The same request repeated every minute is queued once. Once decided, the member asking still has not got the
+			// answer (it was offline longer than the answer was repeated): it gets it again.
+			const decided = data.renewals?.[from];
+			if (decided?.requestCreated === request.created) return { decided };
+			if (data.requests.some(r => r.peerID === from && r.created === request.created)) return null;
 			const kept = data.requests.filter(r => r.peerID !== from);
 			if (kept.length >= MAX_PENDING_REQUESTS) return null;
 			const entry: OverlayPendingRequest = { ...request, id: randomUUID(), received: new Date().toISOString(), renewal: true };
 			data.requests = [...kept, entry];
 			await store.writeJSON('founder.json', data);
-			return entry;
+			return { created: entry };
 		});
-		if (created) this.deps.emit('overlay:request', created);
+		if (taken?.decided && Date.now() - Date.parse(taken.decided.issued) >= RENEWAL_DELIVERY_MS) await this.sendDecision(networkID, from, taken.decided);
+		if (taken?.created) this.deps.emit('overlay:request', taken.created);
 	}
 
 	/**

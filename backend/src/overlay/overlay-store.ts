@@ -117,8 +117,9 @@ export interface FounderData {
 	/** Invites not yet expired. */
 	invites?: FounderInvite[];
 	/**
-	 * Decisions on renewals handed in over the lishnet, by peer ID, sent out again every minute for a while: the member
-	 * may be offline when it is decided. The same request handed in again is not queued again.
+	 * The last decision on a renewal handed in over the lishnet, by peer ID, sent out again every minute for a while: the
+	 * member may be offline when it is decided. It is kept after that: the same request handed in again, however late,
+	 * is answered with it rather than queued again. Its bundle goes out with the state held at the time.
 	 */
 	renewals?: Record<string, RenewalDecision>;
 }
