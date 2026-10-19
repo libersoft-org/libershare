@@ -946,7 +946,8 @@ export class OverlayAccess {
 		const invite = request ? await store.readJSON<InviteFile>('invite.json').catch(() => null) : null;
 		const inviteState: OverlayInviteState = invite && Date.parse(invite.expires) <= Date.now() ? 'expired' : (this.inviteStates.get(networkID) ?? 'delivering');
 		const refused = request ? (await store.readJSON<RenewalRefusal>('refusal.json').catch(() => null))?.requestCreated === request.created : false;
-		const last = request ? null : await store.readJSON<OverlayAccessRequest>('last-request.json').catch(() => null);		return {
+		const last = request ? null : await store.readJSON<OverlayAccessRequest>('last-request.json').catch(() => null);
+		return {
 			networkID,
 			role: store.has('ca.key') ? 'founder' : cert ? 'member' : 'none',
 			...(cert ? { certificate: { name: cert.name, vpnIP: cert.networks[0]!.split('/')[0]!, groups: cert.groups, notBefore: cert.notBefore, notAfter: cert.notAfter, fingerprint: cert.fingerprint, revoked } } : {}),

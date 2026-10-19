@@ -21,7 +21,13 @@ beforeAll(async () => {
 	const dataServer = new DataServer(db);
 	initLISHScopes(new Map(), (id, ids) => dataServer.setLISHScope(id as any, ids));
 	settings = await Settings.create(dataDir);
-	handlers = initLISHsHandlers(dataServer, () => {}, () => {}, settings, id => id === 'net-p');
+	handlers = initLISHsHandlers(
+		dataServer,
+		() => {},
+		() => {},
+		settings,
+		id => id === 'net-p'
+	);
 });
 
 afterAll(async () => {

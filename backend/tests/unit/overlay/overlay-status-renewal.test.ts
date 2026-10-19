@@ -99,7 +99,16 @@ describe('compacted revocations', () => {
 	it('revoke the same certificates in less space', () => {
 		const now = Date.parse('2026-06-01T00:00:00Z');
 		const peer = '1'.repeat(46);
-		const r = { fingerprints: ['f'.repeat(64)], peers: {}, limits: { [peer]: [['2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z'], ['2026-03-01T00:00:00Z', '2026-07-01T00:00:00Z']] as Array<[string, string]> } };
+		const r = {
+			fingerprints: ['f'.repeat(64)],
+			peers: {},
+			limits: {
+				[peer]: [
+					['2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z'],
+					['2026-03-01T00:00:00Z', '2026-07-01T00:00:00Z'],
+				] as Array<[string, string]>,
+			},
+		};
 		const compact = compactRevocations(r, now);
 		// The limit that ended is a revocation at its start; the one still running stays.
 		expect(compact).toEqual({ fingerprints: ['f'.repeat(64)], peers: { [peer]: '2026-01-01T00:00:00Z' }, limits: { [peer]: [['2026-03-01T00:00:00Z', '2026-07-01T00:00:00Z']] } });
