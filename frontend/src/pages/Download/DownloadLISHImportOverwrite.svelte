@@ -98,7 +98,8 @@
 	});
 
 	function chooseScope(value: string): void {
-		scope = value ? [value] : undefined;
+		// Public chosen is an empty list: undefined would keep an overwritten LISH's protected scope.
+		scope = value ? [value] : [];
 		choosingScope = false;
 		void runImport(processLISHs);
 	}
