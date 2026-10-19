@@ -245,6 +245,35 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// The node kept the revocation for itself but passed on only the newer state without it: a node catching up from it
+	// never learned of the revocation and let the revoked member in.
+	it('passes on the signed revocation a newer state lacks, so a node catching up from it blocks it too', async () => {
+		const a = await harness();
+		const b = await harness();
+		try {
+			const revoking = await a.sign(5, [FP]);
+			await a.nodes.acceptState(NET, revoking);
+			await a.nodes.acceptState(NET, await a.sign(6, []));
+			a.broadcasts.length = 0;
+			await a.nodes.publishState(NET, true);
+			expect(a.broadcasts.map(m => JSON.parse(m.message.signed.state).version)).toEqual([6, 5]);
+			// B has the same CA: it takes exactly what A sends.
+			(b.nodes as any).caKeys = (a.nodes as any).caKeys;
+			for (const m of a.broadcasts) await b.nodes.acceptState(NET, m.message.signed);
+			expect((await b.nodes.currentState(NET, b.overlay()))?.version).toBe(6);
+			expect((await b.nodes.knownRevocations(NET, b.overlay())).fingerprints).toEqual([FP]);
+			expect((await b.store.readJSON<any>('nebula.yml'))?.pki.blocklist).toEqual([FP]);
+			// A newer state that carries the revocation again makes the proof unnecessary.
+			await a.nodes.acceptState(NET, await a.sign(7, [FP]));
+			a.broadcasts.length = 0;
+			await a.nodes.publishState(NET, true);
+			expect(a.broadcasts.map(m => JSON.parse(m.message.signed.state).version)).toEqual([7]);
+		} finally {
+			await a.cleanup();
+			await b.cleanup();
+		}
+	});
+
 	/** A tunnel to one member: its certificate's name, fingerprint and start, as the helper reports them. */
 	function tunnel(h: Awaited<ReturnType<typeof harness>>, host: { name: string; fingerprint: string; notBefore: string }) {
 		let reloads = 0;

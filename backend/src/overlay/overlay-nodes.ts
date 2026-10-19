@@ -494,9 +494,14 @@ export class OverlayNodes {
 			const after = mergeRevocations(before, { fingerprints: incoming.revoked, peers: incoming.revokedPeers ?? {} });
 			const revokes = !sameRevocations(before, after);
 			if (revokes) await store.writeJSON('revoked.json', after);
+			const previousSigned = await store.readState();
 			const previous = await this.currentState(networkID, overlay);
-			if (previous && incoming.version <= previous.version) return { changed: false, previous, revokes };
+			if (previous && incoming.version <= previous.version) {
+				await this.keepRevocationProofs(store, previous, [signed]);
+				return { changed: false, previous, revokes };
+			}
 			await store.writeJSON('state.json', signed);
+			await this.keepRevocationProofs(store, incoming, previousSigned ? [previousSigned] : []);
 			this.deps.saveOverlay(networkID, applyState(overlay, incoming));
 			return { changed: true, previous, revokes };
 		});
@@ -529,6 +534,24 @@ export class OverlayNodes {
 		return true;
 	}
 
+	/**
+	 * Keep the signed states that carry a revocation the held state lacks. A node that only remembered such a revocation
+	 * enforced it itself, but passed on the newer state without it: a node catching up from it never learned of it.
+	 * Every state kept here is verified already; one the held state covers is dropped.
+	 */
+	private async keepRevocationProofs(store: OverlayStore, held: OverlayState, candidates: SignedOverlayState[]): Promise<void> {
+		const stored = (await store.readJSON<SignedOverlayState[]>('revocation-proofs.json')) ?? [];
+		const covered = { fingerprints: held.revoked, peers: held.revokedPeers ?? {} };
+		const seen = new Set<string>();
+		const kept = [...stored, ...candidates].filter(proof => {
+			if (seen.has(proof.signature)) return false;
+			seen.add(proof.signature);
+			const state = JSON.parse(proof.state) as OverlayState;
+			return !sameRevocations(mergeRevocations(covered, { fingerprints: state.revoked, peers: state.revokedPeers ?? {} }), covered);
+		});
+		if (kept.length !== stored.length || kept.some((p, i) => p.signature !== stored[i]!.signature)) await store.writeJSON('revocation-proofs.json', kept);
+	}
+
 	/** Founder only: sign a changed state with the CA key, adopt it and publish it. */
 	async publishNewState(networkID: string, change: Omit<OverlayState, 'version' | 'networkID'> & { version?: number }): Promise<OverlayState> {
 		const row = this.deps.getRow(networkID);
@@ -556,6 +579,8 @@ export class OverlayNodes {
 		const signed = await entry.store.readState();
 		if (!signed) return;
 		entry.lastPublish = now;
-		await entry.network.broadcast(stateTopic(networkID), { type: 'overlayState', signed }).catch(() => {});
+		// Older states go along when they carry a revocation the newest one lacks ({@link keepRevocationProofs}).
+		const proofs = (await entry.store.readJSON<SignedOverlayState[]>('revocation-proofs.json').catch(() => null)) ?? [];
+		for (const message of [signed, ...proofs]) await entry.network.broadcast(stateTopic(networkID), { type: 'overlayState', signed: message }).catch(() => {});
 	}
 }

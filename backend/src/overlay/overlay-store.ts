@@ -27,6 +27,8 @@ export type OverlayFile =
 	 * found on its tunnels ({@link OverlayRevocations}). Only grows: a newer state without a revocation does not lift it.
 	 */
 	| 'revoked.json'
+	/** Older signed states that carry a revocation the newest one lacks, passed on with it (OverlayNodes.keepRevocationProofs). */
+	| 'revocation-proofs.json'
 	/** Scratch files of one certificate issue or import, removed right after. */
 	| 'issue.pub'
 	| 'issue.crt'
