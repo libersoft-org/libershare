@@ -121,8 +121,9 @@ describe('protected lishnet on loopback', () => {
 		const a = await joinMember(alice, 'Alice');
 		const b = await joinMember(bob, 'Bob', new Date(Date.now() + 3600_000).toISOString());
 		expect(a.role).toBe('member');
-		expect(a.certificate?.vpnIP).toBe('100.64.0.2');
-		expect(b.certificate?.vpnIP).toBe('100.64.0.3');
+		// Addresses follow from the peer ID: inside the subnet, never the founder's .1, never one another's.
+		for (const s of [a, b]) expect(s.certificate?.vpnIP).toMatch(/^100\.64\.\d+\.\d+$/);
+		expect(new Set(['100.64.0.1', a.certificate?.vpnIP, b.certificate?.vpnIP]).size).toBe(3);
 		const members = await founder.api.overlay.listMembers(network.networkID);
 		expect(members.map(m => m.name).sort()).toEqual(['Alice', 'Bob', 'E2E protected']);
 		for (const member of [alice, bob]) {

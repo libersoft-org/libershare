@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
@@ -21,6 +21,25 @@ const ROLES: readonly OverlayRole[] = ['lighthouse', 'relay'];
 const FINGERPRINT = /^[0-9a-f]{64}$/;
 const MEMBERS_BEGIN = '-----BEGIN LISH OVERLAY MEMBERS-----';
 const MEMBERS_END = '-----END LISH OVERLAY MEMBERS-----';
+
+/**
+ * A free member address (host .2 and up): the first one not in `used`, starting at a slot the peer ID's hash picks.
+ * Two devices holding the CA key do not see what the other handed out; counting up from .2, both gave their next new
+ * member the same address every time, while slots spread by peer ID meet only when two IDs hash alike.
+ *
+ * shortcut: no coordination between devices holding the CA key, so two of them can still give two nodes one address
+ * (about members of one × members of the other ÷ addresses: 0.6 % for 20 on each in a /16); a shared allocation
+ * would need them online together.
+ */
+function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>): string {
+	const slots = size - 3;
+	const start = slots > 0 ? createHash('sha256').update(peerID).digest().readUInt32BE(0) % slots : 0;
+	for (let i = 0; i < slots; i++) {
+		const candidate = subnetAddress(cidr, 2 + ((start + i) % slots));
+		if (!used.has(candidate)) return candidate;
+	}
+	throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, cidr);
+}
 
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
 function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked'> | null {
@@ -268,7 +287,7 @@ export class OverlayAccess {
 			if (!request) throw new CodedError(ErrorCodes.OVERLAY_REQUEST_NOT_FOUND, requestID);
 			if (roles.length > 0 && !request.infraAddr) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'an infrastructure role needs the public address the request offers');
 			const subnet = parseSubnet(overlay.subnet)!;
-			// A renewal keeps the address the member already had; a new member gets the next free one.
+			// A renewal keeps the address the member already had; a new member gets a free one.
 			const current = data.members.filter(m => m.peerID === request.peerID && !m.revoked);
 			const previous = current[0];
 			let vpnIP = previous?.vpnIP;
@@ -277,9 +296,7 @@ export class OverlayAccess {
 				// own and the hosts' are still taken.
 				const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
 				const used = new Set([...data.members.map(m => m.vpnIP), subnetAddress(overlay.subnet, 1), ...(own ? [own.networks[0]!.split('/')[0]!] : []), ...overlay.lighthouses.map(h => h.vpnIP), ...overlay.relays.map(h => h.vpnIP)]);
-				while (data.nextHost < subnet.size - 1 && used.has(subnetAddress(overlay.subnet, data.nextHost))) data.nextHost++;
-				if (data.nextHost >= subnet.size - 1) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, overlay.subnet);
-				vpnIP = subnetAddress(overlay.subnet, data.nextHost++);
+				vpnIP = freeAddress(overlay.subnet, subnet.size, request.peerID, used);
 			}
 			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], until.toISOString().replace(/\.\d{3}Z$/, 'Z'));
 			// A renewal that ends sooner than a certificate the node still holds would shorten nothing while that

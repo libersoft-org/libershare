@@ -66,7 +66,10 @@ describe('importing a CA key', () => {
 				const request = { type: 'lish-overlay-request', networkID: NET, name: 'new', peerID: '1'.repeat(46), publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' };
 				await b.issue(request);
 				const members = await b.listMembers(NET);
-				expect(members.find(m => m.name === 'new')?.vpnIP).toBe(withList ? '100.64.0.3' : '100.64.0.2');
+				// Never the founder's .1 or this device's own address; with the list, never a listed member's either.
+				const given = members.find(m => m.name === 'new')?.vpnIP;
+				expect(given).toMatch(/^100\.64\.\d+\.\d+$/);
+				expect([...(withList ? ['100.64.0.2'] : []), '100.64.0.1', '100.64.0.9']).not.toContain(given);
 				if (withList) expect(members.map(m => m.name)).toEqual(['m1', 'm2', 'new']);
 			} finally {
 				issue.mockRestore();
@@ -201,6 +204,38 @@ describe('importing a CA key', () => {
 			sign.mockRestore();
 			take.mockRestore();
 			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	/** The founder's two devices, each unaware of the other's approvals, both gave their next new member .2. */
+	it('two devices holding the CA key give different members different addresses', async () => {
+		const dirs = [await mkdtemp(join(tmpdir(), 'overlay-ca-a-')), await mkdtemp(join(tmpdir(), 'overlay-ca-b-'))];
+		let serial = 0;
+		const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (..._args: unknown[]) => ({ cert: 'crt', fingerprint: String(++serial).padStart(64, '0'), notAfter: '2099-01-01T00:00:00Z' }));
+		try {
+			const ca = await generateKeyPair('Ed25519');
+			const given: string[] = [];
+			for (const [i, dir] of dirs.entries()) {
+				const access = new OverlayAccess({
+					nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => null, currentState: async () => null } as any,
+					getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+					addNetwork: async () => {},
+					refresh: async () => {},
+					emit: () => {},
+				});
+				const store = new OverlayStore(dir, NET);
+				await store.ensureDir();
+				await store.writeText('ca.key', pem(ca.raw));
+				// The same member list on both, as right after a restore.
+				await store.writeJSON('founder.json', { nextHost: 2, members: [], requests: [] });
+				const request = { type: 'lish-overlay-request', networkID: NET, name: `m${i}`, peerID: String(i + 1).repeat(46), publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' };
+				await access.issue(request);
+				given.push((await access.listMembers(NET))[0]!.vpnIP);
+			}
+			expect(given[0]).not.toBe(given[1]);
+		} finally {
+			issue.mockRestore();
+			for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 		}
 	});
 
