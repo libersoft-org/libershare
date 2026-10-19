@@ -105,8 +105,7 @@ export function mergeRevocations(a: OverlayRevocations, b: OverlayRevocations): 
  */
 export function compactRevocations(r: OverlayRevocations, now: number = Date.now()): OverlayRevocations {
 	const peers = { ...r.peers };
-	for (const [peerID, list] of Object.entries(r.limits ?? {}))
-		for (const [before, until] of list) if (Date.parse(until) <= now && (!peers[peerID] || Date.parse(before) > Date.parse(peers[peerID]!))) peers[peerID] = before;
+	for (const [peerID, list] of Object.entries(r.limits ?? {})) for (const [before, until] of list) if (Date.parse(until) <= now && (!peers[peerID] || Date.parse(before) > Date.parse(peers[peerID]!))) peers[peerID] = before;
 	const limits: Record<string, Array<[string, string]>> = {};
 	for (const [peerID, list] of Object.entries(r.limits ?? {})) {
 		const kept = list.filter(([before, until]) => Date.parse(until) > now && (!peers[peerID] || Date.parse(before) > Date.parse(peers[peerID]!)));
@@ -248,7 +247,8 @@ export interface OverlayStatus {
 	/** The founder refused the renewal {@link request}; a new request can be made. */
 	renewalRefused?: boolean;
 	/** What the last answered request asked as, to fill in a renewal. */
-	lastRequest?: { name: string; infraAddr?: string };	running: boolean;
+	lastRequest?: { name: string; infraAddr?: string };
+	running: boolean;
 	stateVersion: number;
 	hosts: OverlayHostStatus[];
 	peers: OverlayPeerStatus[];
