@@ -314,6 +314,52 @@ describe('importing a CA key', () => {
 		}
 	});
 
+	// Device A, its lane full, took the next lane it believed free: the one device B, restored from A's backup, had taken.
+	for (const subnet of ['100.64.0.0/16', '100.64.0.0/23'])
+		it(`two devices holding the CA key never share a lane, in a ${subnet}`, async () => {
+			const dirA = await mkdtemp(join(tmpdir(), 'overlay-ca-a-'));
+			const dirB = await mkdtemp(join(tmpdir(), 'overlay-ca-b-'));
+			const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (...args: unknown[]) => ({ cert: 'crt', fingerprint: 'f'.repeat(64), notBefore: args[6] as string, notAfter: '2099-01-01T00:00:00Z' }));
+			try {
+				const ca = await generateKeyPair('Ed25519');
+				const make = (dir: string): OverlayAccess =>
+					new OverlayAccess({
+						nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => ({ ...MEMBER_CERT, networks: [`100.64.0.9/${subnet.split('/')[1]}`] }), currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async () => {}, reconfigure: async () => {}, sweepRevokedPeers: async () => {} } as any,
+						getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet, lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+						addNetwork: async () => {},
+						listOverlayIDs: () => [],
+						refresh: async () => {},
+						emit: () => {},
+					});
+				const member = (host: number) => ({ name: `m${host}`, peerID: `p${host}`, vpnIP: `100.64.0.${host}`, roles: [], notAfter: '2099-01-01T00:00:00Z', fingerprint: String(host).padStart(64, '0'), issued: '', revoked: false });
+				const a = new OverlayStore(dirA, NET);
+				await a.ensureDir();
+				await a.writeText('ca.key', pem(ca.raw));
+				// Lane 0 of the founding device full.
+				await a.writeJSON('founder.json', { nextHost: 2, lane: 0, lanes: [0], members: Array.from({ length: 254 }, (_, i) => member(i + 2)), requests: [] });
+				const deviceA = make(dirA);
+				const deviceB = make(dirB);
+				await deviceB.importCA(NET, (await deviceA.exportCA(NET)).caKey);
+				const request = (n: number) => ({ type: 'lish-overlay-request', networkID: NET, name: `new${n}`, peerID: String(n).repeat(46), publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' });
+				const laneOf = (ip: string): number => Number(ip.split('.')[2]);
+				const fromB = (await deviceB.listMembers(NET)).filter(m => !m.name.startsWith('m')).map(m => laneOf(m.vpnIP));
+				await deviceB.issue(request(2));
+				fromB.push(...(await deviceB.listMembers(NET)).filter(m => m.name === 'new2').map(m => laneOf(m.vpnIP)));
+				// A /23 has two lanes: the backup took the second, so device A has no more to give rather than one B uses.
+				const fromA = await deviceA.issue(request(1)).then(
+					async () => (await deviceA.listMembers(NET)).filter(m => m.name === 'new1').map(m => laneOf(m.vpnIP)),
+					(err: any) => (expect(err.code).toBe('OVERLAY_ADDRESSES_EXHAUSTED'), [])
+				);
+				if (subnet.endsWith('/16')) expect(fromA).toHaveLength(1);
+				for (const lane of fromA) expect(fromB).not.toContain(lane);
+				expect(fromB.length).toBeGreaterThan(0);
+			} finally {
+				issue.mockRestore();
+				await rm(dirA, { recursive: true, force: true });
+				await rm(dirB, { recursive: true, force: true });
+			}
+		});
+
 	// A running host with a valid certificate of its own restored a backup that revoked a member: the revocation sat
 	// on disk while the running helper kept the old blocklist and the member went on transferring.
 	it('applies a restored backup to a node that already runs', async () => {

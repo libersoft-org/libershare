@@ -100,8 +100,10 @@ export interface FounderData {
 	 * device restored from a backup, so two devices holding the CA key do not give two members one address.
 	 */
 	lane?: number;
-	/** More lanes this device took once its own was full ({@link lane}). */
+	/** More lanes this device took once its own was full ({@link lane}), from {@link laneRange}. */
 	extraLanes?: number[];
+	/** The lanes this device may take, `[from, to)`: all on the founding device, less what each backup handed over. */
+	laneRange?: [number, number];
 	/** The lanes this device knows to be taken by devices holding the CA key, carried in backups. */
 	lanes?: number[];
 	/** Invites not yet expired. */

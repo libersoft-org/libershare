@@ -46,15 +46,14 @@ function hashOf(text: string): number {
 }
 
 /**
- * A free member address: the first one not in `used`, starting at a slot the peer ID's hash picks, inside the lane of
+ * A free member address: the first one not in `used`, starting at a slot the peer ID's hash picks, inside the lanes of
  * the device that approves. Two devices holding the CA key do not see what the other handed out; their own lanes keep
  * them apart (counting up from .2, both gave their next new member the same address every time). A subnet too small
  * for lanes uses the whole subnet. Null when the device's lanes are full: it never reaches into another device's lane
  * (falling back to the whole subnet handed out addresses another device had given already).
  *
- * shortcut: two devices restored from one backup pick their lanes at random, so they share one with a chance of 1 in
- * (lanes − 2), 1 in 254 for a /16, and so do two devices that each take one more lane; a shared allocation would need
- * them online together.
+ * shortcut: a subnet smaller than two lanes (/24 and smaller) has no lanes, so two devices holding the CA key there can
+ * give two members one address; and so can two devices restored from one and the same backup ({@link ownRange}).
  */
 function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>, lanes: number[]): string | null {
 	const ranges: Array<[number, number]> = size >= 2 * LANE_SIZE ? lanes.map(lane => [lane * LANE_SIZE, LANE_SIZE]) : [[0, size]];
@@ -72,26 +71,50 @@ function freeAddress(cidr: string, size: number, peerID: string, used: Set<strin
 	return null;
 }
 
-/** A lane no known device holds, other than the original founder's 0 and the guest lane, picked at random; null when none is left. */
-function freeLane(size: number, taken: number[]): number | null {
-	const lanes = guestLane(size) ?? Math.floor(size / LANE_SIZE);
-	if (lanes < 2) return null;
+/** Lanes members can get: all but the guest lane. */
+function memberLanes(size: number): number {
+	return guestLane(size) ?? Math.floor(size / LANE_SIZE);
+}
+
+/**
+ * The lanes this device may take, `[from, to)`. The founding device starts with all of them; each backup it makes
+ * hands the top of its range to the device that restores it ({@link OverlayAccess.exportCA}), so no two devices ever
+ * take the same lane, whatever they know of each other. Taking one more lane by what a device knows of the others
+ * gave two devices one lane: the other device's lane was in no backup this one had seen.
+ */
+function ownRange(data: FounderData, size: number): [number, number] {
+	// Founder data from before ranges: the founding device (lane 0) had all lanes, a restored one only its own.
+	return data.laneRange ?? (data.lane ? [data.lane, data.lane + 1] : [0, memberLanes(size)]);
+}
+
+/** The lanes this device hands addresses from; none on a device restored from a backup that had no lane left to give. */
+function lanesInUse(data: FounderData): number[] {
+	return data.lane === undefined && data.laneRange ? [] : [data.lane ?? 0, ...(data.extraLanes ?? [])];
+}
+
+/** The lowest lane of the range not taken; null when none is left. */
+function nextLane([from, to]: [number, number], taken: number[]): number | null {
+	for (let lane = from; lane < to; lane++) if (!taken.includes(lane)) return lane;
+	return null;
+}
+
+/** A backup takes this share of the subnet's lanes (at least one) for the device that restores it. */
+const BACKUP_LANE_SHARE = 16;
+
+/** A lane for a device restored from a backup made before ranges: one no known device holds, at random; with every lane taken it shares one. */
+function pickLane(size: number, taken: number[]): number {
+	const lanes = memberLanes(size);
+	if (lanes < 2) return 0;
 	const start = randomInt(lanes - 1);
 	for (let i = 0; i < lanes - 1; i++) {
 		const lane = 1 + ((start + i) % (lanes - 1));
 		if (!taken.includes(lane)) return lane;
 	}
-	return null;
-}
-
-/** A lane for a device restored from a backup ({@link freeLane}); with every lane taken it shares one. */
-function pickLane(size: number, taken: number[]): number {
-	const lanes = guestLane(size) ?? Math.floor(size / LANE_SIZE);
-	return freeLane(size, taken) ?? (lanes < 2 ? 0 : 1 + randomInt(lanes - 1));
+	return 1 + randomInt(lanes - 1);
 }
 
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
-function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers' | 'limits' | 'lanes'> | null {
+function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers' | 'limits' | 'lanes' | 'laneRange'> | null {
 	const body = new RegExp(`${MEMBERS_BEGIN}([\\s\\S]*?)${MEMBERS_END}`).exec(text)?.[1];
 	if (body === undefined) return null;
 	const invalid = (): CodedError => new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the member list of the backup is damaged');
@@ -118,7 +141,10 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 	// Backups made before lanes know only the founding device's.
 	const lanes = list.lanes ?? [0];
 	if (!Array.isArray(lanes) || lanes.some((l: unknown) => !Number.isInteger(l) || (l as number) < 0)) throw invalid();
-	return { nextHost: list.nextHost, members, revoked, revokedPeers, limits, lanes };
+	// The lanes handed to the device restoring it; backups made before ranges have none.
+	const range = list.range;
+	if (range !== undefined && (!Array.isArray(range) || range.length !== 2 || !range.every((l: unknown) => Number.isInteger(l) && (l as number) >= 0) || range[0] > range[1])) throw invalid();
+	return { nextHost: list.nextHost, members, revoked, revokedPeers, limits, lanes, ...(range ? { laneRange: range as [number, number] } : {}) };
 }
 
 export interface OverlayAccessDeps {
@@ -459,11 +485,11 @@ export class OverlayAccess {
 				// own and the hosts' are still taken.
 				const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
 				const used = new Set([...data.members.map(m => m.vpnIP), subnetAddress(overlay.subnet, 1), ...(own ? [own.networks[0]!.split('/')[0]!] : []), ...overlay.lighthouses.map(h => h.vpnIP), ...overlay.relays.map(h => h.vpnIP)]);
-				const mine = [data.lane ?? 0, ...(data.extraLanes ?? [])];
-				let free = freeAddress(overlay.subnet, subnet.size, request.peerID, used, mine);
+				const mine = lanesInUse(data);
+				let free = mine.length > 0 ? freeAddress(overlay.subnet, subnet.size, request.peerID, used, mine) : null;
 				if (!free) {
-					// This device's lanes are full: it takes one more lane that no device it knows of holds.
-					const lane = freeLane(subnet.size, [...(data.lanes ?? [0]), ...mine]);
+					// This device's lanes are full: it takes the next one of its own range.
+					const lane = nextLane(ownRange(data, subnet.size), [...(data.lanes ?? [0]), ...mine]);
 					free = lane === null ? null : freeAddress(overlay.subnet, subnet.size, request.peerID, used, [lane]);
 					if (!free) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, overlay.subnet);
 					data.extraLanes = [...(data.extraLanes ?? []), lane!];
@@ -820,10 +846,21 @@ export class OverlayAccess {
 	 */
 	async exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
 		const { overlay, store } = this.founderOf(networkID);
-		const { nextHost, members, lane, lanes } = await store.readFounder();
+		const size = parseSubnet(overlay.subnet)!.size;
+		// Every backup hands the device that restores it lanes of its own, taken off the top of this device's range; it
+		// cannot tell a backup kept for safety from one restored on another device. A subnet without lanes hands none.
+		const { range, ...data } = await this.founderLock(networkID).runExclusive(async () => {
+			const data = await store.readFounder();
+			if (size < 2 * LANE_SIZE) return { ...data, range: undefined };
+			const [from, to] = ownRange(data, size);
+			const cut = Math.max(from, ...lanesInUse(data).map(l => l + 1), to - Math.max(1, Math.floor(memberLanes(size) / BACKUP_LANE_SHARE)));
+			data.laneRange = [from, Math.min(cut, to)];
+			await store.writeJSON('founder.json', data);
+			return { ...data, range: [Math.min(cut, to), to] as [number, number] };
+		});
 		const known = await this.revocations(networkID, overlay);
-		const taken = [...new Set([...(lanes ?? [0]), lane ?? 0])];
-		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked: known.fingerprints, revokedPeers: known.peers, limits: known.limits ?? {}, lanes: taken })).toString('base64');
+		const taken = [...new Set([...(data.lanes ?? [0]), ...lanesInUse(data)])];
+		const list = Buffer.from(JSON.stringify({ nextHost: data.nextHost, members: data.members, revoked: known.fingerprints, revokedPeers: known.peers, limits: known.limits ?? {}, lanes: taken, ...(range ? { range } : {}) })).toString('base64');
 		return { networkID, caKey: `${(await store.readText('ca.key'))!.trim()}\n${MEMBERS_BEGIN}\n${list.replace(/.{1,64}/g, '$&\n')}${MEMBERS_END}\n` };
 	}
 
@@ -840,10 +877,16 @@ export class OverlayAccess {
 		await this.founderLock(networkID).runExclusive(async () => {
 			await store.writeText('ca.key', pem![0] + '\n');
 			const data = await store.readFounder();
-			// A device taking the key over gets a block of addresses of its own, apart from the ones the backup knows.
+			// A device taking the key over gets lanes of its own: the range the backup hands over, or with a backup made
+			// before ranges (or the key alone) one lane apart from the ones the backup knows.
 			const taken = [...new Set([...(data.lanes ?? []), ...(backup?.lanes ?? [0])])];
-			if (data.lane === undefined) data.lane = pickLane(parseSubnet(overlay.subnet)!.size, taken);
-			data.lanes = [...new Set([...taken, data.lane])];
+			if (data.lane === undefined && !data.laneRange) {
+				if (backup?.laneRange) {
+					data.laneRange = backup.laneRange;
+					if (backup.laneRange[0] < backup.laneRange[1]) data.lane = backup.laneRange[0];
+				} else data.lane = pickLane(parseSubnet(overlay.subnet)!.size, taken);
+			}
+			data.lanes = [...new Set([...taken, ...lanesInUse(data)])];
 			for (const m of backup?.members ?? []) {
 				const held = data.members.find(h => h.fingerprint === m.fingerprint);
 				if (held) held.revoked ||= m.revoked;
