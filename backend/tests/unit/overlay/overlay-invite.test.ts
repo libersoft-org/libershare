@@ -79,6 +79,66 @@ describe('invite exchange — founder', () => {
 	});
 });
 
+/** The invited node's side: delivery runs only for an enabled lishnet and leaves no helper behind when stopped. */
+describe('invite delivery — invited node', () => {
+	async function setup(enabled: boolean, startGuest: () => Promise<any>) {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-invited-'));
+		let row = { networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled, created: '', overlay: { type: 'nebula' as const, caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } };
+		const access = new OverlayAccess({
+			nodes: { store: (id: string) => new OverlayStore(dir, id), startGuest } as any,
+			getRow: () => row,
+			addNetwork: async () => {},
+			listOverlayIDs: () => [NET],
+			refresh: async () => {},
+			emit: () => {},
+		});
+		const store = new OverlayStore(dir, NET);
+		await store.ensureDir();
+		await store.writeJSON('invite.json', { id: INVITE, founder: '100.64.0.1', expires: new Date(Date.now() + 86_400_000).toISOString() });
+		await store.writeJSON('request.json', request(b58('A')));
+		return { access, dir, enable: () => (row = { ...row, enabled: true }) };
+	}
+
+	// A switched-off lishnet kept handing its request in and picked up its certificate after the user switched it off.
+	it('does not deliver for a switched-off lishnet, and resumes once it is switched on', async () => {
+		let starts = 0;
+		const { access, dir, enable } = await setup(false, async () => {
+			starts++;
+			throw new Error('no tunnel in a unit test');
+		});
+		try {
+			access.resumeInvites();
+			(access as any).deliver(NET);
+			await Bun.sleep(50);
+			expect(starts).toBe(0);
+			enable();
+			access.resumeInvite(NET);
+			await Bun.sleep(50);
+			expect(starts).toBe(1);
+		} finally {
+			await access.stopInvites();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	// A stop that came while the guest helper was starting found nothing to end, and the helper ran on, unowned.
+	it('ends a guest helper that finishes starting after the delivery was stopped', async () => {
+		let release!: () => void;
+		let stopped = 0;
+		const { access, dir } = await setup(true, () => new Promise(resolve => (release = () => resolve({ helper: { isRunning: () => true, stop: async () => void stopped++ }, vpnIP: '100.64.255.3' }))));
+		try {
+			access.resumeInvite(NET);
+			await Bun.sleep(50);
+			await access.stopInvite(NET);
+			release();
+			await Bun.sleep(50);
+			expect(stopped).toBe(1);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('invite text', () => {
 	it('round-trips and rejects anything that is not an invite', () => {
 		const invite: OverlayInvite = { type: 'lish-overlay-invite', id: INVITE, network: { networkID: NET, name: 'Síť', description: '', bootstrapPeers: [], overlay: { type: 'nebula', caCert: '-----BEGIN NEBULA CERTIFICATE V2-----\nAA\n-----END NEBULA CERTIFICATE V2-----\n', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }, founder: '100.64.0.1', cert: '-----BEGIN NEBULA CERTIFICATE V2-----\nBB\n-----END NEBULA CERTIFICATE V2-----\n', key: '-----BEGIN NEBULA X25519 PRIVATE KEY-----\nCC\n-----END NEBULA X25519 PRIVATE KEY-----\n', expires: '2099-01-01T00:00:00Z' };

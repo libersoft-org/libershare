@@ -526,9 +526,14 @@ export class OverlayAccess {
 		return await this.status(networkID);
 	}
 
-	/** Resume the delivery of every invite this node holds (at start). */
+	/** Resume the delivery of every invite of an enabled lishnet (at start). */
 	resumeInvites(): void {
-		for (const networkID of this.deps.listOverlayIDs()) if (this.deps.nodes.store(networkID).has('invite.json')) this.deliver(networkID);
+		for (const networkID of this.deps.listOverlayIDs()) this.resumeInvite(networkID);
+	}
+
+	/** Resume the lishnet's invite delivery when it is enabled and has one (it was switched on again). */
+	resumeInvite(networkID: string): void {
+		if (this.deps.getRow(networkID)?.enabled === true && this.deps.nodes.store(networkID).has('invite.json')) this.deliver(networkID);
 	}
 
 	async stopInvites(): Promise<void> {
@@ -567,15 +572,22 @@ export class OverlayAccess {
 			const store = this.deps.nodes.store(networkID);
 			const invite = await store.readJSON<InviteFile>('invite.json').catch(() => null);
 			const request = await store.readRequest().catch(() => null);
-			const overlay = this.deps.getRow(networkID)?.overlay;
+			const row = this.deps.getRow(networkID);
+			const overlay = row?.overlay;
 			if (stopped) return;
-			if (!invite || !request || !overlay) return void (await stop());
+			// A switched-off lishnet talks to nobody; switching it on resumes the delivery.
+			if (!invite || !request || !overlay || row?.enabled !== true) return void (await stop());
 			if (Date.parse(invite.expires) <= Date.now()) {
 				setState('expired');
 				return void (await stop());
 			}
 			try {
-				if (!guest?.helper.isRunning()) guest = await this.deps.nodes.startGuest(networkID, overlay);
+				if (!guest?.helper.isRunning()) {
+					const started = await this.deps.nodes.startGuest(networkID, overlay);
+					// Stopped while the helper was starting: the stop found none to end, so this one ends it.
+					if (stopped) return void (await started.helper.stop());
+					guest = started;
+				}
 				const answer = await askFounder(guest.helper, invite.founder, { invite: invite.id, request });
 				if (stopped) return;
 				if (answer.status === 'approved') {

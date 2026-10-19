@@ -388,7 +388,10 @@ export class Networks {
 	 */
 	private async joinOverlay(row: LISHNetworkConfig): Promise<boolean> {
 		try {
-			return await this.overlayNodes.join(row);
+			const joined = await this.overlayNodes.join(row);
+			// No certificate yet: an invite this node holds goes on being delivered.
+			if (!joined) this.overlay.resumeInvite(row.networkID);
+			return joined;
 		} catch (err: any) {
 			console.error(`[Networks] protected lishnet ${row.networkID} could not start:`, err?.message ?? err);
 			return false;
@@ -924,6 +927,8 @@ export class Networks {
 		const protectedNet = next?.overlay !== undefined || this.overlayNodes.isRunning(id);
 		if (joined && wantJoined && protectedNet) await this.overlayNodes.reconfigure(id);
 		else if (joined && wantJoined && (installed.join('\n') !== after.join('\n') || entry?.complete === false)) this.syncBootstrapRuntime(id, installed, after);
+		// A lishnet still waiting for its certificate is not joined, yet its invite delivery talks to the founder.
+		if (!wantJoined && protectedNet) await this.overlay.stopInvite(id);
 		if (joined !== wantJoined) {
 			if (wantJoined) await this.joinNetwork(id);
 			else await this.leaveNetwork(id, installed);
