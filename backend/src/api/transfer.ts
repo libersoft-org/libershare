@@ -495,6 +495,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		let downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
 		await downloader.init(p.lishPath);
 		const lishID = downloader.getLISHID();
+		// Starting it is the user's latest word: an older switch-off must not stop a later move of this download.
+		lastManualIntent.set(lishID, true);
 		// A LISH already stored for protected lishnets downloads on their node, whichever lishnet the caller named
 		// (the CLI names the first enabled one): asking a public lishnet for it would tell it what this member wants.
 		const target = downloadNode(lishID, [p.networkID]);
