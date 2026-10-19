@@ -188,7 +188,11 @@
 	let scope = $state('');
 	onMount(() => {
 		getNetworks()
-			.then(nets => (protectedNets = nets.filter(n => n.overlay)))
+			.then(nets => {
+				protectedNets = nets.filter(n => n.overlay);
+				// With no public lishnet in use, sharing publicly is never what the user means.
+				if (!nets.some(n => !n.overlay && n.enabled) && protectedNets[0]) scope = protectedNets[0].networkID;
+			})
 			.catch(() => {});
 	});
 
