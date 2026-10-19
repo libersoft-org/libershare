@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
+	import { type LISHNetworkConfig, type NetworkNodeInfo, type OverlayStatus } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, replaceNetworks, setNetworkEnabled, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses, networkMeshStates, type MeshState } from '../../scripts/networks.ts';
@@ -24,6 +24,7 @@
 	import LISHNetworkBootstrap from './SettingsLISHNetworkPeers.svelte';
 	import LISHNetworkProtectedCreate from './SettingsLISHNetworkProtectedCreate.svelte';
 	import LISHNetworkAccess from './SettingsLISHNetworkAccess.svelte';
+	import LISHNetworkInvite from './SettingsLISHNetworkInvite.svelte';
 	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	interface Props {
 		areaID: string;
@@ -62,6 +63,7 @@
 	let bootstrapNetwork = $state<LISHNetworkConfig | null>(null);
 	const protectedCreateSubPage = createSubPage(navHandle, () => areaID);
 	const accessSubPage = createSubPage(navHandle, () => areaID);
+	const inviteSubPage = createSubPage(navHandle, () => areaID);
 	let accessNetwork = $state<LISHNetworkConfig | null>(null);
 
 	function openProtectedCreate(): void {
@@ -72,6 +74,17 @@
 		await protectedCreateSubPage.exit();
 		await loadNetworks();
 		openAccess(networks.find(n => n.networkID === network.networkID) ?? network);
+	}
+
+	function openInvite(): void {
+		inviteSubPage.enter($t('settings.lishNetwork.protected.joinByInvite'), () => void inviteSubPage.exit());
+	}
+
+	async function handleInviteJoined(status: OverlayStatus): Promise<void> {
+		await inviteSubPage.exit();
+		await loadNetworks();
+		const network = networks.find(n => n.networkID === status.networkID);
+		if (network) openAccess(network);
 	}
 
 	function openAccess(network: LISHNetworkConfig): void {
@@ -381,6 +394,8 @@
 	<LISHNetworkPublic {areaID} {position} onBack={() => void closePublic()} />
 {:else if protectedCreateSubPage.active}
 	<LISHNetworkProtectedCreate {areaID} {position} onBack={() => void protectedCreateSubPage.exit()} onCreated={handleProtectedCreated} />
+{:else if inviteSubPage.active}
+	<LISHNetworkInvite {areaID} {position} onBack={() => void inviteSubPage.exit()} onJoined={handleInviteJoined} />
 {:else if accessSubPage.active && accessNetwork}
 	<LISHNetworkAccess {areaID} {position} network={accessNetwork} onBack={() => void closeAccess()} />
 {:else if bootstrapSubPage.active && bootstrapNetwork}
@@ -397,6 +412,7 @@
 				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} onConfirm={openPublic} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/plus.svg" label={$t('common.add')} onConfirm={openAddNetwork} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/lock.svg" label={$t('settings.lishNetwork.protected.create')} onConfirm={openProtectedCreate} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/link.svg" label={$t('settings.lishNetwork.protected.joinByInvite')} onConfirm={openInvite} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/import.svg" label={$t('common.import')} onConfirm={openImport} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/export.svg" label={$t('common.exportAll')} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>

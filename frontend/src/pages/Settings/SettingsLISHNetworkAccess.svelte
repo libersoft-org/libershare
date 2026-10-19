@@ -35,6 +35,7 @@
 	let name = $state('');
 	let infraAddr = $state('');
 	let certificate = $state('');
+	let inviteText = $state('');
 	let founder = $derived(status?.role === 'founder');
 	let requestJSON = $derived(status?.request ? JSON.stringify(status.request) : '');
 	let relayed = $derived(status?.peers.filter(p => p.path === 'relay').length ?? 0);
@@ -88,6 +89,12 @@
 			status = await api.overlay.importCertificate(bundle as any);
 			certificate = '';
 			addNotification($t('settings.lishNetwork.protected.certificateImported'), 'success');
+		});
+	}
+
+	function createInvite(): Promise<void> {
+		return run(async () => {
+			inviteText = (await api.overlay.createInvite(network.networkID)).invite;
 		});
 	}
 
@@ -171,6 +178,7 @@
 			<ButtonBar basePosition={[0, 0]}>
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} padding="1vh 1.5vh" fontSize="1.6vh" />
 				{#if founder}
+					<Button icon="/img/link.svg" label={$t('settings.lishNetwork.protected.invite')} disabled={busy} onConfirm={createInvite} padding="1vh 1.5vh" fontSize="1.6vh" />
 					<Button icon="/img/plus.svg" label={$t('settings.lishNetwork.protected.requests')} onConfirm={() => requestsPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.requests')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
 					<Button icon="/img/person.svg" label={$t('settings.lishNetwork.protected.members')} onConfirm={() => membersPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.members')}`)} padding="1vh 1.5vh" fontSize="1.6vh" />
 				{/if}
@@ -179,13 +187,32 @@
 			{#if error}
 				<Alert type="error" message={error} />
 			{/if}
+			{#if inviteText}
+				<div role="group" data-mouse-activate-area={areaID}>
+					<Input value={inviteText} label={$t('settings.lishNetwork.protected.inviteText')} multiline rows={3} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 1]} />
+				</div>
+				<ButtonBar basePosition={[0, 2]}>
+					<Button icon="/img/copy.svg" label={$t('settings.lishNetwork.protected.copy')} onConfirm={() => copyToClipboard(inviteText, $t('settings.lishNetwork.protected.copied'))} />
+				</ButtonBar>
+			{/if}
 			{#if status}
+				{#if status.invite}
+					{#if status.invite.state === 'expired'}
+						<Alert type="error" message={tt('settings.lishNetwork.protected.inviteExpired', { date: formatDate(status.invite.expires) })} />
+					{:else if status.invite.state === 'refused'}
+						<Alert type="error" message={$t('settings.lishNetwork.protected.inviteRefused')} />
+					{:else}
+						<Alert type="info" message={$t(`settings.lishNetwork.protected.${status.invite.state === 'pending' ? 'invitePending' : 'inviteDelivering'}`)} />
+					{/if}
+				{/if}
 				{#if status.certificate?.revoked}
 					<Alert type="error" message={$t('settings.lishNetwork.protected.revoked')} />
 				{:else if expired && status.certificate}
 					<Alert type="error" message={tt('settings.lishNetwork.protected.expired', { date: formatDate(status.certificate.notAfter) })} />
 				{:else if endingSoon && status.certificate && !founder}
 					<Alert type="warning" message={tt('settings.lishNetwork.protected.endingSoon', { date: formatDate(status.certificate.notAfter) })} />
+				{:else if status.certificate && !founder}
+					<Alert type="info" message={tt('settings.lishNetwork.protected.accessUntil', { date: formatDate(status.certificate.notAfter) })} />
 				{/if}
 				<Table columns="35vh 1fr" noBorder>
 					<TableRow>
@@ -233,7 +260,8 @@
 						<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.requestAccess')} disabled={busy} onConfirm={requestAccess} />
 					</ButtonBar>
 				{:else if !founder}
-					{#if requestJSON}
+					<!-- An invite carries the request and the certificate by itself; the JSON is for passing them by hand. -->
+					{#if requestJSON && !status.invite}
 						<div role="group" data-mouse-activate-area={areaID}>
 							<Input value={requestJSON} label={$t('settings.lishNetwork.protected.requestText')} multiline rows={4} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 1]} />
 						</div>

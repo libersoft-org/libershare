@@ -35,7 +35,7 @@
 	let days = $state(DEFAULT_DAYS);
 	let lighthouse = $state(false);
 	let relay = $state(false);
-	let issued = $state<{ name: string; certificate: string } | null>(null);
+	let issued = $state<{ name: string; certificate: string; byInvite: boolean } | null>(null);
 	let daysValid = $derived(Number.isInteger(Number(days)) && Number(days) >= 1 && Number(days) <= 3650);
 
 	async function load(): Promise<void> {
@@ -99,8 +99,8 @@
 			const roles: OverlayRole[] = [...(lighthouse ? (['lighthouse'] as const) : []), ...(relay ? (['relay'] as const) : [])];
 			const validUntil = new Date(Date.now() + Number(days) * 86_400_000).toISOString();
 			const bundle = await api.overlay.approve(network.networkID, selected.id, { validUntil, roles });
-			issued = { name: selected.name, certificate: JSON.stringify(bundle) };
-			addNotification(tt('settings.lishNetwork.protected.approved', { name: selected.name }), 'success');
+			issued = { name: selected.name, certificate: JSON.stringify(bundle), byInvite: !!selected.invite };
+			addNotification(tt(issued.byInvite ? 'settings.lishNetwork.protected.approvedByInvite' : 'settings.lishNetwork.protected.approved', { name: selected.name }), 'success');
 		});
 	}
 
@@ -164,12 +164,16 @@
 					· <span class="mono">{selected.infraAddr}</span>{/if}
 			</div>
 			{#if issued}
-				<Alert type="info" message={tt('settings.lishNetwork.protected.approved', { name: issued.name })} />
-				<div role="group" data-mouse-activate-area={areaID}>
-					<Input value={issued.certificate} label={tt('settings.lishNetwork.protected.certificateFor', { name: issued.name })} multiline rows={5} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 0]} />
-				</div>
+				<Alert type="info" message={tt(issued.byInvite ? 'settings.lishNetwork.protected.approvedByInvite' : 'settings.lishNetwork.protected.approved', { name: issued.name })} />
+				{#if !issued.byInvite}
+					<div role="group" data-mouse-activate-area={areaID}>
+						<Input value={issued.certificate} label={tt('settings.lishNetwork.protected.certificateFor', { name: issued.name })} multiline rows={5} readonly fontSize="1.6vh" fontFamily="var(--font-mono)" position={[0, 0]} />
+					</div>
+				{/if}
 				<ButtonBar justify="center" basePosition={[0, 1]}>
-					<Button icon="/img/copy.svg" label={$t('settings.lishNetwork.protected.copy')} onConfirm={() => copyToClipboard(issued!.certificate, $t('settings.lishNetwork.protected.copied'))} />
+					{#if !issued.byInvite}
+						<Button icon="/img/copy.svg" label={$t('settings.lishNetwork.protected.copy')} onConfirm={() => copyToClipboard(issued!.certificate, $t('settings.lishNetwork.protected.copied'))} />
+					{/if}
 					<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={() => void closeRequest()} />
 				</ButtonBar>
 			{:else}
