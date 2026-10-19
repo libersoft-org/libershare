@@ -1,5 +1,5 @@
 import { Mutex } from 'async-mutex';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
@@ -22,27 +22,53 @@ const FINGERPRINT = /^[0-9a-f]{64}$/;
 const MEMBERS_BEGIN = '-----BEGIN LISH OVERLAY MEMBERS-----';
 const MEMBERS_END = '-----END LISH OVERLAY MEMBERS-----';
 
+/** Addresses of one device's lane ({@link FounderData.lane}); a subnet smaller than two lanes has none. */
+const LANE_SIZE = 256;
+
+function hashOf(text: string): number {
+	return createHash('sha256').update(text).digest().readUInt32BE(0);
+}
+
 /**
- * A free member address (host .2 and up): the first one not in `used`, starting at a slot the peer ID's hash picks.
- * Two devices holding the CA key do not see what the other handed out; counting up from .2, both gave their next new
- * member the same address every time, while slots spread by peer ID meet only when two IDs hash alike.
+ * A free member address: the first one not in `used`, starting at a slot the peer ID's hash picks, inside the lane of
+ * the device that approves. Two devices holding the CA key do not see what the other handed out; their own lanes keep
+ * them apart (counting up from .2, both gave their next new member the same address every time). A full lane, or a
+ * subnet too small for lanes, falls back to the whole subnet.
  *
- * shortcut: no coordination between devices holding the CA key, so two of them can still give two nodes one address
- * (about members of one × members of the other ÷ addresses: 0.6 % for 20 on each in a /16); a shared allocation
- * would need them online together.
+ * shortcut: two devices restored from one backup pick their lanes at random, so they share one with a chance of 1 in
+ * (lanes − 1), 1 in 255 for a /16; a shared allocation would need them online together.
  */
-function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>): string {
-	const slots = size - 3;
-	const start = slots > 0 ? createHash('sha256').update(peerID).digest().readUInt32BE(0) % slots : 0;
-	for (let i = 0; i < slots; i++) {
-		const candidate = subnetAddress(cidr, 2 + ((start + i) % slots));
-		if (!used.has(candidate)) return candidate;
+function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>, lane: number): string {
+	const ranges: Array<[number, number]> = size >= 2 * LANE_SIZE ? [[lane * LANE_SIZE, LANE_SIZE]] : [];
+	ranges.push([0, size]);
+	for (const [base, count] of ranges) {
+		// Host 0 and the broadcast address are never handed out, and .1 is the founder's.
+		const first = Math.max(base, 2);
+		const slots = Math.min(base + count, size - 1) - first;
+		if (slots <= 0) continue;
+		const start = hashOf(peerID) % slots;
+		for (let i = 0; i < slots; i++) {
+			const candidate = subnetAddress(cidr, first + ((start + i) % slots));
+			if (!used.has(candidate)) return candidate;
+		}
 	}
 	throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, cidr);
 }
 
+/** A lane for a device restored from a backup: a free one other than the original founder's 0, picked at random. */
+function pickLane(size: number, taken: number[]): number {
+	const lanes = Math.floor(size / LANE_SIZE);
+	if (lanes < 2) return 0;
+	const start = randomInt(lanes - 1);
+	for (let i = 0; i < lanes - 1; i++) {
+		const lane = 1 + ((start + i) % (lanes - 1));
+		if (!taken.includes(lane)) return lane;
+	}
+	return 1 + start;
+}
+
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
-function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers'> | null {
+function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers' | 'lanes'> | null {
 	const body = new RegExp(`${MEMBERS_BEGIN}([\\s\\S]*?)${MEMBERS_END}`).exec(text)?.[1];
 	if (body === undefined) return null;
 	const invalid = (): CodedError => new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the member list of the backup is damaged');
@@ -63,7 +89,10 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 	if (!Array.isArray(revoked) || revoked.some((f: unknown) => typeof f !== 'string' || !FINGERPRINT.test(f))) throw invalid();
 	const revokedPeers = list.revokedPeers ?? {};
 	if (typeof revokedPeers !== 'object' || revokedPeers === null || Array.isArray(revokedPeers) || Object.entries(revokedPeers).some(([p, at]) => !str(p) || typeof at !== 'string' || Number.isNaN(Date.parse(at)))) throw invalid();
-	return { nextHost: list.nextHost, members, revoked, revokedPeers };
+	// Backups made before lanes know only the founding device's.
+	const lanes = list.lanes ?? [0];
+	if (!Array.isArray(lanes) || lanes.some((l: unknown) => !Number.isInteger(l) || (l as number) < 0)) throw invalid();
+	return { nextHost: list.nextHost, members, revoked, revokedPeers, lanes };
 }
 
 export interface OverlayAccessDeps {
@@ -211,7 +240,7 @@ export class OverlayAccess {
 			const cert = await this.issueCertificate(store, { publicKey, peerID }, vpnIP, parsed.bits, ['member', 'founder', ...roles], ca.notAfter);
 			await store.writeText('member.crt', cert.cert);
 			const host: LISHOverlayHost[] = p.lighthouseAddr ? [{ vpnIP, addr: p.lighthouseAddr, peerID }] : [];
-			const founder: FounderData = { nextHost: 2, members: [{ name, founder: true, peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false }], requests: [] };
+			const founder: FounderData = { nextHost: 2, lane: 0, lanes: [0], members: [{ name, founder: true, peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false }], requests: [] };
 			await store.writeJSON('founder.json', founder);
 			const config: LISHNetworkConfig = {
 				networkID,
@@ -305,7 +334,7 @@ export class OverlayAccess {
 				// own and the hosts' are still taken.
 				const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
 				const used = new Set([...data.members.map(m => m.vpnIP), subnetAddress(overlay.subnet, 1), ...(own ? [own.networks[0]!.split('/')[0]!] : []), ...overlay.lighthouses.map(h => h.vpnIP), ...overlay.relays.map(h => h.vpnIP)]);
-				vpnIP = freeAddress(overlay.subnet, subnet.size, request.peerID, used);
+				vpnIP = freeAddress(overlay.subnet, subnet.size, request.peerID, used, data.lane ?? 0);
 			}
 			// A node revoked as a member is approved again with a certificate valid only after that revocation, which
 			// keeps every older one (also one another device issued) revoked.
@@ -435,9 +464,10 @@ export class OverlayAccess {
 	 */
 	async exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
 		const { overlay, store } = this.founderOf(networkID);
-		const { nextHost, members } = await store.readFounder();
+		const { nextHost, members, lane, lanes } = await store.readFounder();
 		const known = await this.revocations(networkID, overlay);
-		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked: known.fingerprints, revokedPeers: known.peers })).toString('base64');
+		const taken = [...new Set([...(lanes ?? [0]), lane ?? 0])];
+		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked: known.fingerprints, revokedPeers: known.peers, lanes: taken })).toString('base64');
 		return { networkID, caKey: `${(await store.readText('ca.key'))!.trim()}\n${MEMBERS_BEGIN}\n${list.replace(/.{1,64}/g, '$&\n')}${MEMBERS_END}\n` };
 	}
 
@@ -454,6 +484,10 @@ export class OverlayAccess {
 		await this.founderLock(networkID).runExclusive(async () => {
 			await store.writeText('ca.key', pem![0] + '\n');
 			const data = await store.readFounder();
+			// A device taking the key over gets a block of addresses of its own, apart from the ones the backup knows.
+			const taken = [...new Set([...(data.lanes ?? []), ...(backup?.lanes ?? [0])])];
+			if (data.lane === undefined) data.lane = pickLane(parseSubnet(overlay.subnet)!.size, taken);
+			data.lanes = [...new Set([...taken, data.lane])];
 			for (const m of backup?.members ?? []) {
 				const held = data.members.find(h => h.fingerprint === m.fingerprint);
 				if (held) held.revoked ||= m.revoked;

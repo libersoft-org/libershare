@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +20,7 @@ describe('importing a CA key', () => {
 			const ca = await generateKeyPair('Ed25519');
 			const other = await generateKeyPair('Ed25519');
 			const access = new OverlayAccess({
-				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
 				getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
 				refresh: async () => {},
@@ -48,7 +49,7 @@ describe('importing a CA key', () => {
 				const ca = await generateKeyPair('Ed25519');
 				const make = (dir: string): OverlayAccess =>
 					new OverlayAccess({
-						nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
+						nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
 						getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 						addNetwork: async () => {},
 						refresh: async () => {},
@@ -103,7 +104,7 @@ describe('importing a CA key', () => {
 		try {
 			const ca = await generateKeyPair('Ed25519');
 			const access = new OverlayAccess({
-				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => own, currentState: async () => ({ revoked }), knownRevocations: async () => ({ fingerprints: revoked, peers: {} }), reconfigure: async () => {} } as any,
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => own, currentState: async () => ({ revoked }), knownRevocations: async () => ({ fingerprints: revoked, peers: {} }), reconfigure: async () => {} } as any,
 				getRow: () => ({ networkID: NET, name: 'Network', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
 				refresh: async () => {},
@@ -138,6 +139,7 @@ describe('importing a CA key', () => {
 			const make = (dir: string, state: unknown): OverlayAccess =>
 				new OverlayAccess({
 					nodes: {
+						network: () => undefined,
 						store: (id: string) => new OverlayStore(dir, id),
 						caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'),
 						ownCertificate: async () => MEMBER_CERT,
@@ -180,7 +182,7 @@ describe('importing a CA key', () => {
 		try {
 			const ca = await generateKeyPair('Ed25519');
 			const access = new OverlayAccess({
-				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => own, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => own, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
 				getRow: () => ({ networkID: NET, name: 'Network', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
 				refresh: async () => {},
@@ -216,24 +218,31 @@ describe('importing a CA key', () => {
 		const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (..._args: unknown[]) => ({ cert: 'crt', fingerprint: String(++serial).padStart(64, '0'), notAfter: '2099-01-01T00:00:00Z' }));
 		try {
 			const ca = await generateKeyPair('Ed25519');
-			const given: string[] = [];
-			for (const [i, dir] of dirs.entries()) {
-				const access = new OverlayAccess({
-					nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
+			const make = (dir: string): OverlayAccess =>
+				new OverlayAccess({
+					nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async () => {} } as any,
 					getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 					addNetwork: async () => {},
 					refresh: async () => {},
 					emit: () => {},
 				});
-				const store = new OverlayStore(dir, NET);
-				await store.ensureDir();
-				await store.writeText('ca.key', pem(ca.raw));
-				// The same member list on both, as right after a restore.
-				await store.writeJSON('founder.json', { nextHost: 2, members: [], requests: [] });
-				const request = { type: 'lish-overlay-request', networkID: NET, name: `m${i}`, peerID: String(i + 1).repeat(46), publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' };
-				await access.issue(request);
-				given.push((await access.listMembers(NET))[0]!.vpnIP);
-			}
+			// Two peer IDs whose hashes pick the same slot of the whole subnet: without lanes they got one address.
+			const slot = (id: string): number => createHash('sha256').update(id).digest().readUInt32BE(0) % (65536 - 3);
+			const first = '1'.repeat(46);
+			const base58 = (n: number): string => (n < 58 ? '' : base58(Math.floor(n / 58))) + '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'[n % 58];
+			let second = '';
+			for (let i = 0; !second; i++) if (slot(`2${base58(i)}`.padEnd(46, '2')) === slot(first)) second = `2${base58(i)}`.padEnd(46, '2');
+			const a = new OverlayStore(dirs[0]!, NET);
+			await a.ensureDir();
+			await a.writeText('ca.key', pem(ca.raw));
+			await a.writeJSON('founder.json', { nextHost: 2, members: [], requests: [] });
+			const founding = make(dirs[0]!);
+			const restored = make(dirs[1]!);
+			await restored.importCA(NET, (await founding.exportCA(NET)).caKey);
+			const request = (peerID: string) => ({ type: 'lish-overlay-request', networkID: NET, name: 'm', peerID, publicKey: '-----BEGIN NEBULA X25519 PUBLIC KEY-----\nx\n-----END NEBULA X25519 PUBLIC KEY-----', created: '2026-01-01T00:00:00Z' });
+			await founding.issue(request(first));
+			await restored.issue(request(second));
+			const given = [(await founding.listMembers(NET)).find(m => m.peerID === first)!.vpnIP, (await restored.listMembers(NET)).find(m => m.peerID === second)!.vpnIP];
 			expect(given[0]).not.toBe(given[1]);
 		} finally {
 			issue.mockRestore();
@@ -249,7 +258,7 @@ describe('importing a CA key', () => {
 		try {
 			const ca = await generateKeyPair('Ed25519');
 			const access = new OverlayAccess({
-				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async (id: string) => void reconfigured.push(id) } as any,
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'), ownCertificate: async () => MEMBER_CERT, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), reconfigure: async (id: string) => void reconfigured.push(id) } as any,
 				getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
 				refresh: async () => {},
@@ -268,7 +277,7 @@ describe('importing a CA key', () => {
 		try {
 			const ca = await generateKeyPair('Ed25519');
 			const access = new OverlayAccess({
-				nodes: { store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex') } as any,
+				nodes: { network: () => undefined, store: (id: string) => new OverlayStore(dir, id), caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex') } as any,
 				getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
 				refresh: async () => {},

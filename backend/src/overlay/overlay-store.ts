@@ -44,6 +44,13 @@ export interface FounderData {
 	revoked?: string[];
 	/** Members revoked by peer ID ({@link OverlayRevocations.peers}), kept the same way. */
 	revokedPeers?: Record<string, string>;
+	/**
+	 * The block of addresses this device hands out (256 per lane): 0 for the founding device, another one for each
+	 * device restored from a backup, so two devices holding the CA key do not give two members one address.
+	 */
+	lane?: number;
+	/** The lanes this device knows to be taken by devices holding the CA key, carried in backups. */
+	lanes?: number[];
 }
 
 /** A network ID is used as a directory name, so it must not be able to name anything but one directory. */
