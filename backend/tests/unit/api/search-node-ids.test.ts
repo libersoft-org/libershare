@@ -48,6 +48,33 @@ test('a search limited to a protected lishnet asks nothing on the public node', 
 	manager.stopAll();
 });
 
+/** A member using one key on both was looked up by peer ID: the public lishnet came first and the private result went public. */
+test('an answer on a protected node stays in its lishnet when the peer is on the public one too', async () => {
+	const sent: Array<{ topic: string; searchID: string }> = [];
+	const publicNode = { ...node('public-peer', sent), getTopicPeers: (): string[] => ['member'], lishScope: null };
+	const protectedNode = { ...node('protected-peer', sent), getTopicPeers: (): string[] => ['member'], lishScope: 'protected' };
+	const events: Array<{ event: string; data: any }> = [];
+	const networks = {
+		getNetwork: () => publicNode,
+		getRunningNetwork: () => publicNode,
+		protectedNodes: () => [protectedNode],
+		networkFor: (id: string) => (id === 'protected' ? protectedNode : publicNode),
+		get: (id: string) => (id === 'protected' ? { overlay: {} } : undefined),
+		list: () => [
+			{ networkID: 'public', enabled: true },
+			{ networkID: 'protected', enabled: true, overlay: {} },
+		],
+		isJoined: () => true,
+	};
+	const manager = initSearchManager(networks as any, { get: () => 30_000 } as any, (event, data) => events.push({ event, data }));
+	const { searchID } = await manager.startSearch({ query: 'shared', networkIDs: ['protected'] });
+	const id = sent[0]!.searchID;
+	getSearchResultHandler(id, 'protected')?.({ searchID: id, peerID: 'member', lishs: [{ id: LISH_ID, name: 'Shared' }] });
+	expect(events.find(e => e.event === 'search:lishs:update')?.data.lishs[0].peers).toEqual([{ peerID: 'member', networkID: 'protected' }]);
+	manager.cancelSearch({ searchID });
+	manager.stopAll();
+});
+
 /** One search ID on the public and a protected lishnet told a member of both that the two identities were one machine. */
 test('each node sends a search under its own ID and the answers reach one session', async () => {
 	const sent: Array<{ topic: string; searchID: string }> = [];

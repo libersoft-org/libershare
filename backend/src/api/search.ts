@@ -187,7 +187,8 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		broadcast('search:lishs:complete', { searchID, reason, refusedPeers: session.refusedListing.size });
 	}
 
-	function handleResult(ann: SearchResultAnnouncement): void {
+	/** `node`: the one the answer came in on; it decides the lishnet the result belongs to. */
+	function handleResult(ann: SearchResultAnnouncement, node: Network): void {
 		trace(`[Search] result in: searchID=${ann.searchID.slice(0, 8)} from=${ann.peerID.slice(0, 12)} lishs=${ann.lishs.length} sessionExists=${sessions.has(ann.searchID)}`);
 		const session = sessions.get(ann.searchID);
 		if (!session) return;
@@ -196,10 +197,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		session.answered.add(ann.peerID);
 		session.refusedListing.delete(ann.peerID);
 		clearRefusal(session, ann.peerID);
-		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
-		// for the UI we only need the peerID + a representative networkID. Pick the first joined network
-		// the peer is a member of (so the FE can later open PeerDetail with that networkID).
-		const networkID = findNetworkForPeer(ann.peerID);
+		// An answer on a protected lishnet's node belongs to that lishnet. Looked up by peer ID instead, a member using one
+		// key on the public lishnet too turned a private result into a public source, fetched and saved publicly.
+		const networkID = node.lishScope ?? findPublicNetworkForPeer(ann.peerID);
 		const updates: LishSearchResult[] = [];
 		for (const lish of ann.lishs) {
 			if (typeof lish.id !== 'string' || lish.id.length === 0) continue;
@@ -214,7 +214,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				session.results.set(lish.id, row);
 			}
 			// Avoid duplicate peer entries for the same LISH (same peer responding twice via mesh paths).
-			if (!row.peers.some(p => p.peerID === ann.peerID)) {
+			if (!row.peers.some(p => p.peerID === ann.peerID && p.networkID === networkID)) {
 				row.peers.push({ peerID: ann.peerID, networkID });
 			}
 			updates.push(row);
@@ -223,17 +223,14 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	}
 
 	/**
-	 * Best-effort lookup: find any joined network this peer is currently subscribed to.
-	 * Used so the FE can later dial the peer through that network. Empty string if not found
-	 * (peer is reachable on a different network or already disconnected — FE shows it but dial may fail).
+	 * Best-effort lookup for an answer on the public node: a joined public lishnet this peer is subscribed to, so the FE
+	 * can later dial it through that one. Empty string if not found (already disconnected — FE shows it but dial may fail).
 	 */
-	function findNetworkForPeer(peerID: string): string {
+	function findPublicNetworkForPeer(peerID: string): string {
 		const network = networks.getNetwork();
 		for (const config of networks.list()) {
-			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
-			// A protected lishnet's members are on its own node, not on the public one.
-			const node = config.overlay ? networks.networkFor(config.networkID) : network;
-			if (node.isRunning() && node.getTopicPeers(config.networkID).includes(peerID)) return config.networkID;
+			if (config.overlay || !config.enabled || !networks.isJoined(config.networkID)) continue;
+			if (network.isRunning() && network.getTopicPeers(config.networkID).includes(peerID)) return config.networkID;
 		}
 		return '';
 	}
@@ -305,7 +302,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			searchNodes: nodes,
 		};
 		sessions.set(searchID, session);
-		registerSearchResultHandler(searchID, handleResult);
+		registerSearchResultHandler(searchID, ann => handleResult(ann, network));
 		// Every node sends the query under an ID of its own: one ID on the public and a protected lishnet would tell a
 		// member of both that the two identities are one machine. Answers to any of them land in this session.
 		const nodeSearchIDs = new Map<Network, string>([[network, searchID]]);
@@ -315,7 +312,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				id = randomUUID();
 				nodeSearchIDs.set(node, id);
 				session.aliases.push(id);
-				registerSearchResultHandler(id, ann => handleResult({ ...ann, searchID }), node.lishScope ?? null);
+				registerSearchResultHandler(id, ann => handleResult({ ...ann, searchID }, node), node.lishScope ?? null);
 			}
 			return id;
 		};
@@ -495,7 +492,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				// Re-use the same aggregation/dedup path as the pubsub-driven
 				// responses, so a peer reachable through both channels never
 				// produces a duplicate row in the FE result list.
-				handleResult({ searchID, peerID, lishs: matches });
+				handleResult({ searchID, peerID, lishs: matches }, network);
 			}
 			// The peer answered, so nothing is owed — including a timer armed by an earlier
 			// refusal, which would otherwise fire after the question was already settled.
