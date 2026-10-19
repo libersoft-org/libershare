@@ -292,6 +292,7 @@ export class Networks {
 			onPeerCountChange: () => this.emitPeerCounts(),
 			onBootstrapStatusChange: (id, status) => this._onBootstrapStatusChange?.(id, status),
 			onStateChange: (id, state) => this._onOverlayEvent?.('overlay:state', { networkID: id, version: state.version }),
+			serveGuest: (id, socket, remoteIP) => this.overlay.serveGuest(id, socket, remoteIP),
 			// Still joined, on a new node: the transfer layer moves the lishnet's downloads to it as on a rejoin.
 			onNodeReplaced: id => {
 				try {
@@ -304,6 +305,10 @@ export class Networks {
 		this.overlay = new OverlayAccess({
 			nodes: this.overlayNodes,
 			getRow: id => this.get(id),
+			listOverlayIDs: () =>
+				this.list()
+					.filter(row => row.overlay)
+					.map(row => row.networkID),
 			addNetwork: async config => {
 				if (!(await this.addDetailed(config)).stored) throw new CodedError(ErrorCodes.NETWORK_INVALID, `lishnet ${config.networkID} already exists`);
 			},
@@ -410,8 +415,15 @@ export class Networks {
 		return this.getRunningNetwork();
 	}
 
+	/** A deleted lishnet's overlay data, after its invite delivery (if any) stopped using it. */
+	private async removeOverlayData(networkID: string): Promise<void> {
+		await this.overlay.stopInvite(networkID);
+		await this.overlayNodes.removeData(networkID);
+	}
+
 	/** Delete the keys, certificates and node data of every protected lishnet (factory reset, nodes stopped). */
 	async clearOverlayData(): Promise<void> {
+		await this.overlay.stopInvites();
 		await this.overlayNodes.removeAllData();
 	}
 
@@ -603,6 +615,7 @@ export class Networks {
 
 		if (startupError === undefined) {
 			this.startOwnMembershipRenewal();
+			this.overlay.resumeInvites();
 			return;
 		}
 
@@ -1243,6 +1256,7 @@ export class Networks {
 			await this.drainReconciles();
 			// A protected node that fails to stop must not keep the public node running: its helper still exits with
 			// this process, and the next start builds every protected node from scratch.
+			await this.overlay.stopInvites().catch(err => console.error('[Networks] stopping the invite deliveries failed:', err?.message ?? err));
 			await this.overlayNodes.stopAll().catch(err => console.error('[Networks] stopping the protected lishnets failed:', err?.message ?? err));
 			// Cleared only once the node is provably down. Discarding the membership first
 			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
@@ -1550,7 +1564,7 @@ export class Networks {
 				this.network.clearRedialSuppressionForNetwork(id, 'deleted');
 				return true;
 			});
-			if (gone) await this.overlayNodes.removeData(id);
+			if (gone) await this.removeOverlayData(id);
 			return Networks.outcomeOf(true, undefined, outcome);
 		});
 	}
@@ -1650,7 +1664,7 @@ export class Networks {
 					for (const id of ids) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
 					return ids;
 				});
-				for (const id of gone) await this.overlayNodes.removeData(id);
+				for (const id of gone) await this.removeOverlayData(id);
 			}
 			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
 			if (failures.length > 0)

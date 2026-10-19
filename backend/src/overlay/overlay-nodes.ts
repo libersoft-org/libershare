@@ -1,6 +1,7 @@
 import { Mutex } from 'async-mutex';
 import * as dns from 'node:dns/promises';
 import { rm } from 'node:fs/promises';
+import { type Socket } from 'node:net';
 import { join } from 'node:path';
 import { isRevoked, mergeRevocations, type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayRevocations, type OverlayState, type SignedOverlayState } from '@shared';
 import { Network } from '../protocol/network.ts';
@@ -47,6 +48,8 @@ export interface OverlayNodesDeps {
 	onStateChange(networkID: string, state: OverlayState): void;
 	/** The lishnet's node was restarted as a new {@link Network} (new address, role or port) and is running again. */
 	onNodeReplaced?(networkID: string): void;
+	/** A connection from an invite's guest reached this node: serve it (true) or leave it to libp2p (false). */
+	serveGuest?(networkID: string, socket: Socket, remoteIP: string): Promise<boolean>;
 }
 
 interface RunningOverlay {
@@ -243,6 +246,7 @@ export class OverlayNodes {
 			peerID: entry.peerID,
 			revoked: (await this.knownRevocations(entry.networkID, overlay)).fingerprints,
 			infraIPs: ips,
+			acceptGuests: entry.store.has('ca.key'),
 		});
 		await entry.store.writeJSON('nebula.yml', config);
 		return resolved;
@@ -301,6 +305,7 @@ export class OverlayNodes {
 					entry.inboundPort = port;
 					await entry.helper.setInboundPort(port);
 				},
+				serveInbound: async (socket, remoteIP) => (await this.deps.serveGuest?.(row.networkID, socket, remoteIP)) ?? false,
 			};
 			entry.network = new Network(store.dir, this.deps.dataServer, this.deps.settings, { overlay: { vpnIP, port: OVERLAY_LIBP2P_PORT, bridge, authorize: (peerID, overlayIP) => this.authorizePeer(row.networkID, peerID, overlayIP) }, lishScope: row.networkID });
 			entry.network.onPeerCountChange = () => this.deps.onPeerCountChange();
@@ -333,6 +338,21 @@ export class OverlayNodes {
 			console.log(`✓ Joined protected lishnet ${row.name} as ${vpnIP}`);
 			return true;
 		});
+	}
+
+	/**
+	 * A helper on an invite's guest certificate ({@link OverlayInvite}) and no libp2p node: the tunnel the invited node
+	 * hands its request in through and picks its certificate up from.
+	 */
+	async startGuest(networkID: string, overlay: LISHOverlayDefinition): Promise<{ helper: OverlayHelper; vpnIP: string }> {
+		const store = this.store(networkID);
+		await this.caPublicKey(store, overlay.caCert);
+		const cert = await runOverlayCommand<CertificateInfo>(['print', '--crt', store.path('guest.crt'), '--ca', store.path('ca.crt')]);
+		const vpnIP = cert.networks[0]!.split('/')[0]!;
+		const { ips } = await this.resolveInfra(networkID, overlay, new Map());
+		await store.writeJSON('guest.yml', buildNebulaConfig({ pki: { ca: store.path('ca.crt'), cert: store.path('guest.crt'), key: store.path('guest.key') }, overlay, vpnIP, peerID: cert.name, revoked: [], infraIPs: ips }));
+		const helper = await OverlayHelper.start({ configPath: store.path('guest.yml'), port: OVERLAY_LIBP2P_PORT, tag: `${networkID.slice(0, 8)} guest`, onExit: () => {} });
+		return { helper, vpnIP };
 	}
 
 	private startHelper(entry: RunningOverlay): Promise<OverlayHelper> {

@@ -22,6 +22,7 @@ describe('UDP port of a lighthouse or relay', () => {
 				nodes: { store: (id: string) => new OverlayStore(dir, id), isRunning: () => false } as any,
 				getRow: () => ({ networkID: 'n', name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 				addNetwork: async () => {},
+				listOverlayIDs: () => [],
 				refresh: async () => {},
 				emit: () => {},
 			});

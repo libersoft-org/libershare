@@ -18,6 +18,7 @@ test('a new state keeps every revocation of the member list, even without a stor
 			nodes: { store: (id: string) => new OverlayStore(dir, id), currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async (_id: string, change: { revoked: string[] }) => void published.push(change.revoked) } as any,
 			getRow: () => row,
 			addNetwork: async () => {},
+			listOverlayIDs: () => [],
 			refresh: async () => {},
 			emit: () => {},
 		});
@@ -49,6 +50,7 @@ test('revoking a member revokes it by peer ID, and approving it again issues a c
 			nodes: { store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async (_id: string, change: any) => void published.push(change) } as any,
 			getRow: () => row,
 			addNetwork: async () => {},
+			listOverlayIDs: () => [],
 			refresh: async () => {},
 			emit: () => {},
 		});
@@ -93,6 +95,7 @@ test('concurrent approvals of hosts keep both of them', async () => {
 			} as any,
 			getRow: () => row,
 			addNetwork: async () => {},
+			listOverlayIDs: () => [],
 			refresh: async () => {},
 			emit: () => {},
 		});

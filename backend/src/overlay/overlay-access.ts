@@ -4,13 +4,16 @@ import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { CodedError, ErrorCodes, ipInSubnet, isHostPort, isRevoked, MEMBER_RENEWAL_WINDOW_MS, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
+import { type Socket } from 'node:net';
+import { CodedError, decodeInvite, encodeInvite, ErrorCodes, ipInSubnet, isHostPort, isRevoked, MEMBER_RENEWAL_WINDOW_MS, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayInviteAnswer, type OverlayInviteState, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
 import { SqliteDatastore } from '../protocol/datastore.ts';
 import { PRIVATE_KEY_PATH, writeIdentityKey } from '../protocol/identity-store.ts';
 import { runOverlayCommand, type CertificateInfo } from './overlay-binary.ts';
-import { OVERLAY_LIBP2P_PORT } from './nebula-config.ts';
+import { GUEST_GROUP, GUEST_NAME_PREFIX, OVERLAY_LIBP2P_PORT } from './nebula-config.ts';
+import { type OverlayHelper } from './overlay-helper.ts';
+import { answerGuest, askFounder } from './overlay-invite.ts';
 import { type OverlayNodes } from './overlay-nodes.ts';
-import { type FounderData, type OverlayStore } from './overlay-store.ts';
+import { type FounderData, type InviteFile, type OverlayStore } from './overlay-store.ts';
 
 const DEFAULT_SUBNET = '100.64.0.0/16';
 const DEFAULT_MEMBER_DAYS = 365;
@@ -24,6 +27,16 @@ const MEMBERS_END = '-----END LISH OVERLAY MEMBERS-----';
 
 /** Addresses of one device's lane ({@link FounderData.lane}); a subnet smaller than two lanes has none. */
 const LANE_SIZE = 256;
+const DEFAULT_INVITE_DAYS = 7;
+const MAX_INVITE_DAYS = 30;
+/** An invited node asks the founder again this often, while it waits for the tunnel and then for the approval. */
+const INVITE_RETRY_MS = 15_000;
+
+/** The last lane holds invites' guest addresses; a subnet with fewer than three lanes (smaller than /22) has none. */
+function guestLane(size: number): number | null {
+	const lanes = Math.floor(size / LANE_SIZE);
+	return lanes >= 3 ? lanes - 1 : null;
+}
 
 function hashOf(text: string): number {
 	return createHash('sha256').update(text).digest().readUInt32BE(0);
@@ -40,7 +53,9 @@ function hashOf(text: string): number {
  */
 function freeAddress(cidr: string, size: number, peerID: string, used: Set<string>, lane: number): string {
 	const ranges: Array<[number, number]> = size >= 2 * LANE_SIZE ? [[lane * LANE_SIZE, LANE_SIZE]] : [];
-	ranges.push([0, size]);
+	// The guest lane is the last one, so the whole subnet below it is what a member may get.
+	const guest = guestLane(size);
+	ranges.push([0, guest === null ? size : guest * LANE_SIZE]);
 	for (const [base, count] of ranges) {
 		// Host 0 and the broadcast address are never handed out, and .1 is the founder's.
 		const first = Math.max(base, 2);
@@ -55,9 +70,9 @@ function freeAddress(cidr: string, size: number, peerID: string, used: Set<strin
 	throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, cidr);
 }
 
-/** A lane for a device restored from a backup: a free one other than the original founder's 0, picked at random. */
+/** A lane for a device restored from a backup: a free one other than the original founder's 0 and the guest lane, picked at random. */
 function pickLane(size: number, taken: number[]): number {
-	const lanes = Math.floor(size / LANE_SIZE);
+	const lanes = guestLane(size) ?? Math.floor(size / LANE_SIZE);
 	if (lanes < 2) return 0;
 	const start = randomInt(lanes - 1);
 	for (let i = 0; i < lanes - 1; i++) {
@@ -98,6 +113,8 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 export interface OverlayAccessDeps {
 	nodes: OverlayNodes;
 	getRow(networkID: string): LISHNetworkConfig | undefined;
+	/** IDs of every stored protected lishnet. */
+	listOverlayIDs(): string[];
 	/** Store a new lishnet through the regular catalog path (join included when enabled). */
 	addNetwork(config: LISHNetworkConfig): Promise<void>;
 	/** Bring a lishnet's runtime in line after its certificate changed: join it if enabled, or reload it. */
@@ -149,6 +166,9 @@ function pemHex(pem: string): string {
 export class OverlayAccess {
 	private readonly deps: OverlayAccessDeps;
 	private readonly founderLocks = new Map<string, Mutex>();
+	/** Invites being delivered on this node ({@link deliver}), by lishnet. */
+	private readonly deliveries = new Map<string, { stop(): Promise<void> }>();
+	private readonly inviteStates = new Map<string, OverlayInviteState>();
 
 	constructor(deps: OverlayAccessDeps) {
 		this.deps = deps;
@@ -301,6 +321,10 @@ export class OverlayAccess {
 			const data = await store.readFounder();
 			const kept = data.requests.filter(r => r.id !== requestID);
 			if (kept.length === data.requests.length) return false;
+			// The invited node learns of it the next time it asks.
+			const inviteID = data.requests.find(r => r.id === requestID)?.invite;
+			const invite = data.invites?.find(i => i.id === inviteID);
+			if (invite) invite.refused = true;
 			data.requests = kept;
 			await store.writeJSON('founder.json', data);
 			return true;
@@ -362,11 +386,208 @@ export class OverlayAccess {
 					superseded.map(m => m.fingerprint)
 				);
 			}
-			return { member, cert: cert.cert };
+			return { member, cert: cert.cert, invite: request.invite };
 		});
-		this.deps.emit('overlay:members', { networkID });
 		const state = await store.readState();
-		return { type: 'lish-overlay-certificate', networkID, certificate: bundleMember.cert, ...(state ? { state } : {}) };
+		const bundle: OverlayCertificateBundle = { type: 'lish-overlay-certificate', networkID, certificate: bundleMember.cert, ...(state ? { state } : {}) };
+		// A request that came through an invite gets its certificate back the same way, when the node asks next.
+		if (bundleMember.invite)
+			await this.founderLock(networkID).runExclusive(async () => {
+				const data = await store.readFounder();
+				const invite = data.invites?.find(i => i.id === bundleMember.invite);
+				if (!invite) return;
+				invite.bundle = bundle;
+				await store.writeJSON('founder.json', data);
+			});
+		this.deps.emit('overlay:members', { networkID });
+		return bundle;
+	}
+
+	/**
+	 * Founder: an invite ({@link OverlayInvite}) as one line of text. Its guest certificate gets an address in the guest
+	 * lane and lasts `validDays`; the request that comes through it waits among the others for the founder's decision.
+	 */
+	async createInvite(networkID: string, validDays: number = DEFAULT_INVITE_DAYS): Promise<string> {
+		const { row, overlay, store } = this.founderOf(networkID);
+		const subnet = parseSubnet(overlay.subnet)!;
+		const lane = guestLane(subnet.size);
+		if (lane === null) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'invites need a lishnet subnet of /22 or larger');
+		if (!Number.isFinite(validDays) || validDays <= 0 || validDays > MAX_INVITE_DAYS) throw new CodedError(ErrorCodes.NETWORK_INVALID, `an invite lasts 1 to ${MAX_INVITE_DAYS} days`);
+		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
+		if (!own) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'this device has no certificate of its own in the lishnet yet');
+		const id = randomUUID();
+		const expires = new Date(Date.now() + validDays * 86_400_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+		const issued = await this.founderLock(networkID).runExclusive(async () => {
+			const data = await store.readFounder();
+			const live = (data.invites ?? []).filter(i => Date.parse(i.expires) > Date.now());
+			const used = new Set(live.map(i => i.vpnIP));
+			// Host .255 of the last lane is the subnet's broadcast address.
+			const slots = Math.min(LANE_SIZE, subnet.size - 1 - lane * LANE_SIZE);
+			const start = hashOf(id) % slots;
+			let vpnIP: string | undefined;
+			for (let i = 0; i < slots && !vpnIP; i++) {
+				const candidate = subnetAddress(overlay.subnet, lane * LANE_SIZE + ((start + i) % slots));
+				if (!used.has(candidate)) vpnIP = candidate;
+			}
+			if (!vpnIP) throw new CodedError(ErrorCodes.OVERLAY_ADDRESSES_EXHAUSTED, 'too many open invites');
+			await store.remove('issue.key');
+			const { publicKey } = await runOverlayCommand<{ publicKey: string }>(['keygen', '--out-key', store.path('issue.key')]);
+			try {
+				const cert = await this.issueCertificate(store, { publicKey, peerID: GUEST_NAME_PREFIX + id }, vpnIP, subnet.bits, [GUEST_GROUP], expires);
+				const key = (await store.readText('issue.key'))!;
+				data.invites = [...live, { id, vpnIP, expires }];
+				await store.writeJSON('founder.json', data);
+				return { cert: cert.cert, key };
+			} finally {
+				await store.remove('issue.key');
+			}
+		});
+		return encodeInvite({ type: 'lish-overlay-invite', id, network: { networkID, name: row.name, description: row.description, bootstrapPeers: row.bootstrapPeers, overlay }, founder: own.networks[0]!.split('/')[0]!, cert: issued.cert, key: issued.key, expires });
+	}
+
+	/**
+	 * Founder: a connection from an invite's guest. It is answered with the invite exchange and closed; anything else
+	 * (a member) goes on to libp2p. Every node but a founder's refuses guests in its firewall already.
+	 */
+	async serveGuest(networkID: string, socket: Socket, remoteIP: string): Promise<boolean> {
+		if (!this.deps.nodes.store(networkID).has('ca.key')) return false;
+		const name = (await this.deps.nodes.helperStatus(networkID))?.hosts.find(h => h.vpnAddrs.includes(remoteIP))?.name;
+		if (!name?.startsWith(GUEST_NAME_PREFIX)) return false;
+		void answerGuest(socket, message => this.answerInvite(networkID, name.slice(GUEST_NAME_PREFIX.length), remoteIP, message));
+		return true;
+	}
+
+	/** The founder's answer to a guest: its request goes into the queue once, and its certificate back once issued. */
+	private async answerInvite(networkID: string, inviteID: string, remoteIP: string, raw: unknown): Promise<OverlayInviteAnswer> {
+		const refused = (reason: string): OverlayInviteAnswer => ({ status: 'refused', reason });
+		const message = raw as { invite?: unknown; request?: unknown } | null;
+		if (message?.invite !== inviteID) return refused('the message is for another invite');
+		const request = validateAccessRequest(message.request);
+		if (request.networkID !== networkID) return refused('the request is for another lishnet');
+		const { store } = this.founderOf(networkID);
+		const result = await this.founderLock(networkID).runExclusive(async (): Promise<{ answer: OverlayInviteAnswer; created?: OverlayPendingRequest }> => {
+			const data = await store.readFounder();
+			const invite = data.invites?.find(i => i.id === inviteID);
+			// The address binds the guest certificate to its invite, beyond the name.
+			if (!invite || invite.vpnIP !== remoteIP || Date.parse(invite.expires) <= Date.now()) return { answer: refused('the invite is unknown or has expired') };
+			if (invite.peerID && invite.peerID !== request.peerID) return { answer: refused('the invite was used by another node') };
+			if (invite.refused) return { answer: refused('the founder refused the request') };
+			if (invite.bundle) return { answer: { status: 'approved', bundle: invite.bundle } };
+			invite.peerID = request.peerID;
+			let created: OverlayPendingRequest | undefined;
+			if (!data.requests.some(r => r.invite === inviteID)) {
+				const kept = data.requests.filter(r => r.peerID !== request.peerID);
+				if (kept.length >= MAX_PENDING_REQUESTS) return { answer: refused('too many pending requests') };
+				created = { ...request, id: randomUUID(), received: new Date().toISOString(), invite: inviteID };
+				data.requests = [...kept, created];
+			}
+			await store.writeJSON('founder.json', data);
+			return { answer: { status: 'pending' }, ...(created ? { created } : {}) };
+		});
+		if (result.created) this.deps.emit('overlay:request', result.created);
+		return result.answer;
+	}
+
+	/**
+	 * Member: join through an invite. The lishnet is added when new, the request is made here (keys never leave), and
+	 * the node then hands it to the founder and picks up its certificate by itself ({@link deliver}).
+	 */
+	async useInvite(text: string, name: string, infraAddr?: string): Promise<OverlayStatus> {
+		const invite = decodeInvite(text);
+		if (Date.parse(invite.expires) <= Date.now()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'the invite has expired');
+		const networkID = invite.network.networkID;
+		const existing = this.deps.getRow(networkID);
+		if (existing && existing.overlay?.caCert !== invite.network.overlay.caCert) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'another lishnet with this ID exists here');
+		if (!existing) await this.deps.addNetwork({ ...invite.network, created: new Date().toISOString(), enabled: true });
+		const { store } = this.overlayOf(networkID);
+		if (store.has('ca.key')) throw new CodedError(ErrorCodes.NETWORK_INVALID, "this device holds the lishnet's CA key");
+		await this.requestAccess(networkID, name, infraAddr);
+		await this.stopInvite(networkID);
+		await store.writeText('guest.crt', invite.cert);
+		await store.writeText('guest.key', invite.key);
+		await store.writeJSON('invite.json', { id: invite.id, founder: invite.founder, expires: invite.expires } satisfies InviteFile);
+		this.inviteStates.set(networkID, 'delivering');
+		this.deliver(networkID);
+		return await this.status(networkID);
+	}
+
+	/** Resume the delivery of every invite this node holds (at start). */
+	resumeInvites(): void {
+		for (const networkID of this.deps.listOverlayIDs()) if (this.deps.nodes.store(networkID).has('invite.json')) this.deliver(networkID);
+	}
+
+	async stopInvites(): Promise<void> {
+		for (const networkID of [...this.deliveries.keys()]) await this.stopInvite(networkID);
+	}
+
+	/** Stop delivering the lishnet's invite: it is being deleted, replaced by a new one, or done with. */
+	async stopInvite(networkID: string): Promise<void> {
+		await this.deliveries.get(networkID)?.stop();
+		this.inviteStates.delete(networkID);
+	}
+
+	/**
+	 * Hand the invited node's request to the founder through a guest helper, every {@link INVITE_RETRY_MS} until the
+	 * founder answers with the certificate, refuses, or the invite expires. While the founder is offline it waits.
+	 */
+	private deliver(networkID: string): void {
+		if (this.deliveries.has(networkID)) return;
+		const tag = `[Overlay ${networkID.slice(0, 8)}]`;
+		let stopped = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let guest: { helper: OverlayHelper; vpnIP: string } | null = null;
+		const setState = (state: OverlayInviteState): void => {
+			if (this.inviteStates.get(networkID) === state) return;
+			this.inviteStates.set(networkID, state);
+			this.deps.emit('overlay:status', { networkID });
+		};
+		const stop = async (): Promise<void> => {
+			stopped = true;
+			clearTimeout(timer);
+			this.deliveries.delete(networkID);
+			await guest?.helper.stop();
+			guest = null;
+		};
+		const attempt = async (): Promise<void> => {
+			const store = this.deps.nodes.store(networkID);
+			const invite = await store.readJSON<InviteFile>('invite.json').catch(() => null);
+			const request = await store.readRequest().catch(() => null);
+			const overlay = this.deps.getRow(networkID)?.overlay;
+			if (stopped) return;
+			if (!invite || !request || !overlay) return void (await stop());
+			if (Date.parse(invite.expires) <= Date.now()) {
+				setState('expired');
+				return void (await stop());
+			}
+			try {
+				if (!guest?.helper.isRunning()) guest = await this.deps.nodes.startGuest(networkID, overlay);
+				const answer = await askFounder(guest.helper, invite.founder, { invite: invite.id, request });
+				if (stopped) return;
+				if (answer.status === 'approved') {
+					await this.importCertificate(answer.bundle);
+					console.log(`${tag} the certificate came through the invite`);
+					return;
+				}
+				if (answer.status === 'refused') {
+					console.warn(`${tag} the invite was refused: ${answer.reason}`);
+					setState('refused');
+					return void (await stop());
+				}
+				setState('pending');
+			} catch (err: any) {
+				console.debug(`${tag} invite delivery: ${err?.message ?? err}`);
+			}
+			if (!stopped) timer = setTimeout(() => void attempt(), INVITE_RETRY_MS);
+		};
+		this.deliveries.set(networkID, { stop });
+		void attempt();
+	}
+
+	/** The invite is done with (its certificate arrived): its files and its guest helper go. */
+	private async endInvite(networkID: string, store: OverlayStore): Promise<void> {
+		if (!store.has('invite.json')) return;
+		await this.stopInvite(networkID);
+		for (const file of ['invite.json', 'guest.crt', 'guest.key', 'guest.yml'] as const) await store.remove(file);
 	}
 
 	/** Founder: import a request and approve it in one call — the shape an external service usually wants. */
@@ -451,6 +672,7 @@ export class OverlayAccess {
 		} finally {
 			await store.remove('issue.crt');
 		}
+		await this.endInvite(bundle.networkID, store);
 		await this.deps.refresh(bundle.networkID);
 		this.deps.emit('overlay:status', { networkID: bundle.networkID });
 		return await this.status(bundle.networkID);
@@ -540,11 +762,14 @@ export class OverlayAccess {
 		// A member whose certificate is revoked, expired or about to end asks again; its new request is shown like a first one.
 		const request = !cert || revoked || Date.parse(cert.notAfter) - Date.now() <= MEMBER_RENEWAL_WINDOW_MS ? await store.readRequest() : null;
 		const ownIP = cert?.networks[0]?.split('/')[0];
+		const invite = request ? await store.readJSON<InviteFile>('invite.json').catch(() => null) : null;
+		const inviteState: OverlayInviteState = invite && Date.parse(invite.expires) <= Date.now() ? 'expired' : (this.inviteStates.get(networkID) ?? 'delivering');
 		return {
 			networkID,
 			role: store.has('ca.key') ? 'founder' : cert ? 'member' : 'none',
 			...(cert ? { certificate: { name: cert.name, vpnIP: cert.networks[0]!.split('/')[0]!, groups: cert.groups, notBefore: cert.notBefore, notAfter: cert.notAfter, fingerprint: cert.fingerprint, revoked } } : {}),
 			...(request ? { request } : {}),
+			...(invite ? { invite: { expires: invite.expires, state: inviteState } } : {}),
 			running: nodes.isRunning(networkID),
 			stateVersion: state?.version ?? overlay.version,
 			hosts: [...overlay.lighthouses.map(h => ({ ...h, role: 'lighthouse' as const })), ...overlay.relays.map(h => ({ ...h, role: 'relay' as const }))].map(h => (h.vpnIP === ownIP ? { ...h, connected: true, self: true } : { ...h, connected: tunnels.has(h.vpnIP) })),

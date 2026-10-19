@@ -22,6 +22,7 @@ describe('member renewal', () => {
 					nodes: { store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => cert, currentState: async () => null, helperStatus: async () => null, isRunning: () => true, knownRevocations: async () => ({ fingerprints: [], peers: {} }), network: () => undefined } as any,
 					getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 					addNetwork: async () => {},
+					listOverlayIDs: () => [],
 					refresh: async () => {},
 					emit: () => {},
 				});

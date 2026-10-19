@@ -29,6 +29,11 @@ export interface OverlayBridge {
 	readonly subnet: string;
 	/** Tell the helper where to hand connections arriving from the overlay (0 refuses them). */
 	setInboundPort(port: number): Promise<void>;
+	/**
+	 * Offered every inbound connection before libp2p sees it; returns true when it took the (paused) socket over.
+	 * An invite's guest is served this way: it is no member, so it never reaches the node.
+	 */
+	serveInbound?(socket: net.Socket, remoteIP: string): Promise<boolean>;
 }
 
 /** `/ip4/<ip>/tcp/<port>` inside the subnet, and nothing else. */
@@ -181,6 +186,7 @@ class OverlayListener extends TypedEventEmitter<ListenerEvents> implements Liste
 			const sep = remote.lastIndexOf(':');
 			remoteAddr = multiaddr(`/ip4/${remote.slice(0, sep)}/tcp/${remote.slice(sep + 1)}`);
 			if (!overlayTarget(remoteAddr, this.bridge.subnet)) throw new Error(`remote ${remote} is outside the overlay`);
+			if (this.bridge.serveInbound && (await this.bridge.serveInbound(socket, remote.slice(0, sep)))) return;
 		} catch (err: any) {
 			this.log('refused bridged connection - %s', err?.message ?? err);
 			socket.destroy();
