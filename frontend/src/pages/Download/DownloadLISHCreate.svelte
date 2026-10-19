@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, untrack, onMount } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
@@ -186,6 +186,8 @@
 	// Where the LISH is shared: '' = the public lishnets, else one protected lishnet only.
 	let protectedNets = $state<LISHNetworkConfig[]>([]);
 	let scope = $state('');
+	// Unknown lishnets are no answer to where the LISH goes: taken as none, it was created public.
+	let networksError = $state('');
 	onMount(() => {
 		getUsableNetworks()
 			.then(nets => {
@@ -193,7 +195,7 @@
 				// With no public lishnet in use, sharing publicly is never what the user means.
 				if (!nets.some(n => !n.overlay && n.enabled) && protectedNets[0]) scope = protectedNets[0].networkID;
 			})
-			.catch(() => {});
+			.catch(e => (networksError = translateError(e)));
 	});
 
 	let description = $state('');
@@ -208,7 +210,7 @@
 		// keep a suffix that contradicts the selected algorithm.
 		if (saveToFile) updateLISHFileExtension();
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
-		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
+		errorMessage = networksError || (validationError ? getLISHCreateErrorMessage(validationError, $t) : '');
 		if (!errorMessage) {
 			// Check if data path exists and is not an empty directory
 			try {
