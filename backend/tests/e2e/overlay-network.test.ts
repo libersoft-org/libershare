@@ -291,6 +291,24 @@ describe('protected lishnet on loopback', () => {
 		await until('alice sees bob on the shorter certificate', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
 	}, 300_000);
 
+	// The open tunnel on the older certificate stood past the end of a shorter approval until the sweep a minute later,
+	// and the member went on downloading.
+	it('an open tunnel on an older certificate closes when a shorter approval ends it', async () => {
+		const bobPeer = (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID)!.peerID!;
+		await until('alice sees bob', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
+		// Issued through the API and never handed to bob: he stays on the certificate he holds, which this one ends.
+		const request = await bob.api.overlay.requestAccess(network.networkID, 'Bob');
+		const ends = Date.now() + 25_000;
+		await founder.api.overlay.issue(request, { validUntil: new Date(ends).toISOString() });
+		const end = Math.floor(ends / 1000) * 1000;
+		await Bun.sleep(Math.max(0, end - Date.now() - 3000));
+		expect((await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer)).toBe(true);
+		await until('alice loses bob', async () => !(await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 30_000);
+		const late = Date.now() - end;
+		console.log(`bob gone from alice ${late} ms after the limit ended`);
+		expect(late).toBeLessThan(10_000);
+	}, 200_000);
+
 	it("revoking any of a member's certificates revokes the member", async () => {
 		const shorter = (await bob.api.overlay.status(network.networkID)).certificate!;
 		// An extension: the shorter certificate stays valid next to the longer one.

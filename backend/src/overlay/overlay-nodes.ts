@@ -3,7 +3,7 @@ import * as dns from 'node:dns/promises';
 import { rm } from 'node:fs/promises';
 import { type Socket } from 'node:net';
 import { join } from 'node:path';
-import { compactRevocations, isRevoked, mergeRevocations, type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayRevocations, type OverlayState, type SignedOverlayState } from '@shared';
+import { compactRevocations, isRevoked, mergeRevocations, nextLimitEnd, type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayRevocations, type OverlayState, type SignedOverlayState } from '@shared';
 import { Network } from '../protocol/network.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -22,6 +22,10 @@ const STATE_PUBLISH_MIN_GAP_MS = 5_000;
 const REVOCATION_NOTICE_MS = 1_000;
 const RESTART_DELAY_MIN_MS = 1_000;
 const RESTART_DELAY_MAX_MS = 30_000;
+/** A limit's sweep runs this long after its end: a timer may fire a moment early, the limit then not ended yet. */
+const LIMIT_SWEEP_SLACK_MS = 100;
+/** setTimeout holds no longer delay; a later end is re-armed by the sweeps in between. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /** Whether two sets of revocations revoke the same certificates, now and later ({@link compactRevocations}). */
 function sameRevocations(a: OverlayRevocations, b: OverlayRevocations): boolean {
@@ -72,6 +76,8 @@ interface RunningOverlay {
 	restartDelay: number;
 	restartTimer: ReturnType<typeof setTimeout> | null;
 	republishTimer: ReturnType<typeof setInterval>;
+	/** Runs {@link OverlayNodes.sweepRevokedPeers} when the next member limit ends, so a tunnel on it closes then. */
+	limitTimer?: ReturnType<typeof setTimeout>;
 	lastPublish: number;
 	disposeSubscribe: () => void;
 	/** {@link startOnlySettings} the helper was started with. */
@@ -233,6 +239,11 @@ export class OverlayNodes {
 		const row = this.deps.getRow(networkID);
 		if (!entry || !row?.overlay || !entry.helper.isRunning()) return;
 		const known = await this.knownRevocations(networkID, row.overlay);
+		// A limit that ends later cuts a certificate in use right then: a tunnel already open is checked by no new
+		// connection, and the periodic sweep could be a minute late.
+		clearTimeout(entry.limitTimer);
+		const end = nextLimitEnd(known);
+		if (end !== null && !entry.stopped) entry.limitTimer = setTimeout(() => void this.sweepRevokedPeers(networkID).catch(() => {}), Math.min(end - Date.now() + LIMIT_SWEEP_SLACK_MS, MAX_TIMER_MS));
 		const found = ((await entry.helper.status().catch(() => null))?.hosts ?? []).filter(h => h.fingerprint && !known.fingerprints.includes(h.fingerprint) && isRevoked(known, h)).map(h => h.fingerprint);
 		if (found.length === 0) return;
 		await this.lock(networkID).runExclusive(async () => {
@@ -341,6 +352,8 @@ export class OverlayNodes {
 				void this.deps.onRepublish?.(row.networkID).catch(err => console.warn(`[Overlay ${row.networkID.slice(0, 8)}] access exchange: ${err?.message ?? err}`));
 			}, STATE_REPUBLISH_MS);
 			this.running.set(row.networkID, entry);
+			// Arms the sweep for the next limit to end, which may come before the first periodic one.
+			void this.sweepRevokedPeers(row.networkID).catch(() => {});
 			const bootstrap = this.bootstrapPeers(row, overlay, cert.name);
 			if (bootstrap.length > 0) void entry.network.addBootstrapPeers(bootstrap, row.networkID, 'configured').catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] bootstrap failed: ${err?.message ?? err}`));
 			console.log(`✓ Joined protected lishnet ${row.name} as ${vpnIP}`);
@@ -403,6 +416,7 @@ export class OverlayNodes {
 			entry.stopped = true;
 			if (entry.restartTimer) clearTimeout(entry.restartTimer);
 			clearInterval(entry.republishTimer);
+			clearTimeout(entry.limitTimer);
 			entry.disposeSubscribe();
 			try {
 				entry.network.unsubscribeTopic(networkID);

@@ -344,6 +344,24 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// A tunnel open on the older certificate went on past the limit's end: only a new connection or the sweep a minute
+	// later checked it, and the member downloaded a file after its access had ended.
+	it('blocks a certificate in use when its limit ends, without waiting for the periodic sweep', async () => {
+		const h = await harness();
+		const older = 'e'.repeat(64);
+		const t = tunnel(h, { name: MEMBER, fingerprint: older, notBefore: '2026-01-01T00:00:00Z' });
+		try {
+			await h.nodes.acceptState(NET, await signState({ networkID: NET, version: 5, lighthouses: [], relays: [], revoked: [], limits: { [MEMBER]: [['2026-06-01T00:00:00Z', new Date(Date.now() + 1500).toISOString()]] } }, h.caKey));
+			expect((await h.store.readJSON<any>('nebula.yml'))?.pki.blocklist ?? []).toEqual([]);
+			const reloads = t.reloads();
+			await Bun.sleep(2500);
+			expect((await h.store.readJSON<any>('nebula.yml'))?.pki.blocklist).toEqual([older]);
+			expect(t.reloads()).toBeGreaterThan(reloads);
+		} finally {
+			await h.cleanup();
+		}
+	}, 15_000);
+
 	it('lets the member in again on a certificate issued after the revocation', async () => {
 		const h = await harness();
 		tunnel(h, { name: MEMBER, fingerprint: 'd'.repeat(64), notBefore: '2026-10-19T10:00:01Z' });
