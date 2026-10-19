@@ -375,18 +375,23 @@ export class OverlayAccess {
 				}
 				vpnIP = free;
 			}
+			const notAfter = until.toISOString().replace(/\.\d{3}Z$/, 'Z');
+			// A renewal that ends sooner than a certificate the node still holds would shorten nothing while that one stays
+			// valid. Another device holding the CA key may have issued a longer one this device never saw, so the member is
+			// revoked by peer ID: every certificate of it issued before now, wherever. The node is out until it imports the
+			// new one.
+			// shortcut: a shortening is noticed only against a longer certificate this device issued or knows from a backup.
+			const superseded = current.filter(m => Date.parse(m.notAfter) > Date.parse(notAfter));
+			for (const m of superseded) m.revoked = true;
+			if (superseded.length > 0) data.revokedPeers = mergeRevocations({ fingerprints: [], peers: data.revokedPeers ?? {} }, { fingerprints: [], peers: { [request.peerID]: new Date().toISOString() } }).peers;
 			// A node revoked as a member is approved again with a certificate valid only after that revocation, which
 			// keeps every older one (also one another device issued) revoked.
-			const revokedAt = (await this.revocations(networkID, overlay)).peers[request.peerID];
+			const revokedAt = mergeRevocations(await this.revocations(networkID, overlay), { fingerprints: [], peers: data.revokedPeers ?? {} }).peers[request.peerID];
 			// Certificates count whole seconds: the first one after the revocation, waited for when it is still ahead.
 			const after = revokedAt ? Math.max(Math.floor((Date.now() - 60_000) / 1000), Math.floor(Date.parse(revokedAt) / 1000) + 1) * 1000 : 0;
 			if (after > Date.now()) await Bun.sleep(after - Date.now());
 			const notBefore = revokedAt ? new Date(after).toISOString().replace(/\.\d{3}Z$/, 'Z') : undefined;
-			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], until.toISOString().replace(/\.\d{3}Z$/, 'Z'), notBefore);
-			// A renewal that ends sooner than a certificate the node still holds would shorten nothing while that
-			// one stays valid: it is revoked, and the node is out until it imports the new one.
-			const superseded = current.filter(m => Date.parse(m.notAfter) > Date.parse(cert.notAfter));
-			for (const m of superseded) m.revoked = true;
+			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], notAfter, notBefore);
 			const member: OverlayMember = { name: request.name, peerID: request.peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false };
 			data.members.push(member);
 			data.requests = data.requests.filter(r => r.id !== requestID);
