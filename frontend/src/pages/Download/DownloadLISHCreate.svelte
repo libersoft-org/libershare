@@ -188,14 +188,21 @@
 	let scope = $state('');
 	// Unknown lishnets are no answer to where the LISH goes: taken as none, it was created public.
 	let networksError = $state('');
+	// Nor are lishnets still loading: the scope chosen so far is only the default.
+	let networksLoaded = $state(false);
 	onMount(() => {
 		getUsableNetworks()
 			.then(nets => {
 				protectedNets = nets.filter(n => n.overlay);
 				// With no public lishnet in use, sharing publicly is never what the user means.
 				if (!nets.some(n => !n.overlay && n.enabled) && protectedNets[0]) scope = protectedNets[0].networkID;
+				networksLoaded = true;
 			})
 			.catch(e => (networksError = translateError(e)));
+	});
+	// The setting may arrive after the lishnets: hiding the public choice must not leave it chosen.
+	$effect(() => {
+		if ($privateOnly && scope === '' && protectedNets[0]) scope = protectedNets[0].networkID;
 	});
 
 	let description = $state('');
@@ -210,7 +217,7 @@
 		// keep a suffix that contradicts the selected algorithm.
 		if (saveToFile) updateLISHFileExtension();
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
-		errorMessage = networksError || (validationError ? getLISHCreateErrorMessage(validationError, $t) : '');
+		errorMessage = networksError || (validationError ? getLISHCreateErrorMessage(validationError, $t) : '') || ($privateOnly && !scope ? $t('settings.lishNetwork.protected.errorPrivateOnly') : '');
 		if (!errorMessage) {
 			// Check if data path exists and is not an empty directory
 			try {
@@ -442,7 +449,7 @@
 			<Alert type="error" message={errorMessage} />
 		</div>
 		<ButtonBar justify="center" basePosition={[0, 13]}>
-			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
+			<Button icon="/img/plus.svg" label={$t('common.createLISH')} disabled={!networksLoaded && !networksError} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>
 	</div>
