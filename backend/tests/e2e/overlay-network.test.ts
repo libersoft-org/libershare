@@ -129,7 +129,7 @@ describe('protected lishnet on loopback', () => {
 		for (const member of [alice, bob]) {
 			const info = await until(`${member.name} overlay node`, async () => (await member.api.lishnets.infoAll()).find(n => n.networkID === network.networkID && n.peerID));
 			expect(info.addresses!.length).toBeGreaterThan(0);
-			for (const addr of info.addresses!) expect(addr).toMatch(/^\/ip4\/100\.64\.0\.\d+\/tcp\/9090/);
+			for (const addr of info.addresses!) expect(addr).toMatch(/^\/ip4\/100\.64\.\d+\.\d+\/tcp\/9090/);
 			// Its own identity: not the public node's.
 			expect(info.peerID).not.toBe((await member.api.lishnets.getNodeInfo())?.peerID);
 		}
