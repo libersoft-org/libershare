@@ -652,8 +652,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * a protected lishnet gets a new node object whenever it is joined again, so that one is compared by identity.
 	 */
 	function onRightNode(lishID: string, dl: Downloader): boolean {
-		const bound = dl.getOriginalNetworkIDs();
-		const target = downloadNode(lishID, bound.length > 0 ? bound : dl.getNetworkIDs());
+		// The lishnets joined now count too: a LISH made public while it downloaded on a protected lishnet has no
+		// public lishnet in its own list, and would be sent straight back there.
+		const target = downloadNode(lishID, [...new Set([...dl.getOriginalNetworkIDs(), ...dl.getNetworkIDs(), ...getJoinedEnabledNetworkIDs(networks)])]);
 		if (!target) return false;
 		const node = dl.getNetwork();
 		return isPublicNode(target.node) ? isPublicNode(node) : target.node === node;
@@ -665,10 +666,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 */
 	async function rehomeDownload(lishID: string): Promise<void> {
 		const dl = activeDownloaders.get(lishID);
-		if (!dl || onRightNode(lishID, dl)) return;
-		const wanted = downloadEnabledLishs.has(lishID) || networkSuspended.has(lishID);
-		await dl.destroy();
-		if (activeDownloaders.get(lishID) === dl) activeDownloaders.delete(lishID);
+		const suspended = networkSuspended.has(lishID);
+		if (dl ? onRightNode(lishID, dl) : !suspended) return;
+		const wanted = downloadEnabledLishs.has(lishID) || suspended;
+		if (dl) {
+			await dl.destroy();
+			if (activeDownloaders.get(lishID) === dl) activeDownloaders.delete(lishID);
+		}
+		// A suspension waited for the lishnets the download had before; the new start decides where it waits now.
+		networkSuspended.delete(lishID);
 		if (wanted) await enableDownload({ lishID }, undefined, false);
 	}
 

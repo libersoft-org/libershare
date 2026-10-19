@@ -184,6 +184,38 @@ test('a download moves to its lishnet when its scope changes', async () => {
 	}
 });
 
+/** A LISH made public while it downloaded on a protected lishnet stayed there: its own list had no public lishnet. */
+test('a download moves to the public node when its LISH is made public', async () => {
+	const w = world('made-public', ['net-b']);
+	try {
+		expect(await w.handlers.enableDownload({ lishID: 'made-public' })).toEqual({ success: true });
+		expect(w.used[0]!.node).toBe(w.nodes.get('net-b'));
+		initLISHScopes(new Map(), () => {});
+		await w.handlers.rehomeDownload('made-public');
+		await w.started(2);
+		expect(w.used[1]?.node).toBe(w.nodes.get('public'));
+		expect(w.used[1]?.downloader.getNetworkIDs()).toEqual(['public']);
+	} finally {
+		await w.cleanup();
+	}
+});
+
+/** Suspended when lishnet A left, then moved to lishnet B: it kept waiting for A, even though B was joined. */
+test('a suspended download moved to another lishnet starts there instead of waiting for the old one', async () => {
+	const w = world('moved-while-suspended', ['net-a']);
+	try {
+		expect(await w.handlers.enableDownload({ lishID: 'moved-while-suspended' })).toEqual({ success: true });
+		expect(w.used[0]!.node).toBe(w.nodes.get('net-a'));
+		w.leave('net-a');
+		initLISHScopes(new Map([['moved-while-suspended', ['net-b']]]), () => {});
+		await w.handlers.rehomeDownload('moved-while-suspended');
+		await w.started(2);
+		expect(w.used[1]?.node).toBe(w.nodes.get('net-b'));
+	} finally {
+		await w.cleanup();
+	}
+});
+
 /** `download <lishPath>` names the first enabled lishnet: a public one asked the public lishnet for a protected LISH. */
 test('a download of a stored protected LISH runs on its lishnet whatever lishnet the caller names', async () => {
 	const w = world('cli-scoped', ['net-b']);
