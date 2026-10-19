@@ -21,7 +21,7 @@ const MEMBERS_BEGIN = '-----BEGIN LISH OVERLAY MEMBERS-----';
 const MEMBERS_END = '-----END LISH OVERLAY MEMBERS-----';
 
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
-function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members'> | null {
+function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked'> | null {
 	const body = new RegExp(`${MEMBERS_BEGIN}([\\s\\S]*?)${MEMBERS_END}`).exec(text)?.[1];
 	if (body === undefined) return null;
 	const invalid = (): CodedError => new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the member list of the backup is damaged');
@@ -37,7 +37,10 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 		if (!str(m?.name) || !str(m.peerID) || !str(m.vpnIP) || !ipInSubnet(m.vpnIP, subnet) || !str(m.fingerprint) || !FINGERPRINT.test(m.fingerprint) || !str(m.notAfter) || !str(m.issued) || typeof m.revoked !== 'boolean' || !Array.isArray(m.roles) || m.roles.some((r: unknown) => !ROLES.includes(r as OverlayRole))) throw invalid();
 		return { name: m.name, ...(m.founder === true ? { founder: true } : {}), peerID: m.peerID, vpnIP: m.vpnIP, roles: [...m.roles], notAfter: m.notAfter, fingerprint: m.fingerprint, issued: m.issued, revoked: m.revoked };
 	});
-	return { nextHost: list.nextHost, members };
+	// Backups made before revocations were carried have none.
+	const revoked = list.revoked ?? [];
+	if (!Array.isArray(revoked) || revoked.some((f: unknown) => typeof f !== 'string' || !FINGERPRINT.test(f))) throw invalid();
+	return { nextHost: list.nextHost, members, revoked };
 }
 
 export interface OverlayAccessDeps {
@@ -353,7 +356,8 @@ export class OverlayAccess {
 	private async publishLocked(networkID: string, hosts: (overlay: LISHOverlayDefinition) => Pick<LISHOverlayDefinition, 'lighthouses' | 'relays'>, revoke: string[]): Promise<void> {
 		const { overlay, store } = this.overlayOf(networkID);
 		const current = await this.deps.nodes.currentState(networkID, overlay);
-		const listed = (await store.readFounder()).members.filter(m => m.revoked).map(m => m.fingerprint);
+		const founder = await store.readFounder();
+		const listed = [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])];
 		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...(current?.revoked ?? []), ...listed, ...revoke])] });
 	}
 
@@ -390,12 +394,15 @@ export class OverlayAccess {
 	/**
 	 * Founder: a backup of the CA key with the member list, for a restore or a second device that should be able to
 	 * approve and revoke as well. Without the list a restored node would hand out addresses already in use and could
-	 * revoke only the certificates it is told about.
+	 * revoke only the certificates it is told about. Every revocation of the signed state goes in too: one made on
+	 * another device holding the key is in this node's state but not in its member list.
 	 */
 	async exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
-		const { store } = this.founderOf(networkID);
-		const { nextHost, members } = await store.readFounder();
-		const list = Buffer.from(JSON.stringify({ nextHost, members })).toString('base64');
+		const { overlay, store } = this.founderOf(networkID);
+		const { nextHost, members, revoked: listed } = await store.readFounder();
+		const state = await this.deps.nodes.currentState(networkID, overlay);
+		const revoked = [...new Set([...(listed ?? []), ...(state?.revoked ?? [])])];
+		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked })).toString('base64');
 		return { networkID, caKey: `${(await store.readText('ca.key'))!.trim()}\n${MEMBERS_BEGIN}\n${list.replace(/.{1,64}/g, '$&\n')}${MEMBERS_END}\n` };
 	}
 
@@ -418,6 +425,8 @@ export class OverlayAccess {
 				else data.members.push(m);
 			}
 			data.nextHost = Math.max(data.nextHost, backup?.nextHost ?? 1);
+			const revoked = [...new Set([...(data.revoked ?? []), ...(backup?.revoked ?? [])])];
+			if (revoked.length > 0) data.revoked = revoked;
 			await store.writeJSON('founder.json', data);
 		});
 		// A clean device has no certificate of its own, and the screens offer a founder no request to make: it signs

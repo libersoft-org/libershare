@@ -118,6 +118,47 @@ describe('importing a CA key', () => {
 		}
 	}
 
+	/**
+	 * A revocation made on another device holding the key reached this one in the signed state only, not in its
+	 * member list; a backup of the list alone lost it, and the restored founder's next state unblocked the member.
+	 */
+	it('a backup keeps the revocations this device knows from the signed state only', async () => {
+		const dirA = await mkdtemp(join(tmpdir(), 'overlay-ca-a-'));
+		const dirB = await mkdtemp(join(tmpdir(), 'overlay-ca-b-'));
+		const elsewhere = 'c'.repeat(64);
+		try {
+			const ca = await generateKeyPair('Ed25519');
+			const published: string[][] = [];
+			const make = (dir: string, state: unknown): OverlayAccess =>
+				new OverlayAccess({
+					nodes: {
+						store: (id: string) => new OverlayStore(dir, id),
+						caPublicKey: async () => Buffer.from(ca.publicKey.raw).toString('hex'),
+						ownCertificate: async () => MEMBER_CERT,
+						currentState: async () => state,
+						publishNewState: async (_id: string, change: { revoked: string[] }) => void published.push(change.revoked),
+					} as any,
+					getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+					addNetwork: async () => {},
+					refresh: async () => {},
+					emit: () => {},
+				});
+			const a = new OverlayStore(dirA, NET);
+			await a.ensureDir();
+			await a.writeText('ca.key', pem(ca.raw));
+			await a.writeJSON('founder.json', { nextHost: 2, members: [], requests: [] });
+			const backup = (await make(dirA, { revoked: [elsewhere] }).exportCA(NET)).caKey;
+			// Restored where no signed state ever arrived.
+			const b = make(dirB, null);
+			await b.importCA(NET, backup);
+			await b.setHosts(NET, [], []);
+			expect(published).toEqual([[elsewhere]]);
+		} finally {
+			await rm(dirA, { recursive: true, force: true });
+			await rm(dirB, { recursive: true, force: true });
+		}
+	});
+
 	it('refuses a backup whose member list is damaged', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'overlay-ca-'));
 		try {

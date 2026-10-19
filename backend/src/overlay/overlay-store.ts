@@ -32,6 +32,11 @@ export interface FounderData {
 	nextHost: number;
 	members: OverlayMember[];
 	requests: OverlayPendingRequest[];
+	/**
+	 * Revocations known from a signed state or a restored backup but not from {@link members}: one made on another
+	 * device holding the CA key. Every new state keeps them.
+	 */
+	revoked?: string[];
 }
 
 /** A network ID is used as a directory name, so it must not be able to name anything but one directory. */
