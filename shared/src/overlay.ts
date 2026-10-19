@@ -59,6 +59,32 @@ export interface OverlayState {
 	relays: LISHOverlayHost[];
 	/** Fingerprints of revoked certificates. */
 	revoked: string[];
+	/**
+	 * Revoked members by peer ID (the certificate name), with the time of the revocation (ISO 8601): every
+	 * certificate of that node issued before it is revoked, also one another device holding the CA key issued and
+	 * this one never saw. A certificate issued later (an approval after the revocation) is not.
+	 */
+	revokedPeers?: Record<string, string>;
+}
+
+/** The revocations a node knows: fingerprints and revoked members ({@link OverlayState.revokedPeers}). */
+export interface OverlayRevocations {
+	fingerprints: string[];
+	peers: Record<string, string>;
+}
+
+/** Both sets of revocations together; a member revoked twice keeps the later time. Revocations are never dropped. */
+export function mergeRevocations(a: OverlayRevocations, b: OverlayRevocations): OverlayRevocations {
+	const peers = { ...a.peers };
+	for (const [peerID, at] of Object.entries(b.peers)) if (!peers[peerID] || Date.parse(at) > Date.parse(peers[peerID]!)) peers[peerID] = at;
+	return { fingerprints: [...new Set([...a.fingerprints, ...b.fingerprints])], peers };
+}
+
+/** Whether a certificate is revoked: by its fingerprint, or as a member's certificate issued before the member was revoked. */
+export function isRevoked(revocations: OverlayRevocations, cert: { name: string; fingerprint: string; notBefore: string }): boolean {
+	if (revocations.fingerprints.includes(cert.fingerprint)) return true;
+	const at = revocations.peers[cert.name];
+	return at !== undefined && Date.parse(cert.notBefore) < Date.parse(at);
 }
 
 /** An {@link OverlayState} as JSON with an ed25519 signature (hex) by the lishnet's CA key. */

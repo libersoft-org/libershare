@@ -231,6 +231,73 @@ describe('OverlayNodes network state', () => {
 		}
 	});
 
+	// A device holding the CA key, restored from an older backup, signed a newer state without a recent revocation:
+	// every member took it and let the revoked certificate back in.
+	it('keeps an accepted revocation when a newer state lacks it', async () => {
+		const h = await harness();
+		try {
+			await h.nodes.acceptState(NET, await h.sign(5, [FP]));
+			await h.nodes.acceptState(NET, await h.sign(6, []));
+			expect((await h.nodes.currentState(NET, h.overlay()))?.version).toBe(6);
+			expect((await h.store.readJSON<any>('nebula.yml'))?.pki.blocklist).toEqual([FP]);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
+	/** A tunnel to one member: its certificate's name, fingerprint and start, as the helper reports them. */
+	function tunnel(h: Awaited<ReturnType<typeof harness>>, host: { name: string; fingerprint: string; notBefore: string }) {
+		let reloads = 0;
+		(h.nodes as any).running.get(NET).helper = {
+			isRunning: () => true,
+			reload: async () => void reloads++,
+			status: async () => ({ hosts: [{ vpnAddrs: ['100.64.0.7'], relayedVia: [], ...host }], inboundPort: 0 }),
+		};
+		return { reloads: () => reloads };
+	}
+
+	const MEMBER = '12D3KooWGzBgW1mHp7DpLbR2X5yfDN8dRtVYWNw2wXxu3yi1fYM5';
+	const revokeMember = (h: Awaited<ReturnType<typeof harness>>, version: number) => signState({ networkID: NET, version, lighthouses: [], relays: [], revoked: [], revokedPeers: { [MEMBER]: '2026-10-19T10:00:00.000Z' } }, h.caKey);
+
+	// The member's certificate there came from another device holding the CA key: no state listed its fingerprint.
+	it('refuses a revoked member on a certificate issued before the revocation, and blocks that certificate', async () => {
+		const h = await harness();
+		const older = 'c'.repeat(64);
+		const t = tunnel(h, { name: MEMBER, fingerprint: older, notBefore: '2026-10-18T09:00:00Z' });
+		try {
+			await h.nodes.acceptState(NET, await revokeMember(h, 5));
+			expect(await h.nodes.authorizePeer(NET, MEMBER, '100.64.0.7')).toBe(false);
+			expect((await h.store.readJSON<any>('nebula.yml'))?.pki.blocklist).toEqual([older]);
+			expect(t.reloads()).toBeGreaterThan(0);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
+	it('lets the member in again on a certificate issued after the revocation', async () => {
+		const h = await harness();
+		tunnel(h, { name: MEMBER, fingerprint: 'd'.repeat(64), notBefore: '2026-10-19T10:00:01Z' });
+		try {
+			await h.nodes.acceptState(NET, await revokeMember(h, 5));
+			expect(await h.nodes.authorizePeer(NET, MEMBER, '100.64.0.7')).toBe(true);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
+	// The libp2p handshake proves a key, not a membership: a member spoke under another member's peer ID.
+	it('refuses a peer ID other than the one the tunnel certificate names, and a peer with no tunnel', async () => {
+		const h = await harness();
+		tunnel(h, { name: MEMBER, fingerprint: 'd'.repeat(64), notBefore: '2026-10-18T09:00:00Z' });
+		try {
+			expect(await h.nodes.authorizePeer(NET, MEMBER, '100.64.0.7')).toBe(true);
+			expect(await h.nodes.authorizePeer(NET, '12D3KooWQ4bYeqtXdNbcrfoFjQY8AsZqmSrRmgxWRDK4QMg8Vhm2', '100.64.0.7')).toBe(false);
+			expect(await h.nodes.authorizePeer(NET, MEMBER, '100.64.0.8')).toBe(false);
+		} finally {
+			await h.cleanup();
+		}
+	});
+
 	it('refuses a state signed by another key', async () => {
 		const h = await harness();
 		try {

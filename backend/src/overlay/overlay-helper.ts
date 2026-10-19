@@ -11,7 +11,10 @@ const CONTROL_TIMEOUT_MS = 10_000;
 /** One tunnel as the helper reports it. */
 export interface HelperHost {
 	vpnAddrs: string[];
+	/** The peer's certificate: its name (the peer's libp2p peer ID), fingerprint and start of validity. */
 	name: string;
+	fingerprint: string;
+	notBefore: string;
 	/** Underlay address of a direct tunnel; absent when the tunnel goes through a relay. */
 	remote?: string;
 	relayedVia: string[];

@@ -8,10 +8,12 @@ import { buildLibp2pConfig, type OverlayNodeOptions } from '../../../src/protoco
  * overlay; the public node must keep every one of them.
  */
 
+const authorized: Array<[string, string]> = [];
 const overlay: OverlayNodeOptions = {
 	vpnIP: '100.64.0.5',
 	port: 9090,
 	bridge: { dialPort: 1, token: 'x'.repeat(40), subnet: '100.64.0.0/16', setInboundPort: async () => {} },
+	authorize: async (peerID, overlayIP) => (authorized.push([peerID, overlayIP]), peerID === 'member-ok'),
 };
 
 async function build(withOverlay: boolean) {
@@ -44,6 +46,21 @@ describe('buildLibp2pConfig — overlay node', () => {
 		expect(await config.connectionGater.denyDialMultiaddr(outside)).toBe(true);
 		expect(await config.connectionGater.denyDialMultiaddr(lan)).toBe(true);
 		expect(await config.connectionGater.denyDialMultiaddr(inside)).toBe(false);
+	});
+});
+
+describe('buildLibp2pConfig — overlay node identity and names', () => {
+	// The libp2p handshake proves a key, not membership: a member could speak under another member's peer ID, and a
+	// revoked member with a certificate from another founder device was let in.
+	it('lets a connection stand only when the tunnel at its overlay address authorizes its peer ID', async () => {
+		const { config } = await build(true);
+		const conn = { remoteAddr: multiaddr('/ip4/100.64.0.9/tcp/40000') };
+		expect(await config.connectionGater.denyInboundEncryptedConnection({ toString: () => 'member-ok' }, conn)).toBe(false);
+		expect(await config.connectionGater.denyOutboundEncryptedConnection({ toString: () => 'someone-else' }, conn)).toBe(true);
+		expect(authorized).toEqual([
+			['member-ok', '100.64.0.9'],
+			['someone-else', '100.64.0.9'],
+		]);
 	});
 });
 

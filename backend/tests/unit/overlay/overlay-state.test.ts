@@ -35,6 +35,15 @@ describe('signed overlay state', () => {
 		await expect(verifyState(badRevocation, ca.publicHex, NET, SUBNET)).rejects.toThrow('fingerprints');
 	});
 
+	it('carries revoked members by peer ID and refuses malformed ones', async () => {
+		const ca = await caKey();
+		const peer = '12D3KooWGzBgW1mHp7DpLbR2X5yfDN8dRtVYWNw2wXxu3yi1fYM5';
+		const withPeers = { ...state, revokedPeers: { [peer]: '2026-10-19T10:00:00.000Z' } };
+		expect(await verifyState(await signState(withPeers, ca.pem), ca.publicHex, NET, SUBNET)).toEqual(withPeers);
+		await expect(verifyState(await signState({ ...state, revokedPeers: { 'not a peer id': '2026-10-19T10:00:00Z' } } as any, ca.pem), ca.publicHex, NET, SUBNET)).rejects.toThrow('member revocations');
+		await expect(verifyState(await signState({ ...state, revokedPeers: { [peer]: 'whenever' } } as any, ca.pem), ca.publicHex, NET, SUBNET)).rejects.toThrow('member revocations');
+	});
+
 	it('cannot pass for a signature over the bare JSON (domain separated)', async () => {
 		const ca = await caKey();
 		const key = await generateKeyPair('Ed25519');

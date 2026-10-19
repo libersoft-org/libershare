@@ -73,6 +73,8 @@ export interface OverlayNodeOptions {
 	/** TCP port inside the overlay. */
 	port: number;
 	bridge: OverlayBridge;
+	/** Whether a connection with this peer ID through the tunnel of this overlay address may stand. */
+	authorize(peerID: string, overlayIP: string): Promise<boolean>;
 }
 export interface BuildConfigParams {
 	privateKey: PrivateKey;
@@ -304,6 +306,14 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				}
 				return deny;
 			},
+			// The overlay node lets a connection stand only for the member its tunnel's certificate names, and not for a
+			// revoked one: the Nebula tunnel says who is on the other end, the libp2p handshake only what it claims.
+			...(overlay
+				? {
+						denyInboundEncryptedConnection: async (peerId: any, maConn: any): Promise<boolean> => !(await overlay.authorize(peerId.toString(), overlayTarget(maConn.remoteAddr, overlay.bridge.subnet)?.ip ?? '')),
+						denyOutboundEncryptedConnection: async (peerId: any, maConn: any): Promise<boolean> => !(await overlay.authorize(peerId.toString(), overlayTarget(maConn.remoteAddr, overlay.bridge.subnet)?.ip ?? '')),
+					}
+				: {}),
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {

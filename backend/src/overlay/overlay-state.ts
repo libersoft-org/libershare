@@ -5,6 +5,8 @@ import { CodedError, ErrorCodes, type LISHOverlayDefinition, type OverlayState, 
 const DOMAIN = 'lish-overlay-state/1\n';
 const MAX_STATE_BYTES = 200 * 1024;
 const FINGERPRINT = /^[0-9a-f]{64}$/;
+/** A certificate name: the member's libp2p peer ID (base58). */
+const PEER_NAME = /^[1-9A-HJ-NP-Za-km-z]{40,64}$/;
 
 function invalid(detail: string): CodedError {
 	return new CodedError(ErrorCodes.NETWORK_INVALID, detail);
@@ -48,7 +50,12 @@ export async function verifyState(signed: unknown, caPublicKeyHex: string, netwo
 	if (!Array.isArray(revoked) || revoked.some(f => typeof f !== 'string' || !FINGERPRINT.test(f))) throw invalid('state revocations must be certificate fingerprints');
 	const lighthouses = validateOverlayHosts(parsed['lighthouses'], subnet, 'lighthouses');
 	const relays = validateOverlayHosts(parsed['relays'], subnet, 'relays');
-	return { networkID, version, lighthouses, relays, revoked: [...new Set(revoked as string[])] };
+	// States signed before members could be revoked by peer ID have none.
+	const peers = parsed['revokedPeers'] ?? {};
+	if (typeof peers !== 'object' || peers === null || Array.isArray(peers)) throw invalid('state member revocations must be an object');
+	for (const [peerID, at] of Object.entries(peers)) if (!PEER_NAME.test(peerID) || typeof at !== 'string' || Number.isNaN(Date.parse(at))) throw invalid('state member revocations must map peer IDs to times');
+	const revokedPeers = peers as Record<string, string>;
+	return { networkID, version, lighthouses, relays, revoked: [...new Set(revoked as string[])], ...(Object.keys(revokedPeers).length > 0 ? { revokedPeers } : {}) };
 }
 
 /** The definition with the hosts of a newer verified state. */

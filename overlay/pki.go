@@ -168,6 +168,7 @@ func cmdSign(args []string) (any, error) {
 	ip := fs.String("ip", "", "member address with the subnet size, e.g. 100.64.0.2/16")
 	groups := fs.String("groups", "", "comma separated groups")
 	notAfter := fs.String("not-after", "", "expiry, RFC 3339")
+	notBefore := fs.String("not-before", "", "optional start of validity, RFC 3339 (default: a minute ago)")
 	outCrt := fs.String("out-crt", "", "certificate path")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -212,6 +213,16 @@ func cmdSign(args []string) (any, error) {
 	if until.After(ca.NotAfter()) {
 		return nil, fmt.Errorf("the certificate cannot outlive the CA (%s)", ca.NotAfter().UTC().Format(time.RFC3339))
 	}
+	// A minute back absorbs clock skew between members; an approval after a revocation of the same node starts after it.
+	from := time.Now().Add(-time.Minute)
+	if *notBefore != "" {
+		if from, err = time.Parse(time.RFC3339, *notBefore); err != nil {
+			return nil, fmt.Errorf("-not-before: %w", err)
+		}
+		if !from.Before(until) {
+			return nil, errors.New("-not-before must be before -not-after")
+		}
+	}
 	var groupList []string
 	for _, g := range strings.Split(*groups, ",") {
 		if g = strings.TrimSpace(g); g != "" {
@@ -223,7 +234,7 @@ func cmdSign(args []string) (any, error) {
 		Name:      *name,
 		Networks:  []netip.Prefix{addr},
 		Groups:    groupList,
-		NotBefore: time.Now().Add(-time.Minute),
+		NotBefore: from,
 		NotAfter:  until,
 		PublicKey: pub,
 		Curve:     curve,

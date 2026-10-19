@@ -4,7 +4,7 @@ import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { CodedError, ErrorCodes, ipInSubnet, isHostPort, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from '@shared';
+import { CodedError, ErrorCodes, ipInSubnet, isHostPort, isRevoked, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
 import { SqliteDatastore } from '../protocol/datastore.ts';
 import { PRIVATE_KEY_PATH, writeIdentityKey } from '../protocol/identity-store.ts';
 import { runOverlayCommand, type CertificateInfo } from './overlay-binary.ts';
@@ -42,7 +42,7 @@ function freeAddress(cidr: string, size: number, peerID: string, used: Set<strin
 }
 
 /** The member list of a CA backup ({@link OverlayAccess.exportCA}); null for a backup of the key alone. */
-function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked'> | null {
+function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextHost' | 'members' | 'revoked' | 'revokedPeers'> | null {
 	const body = new RegExp(`${MEMBERS_BEGIN}([\\s\\S]*?)${MEMBERS_END}`).exec(text)?.[1];
 	if (body === undefined) return null;
 	const invalid = (): CodedError => new CodedError(ErrorCodes.OVERLAY_CERTIFICATE_INVALID, 'the member list of the backup is damaged');
@@ -61,7 +61,9 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 	// Backups made before revocations were carried have none.
 	const revoked = list.revoked ?? [];
 	if (!Array.isArray(revoked) || revoked.some((f: unknown) => typeof f !== 'string' || !FINGERPRINT.test(f))) throw invalid();
-	return { nextHost: list.nextHost, members, revoked };
+	const revokedPeers = list.revokedPeers ?? {};
+	if (typeof revokedPeers !== 'object' || revokedPeers === null || Array.isArray(revokedPeers) || Object.entries(revokedPeers).some(([p, at]) => !str(p) || typeof at !== 'string' || Number.isNaN(Date.parse(at)))) throw invalid();
+	return { nextHost: list.nextHost, members, revoked, revokedPeers };
 }
 
 export interface OverlayAccessDeps {
@@ -123,6 +125,13 @@ export class OverlayAccess {
 		this.deps = deps;
 	}
 
+	/** Every revocation known here: the node's (all verified states) and the founder's member list and backups. */
+	private async revocations(networkID: string, overlay: LISHOverlayDefinition): Promise<OverlayRevocations> {
+		const founder = await this.deps.nodes.store(networkID).readFounder();
+		const listed = { fingerprints: [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])], peers: founder.revokedPeers ?? {} };
+		return mergeRevocations(await this.deps.nodes.knownRevocations(networkID, overlay), listed);
+	}
+
 	private founderLock(networkID: string): Mutex {
 		let lock = this.founderLocks.get(networkID);
 		if (!lock) this.founderLocks.set(networkID, (lock = new Mutex()));
@@ -170,11 +179,11 @@ export class OverlayAccess {
 		return publicKey;
 	}
 
-	private async issueCertificate(store: OverlayStore, request: { publicKey: string; peerID: string }, vpnIP: string, bits: number, groups: string[], notAfter: string): Promise<CertificateInfo> {
+	private async issueCertificate(store: OverlayStore, request: { publicKey: string; peerID: string }, vpnIP: string, bits: number, groups: string[], notAfter: string, notBefore?: string): Promise<CertificateInfo> {
 		await store.remove('issue.crt');
 		await store.writeText('issue.pub', request.publicKey);
 		try {
-			return await runOverlayCommand<CertificateInfo>(['sign', '--ca-crt', store.path('ca.crt'), '--ca-key', store.path('ca.key'), '--public-key', store.path('issue.pub'), '--name', request.peerID, '--ip', `${vpnIP}/${bits}`, '--groups', groups.join(','), '--not-after', notAfter, '--out-crt', store.path('issue.crt')]);
+			return await runOverlayCommand<CertificateInfo>(['sign', '--ca-crt', store.path('ca.crt'), '--ca-key', store.path('ca.key'), '--public-key', store.path('issue.pub'), '--name', request.peerID, '--ip', `${vpnIP}/${bits}`, '--groups', groups.join(','), '--not-after', notAfter, ...(notBefore ? ['--not-before', notBefore] : []), '--out-crt', store.path('issue.crt')]);
 		} finally {
 			await store.remove('issue.pub');
 			await store.remove('issue.crt');
@@ -298,7 +307,14 @@ export class OverlayAccess {
 				const used = new Set([...data.members.map(m => m.vpnIP), subnetAddress(overlay.subnet, 1), ...(own ? [own.networks[0]!.split('/')[0]!] : []), ...overlay.lighthouses.map(h => h.vpnIP), ...overlay.relays.map(h => h.vpnIP)]);
 				vpnIP = freeAddress(overlay.subnet, subnet.size, request.peerID, used);
 			}
-			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], until.toISOString().replace(/\.\d{3}Z$/, 'Z'));
+			// A node revoked as a member is approved again with a certificate valid only after that revocation, which
+			// keeps every older one (also one another device issued) revoked.
+			const revokedAt = (await this.revocations(networkID, overlay)).peers[request.peerID];
+			// Certificates count whole seconds: the first one after the revocation, waited for when it is still ahead.
+			const after = revokedAt ? Math.max(Math.floor((Date.now() - 60_000) / 1000), Math.floor(Date.parse(revokedAt) / 1000) + 1) * 1000 : 0;
+			if (after > Date.now()) await Bun.sleep(after - Date.now());
+			const notBefore = revokedAt ? new Date(after).toISOString().replace(/\.\d{3}Z$/, 'Z') : undefined;
+			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], until.toISOString().replace(/\.\d{3}Z$/, 'Z'), notBefore);
 			// A renewal that ends sooner than a certificate the node still holds would shorten nothing while that
 			// one stays valid: it is revoked, and the node is out until it imports the new one.
 			const superseded = current.filter(m => Date.parse(m.notAfter) > Date.parse(cert.notAfter));
@@ -350,7 +366,10 @@ export class OverlayAccess {
 			if (own && (own.fingerprint === fingerprint || member?.peerID === own.name)) throw new CodedError(ErrorCodes.NETWORK_INVALID, "the founder's own certificate cannot be revoked");
 			const node = member ? data.members.filter(m => m.peerID === member.peerID && !m.revoked) : [];
 			for (const m of node) m.revoked = true;
-			if (node.length > 0) await store.writeJSON('founder.json', data);
+			// The member itself, not only the certificates this device issued: one another device holding the CA key
+			// issued (a renewal after a restore) is revoked too, as is every certificate of the node issued before now.
+			if (member) data.revokedPeers = { ...data.revokedPeers, [member.peerID]: new Date().toISOString() };
+			if (member) await store.writeJSON('founder.json', data);
 			const keep = (list: LISHOverlayHost[]): LISHOverlayHost[] => (member ? list.filter(h => h.vpnIP !== member.vpnIP || h.peerID !== member.peerID) : list);
 			await this.publishLocked(networkID, o => ({ lighthouses: keep(o.lighthouses), relays: keep(o.relays) }), [fingerprint, ...node.map(m => m.fingerprint)]);
 		});
@@ -373,11 +392,9 @@ export class OverlayAccess {
 	 * state would otherwise sign one without the earlier revocations, and members would unblock those certificates.
 	 */
 	private async publishLocked(networkID: string, hosts: (overlay: LISHOverlayDefinition) => Pick<LISHOverlayDefinition, 'lighthouses' | 'relays'>, revoke: string[]): Promise<void> {
-		const { overlay, store } = this.overlayOf(networkID);
-		const current = await this.deps.nodes.currentState(networkID, overlay);
-		const founder = await store.readFounder();
-		const listed = [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])];
-		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...(current?.revoked ?? []), ...listed, ...revoke])] });
+		const { overlay } = this.overlayOf(networkID);
+		const known = await this.revocations(networkID, overlay);
+		await this.deps.nodes.publishNewState(networkID, { ...hosts(overlay), revoked: [...new Set([...known.fingerprints, ...revoke])], revokedPeers: known.peers });
 	}
 
 	/**
@@ -418,10 +435,9 @@ export class OverlayAccess {
 	 */
 	async exportCA(networkID: string): Promise<{ networkID: string; caKey: string }> {
 		const { overlay, store } = this.founderOf(networkID);
-		const { nextHost, members, revoked: listed } = await store.readFounder();
-		const state = await this.deps.nodes.currentState(networkID, overlay);
-		const revoked = [...new Set([...(listed ?? []), ...(state?.revoked ?? [])])];
-		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked })).toString('base64');
+		const { nextHost, members } = await store.readFounder();
+		const known = await this.revocations(networkID, overlay);
+		const list = Buffer.from(JSON.stringify({ nextHost, members, revoked: known.fingerprints, revokedPeers: known.peers })).toString('base64');
 		return { networkID, caKey: `${(await store.readText('ca.key'))!.trim()}\n${MEMBERS_BEGIN}\n${list.replace(/.{1,64}/g, '$&\n')}${MEMBERS_END}\n` };
 	}
 
@@ -444,8 +460,9 @@ export class OverlayAccess {
 				else data.members.push(m);
 			}
 			data.nextHost = Math.max(data.nextHost, backup?.nextHost ?? 1);
-			const revoked = [...new Set([...(data.revoked ?? []), ...(backup?.revoked ?? [])])];
-			if (revoked.length > 0) data.revoked = revoked;
+			const merged = mergeRevocations({ fingerprints: data.revoked ?? [], peers: data.revokedPeers ?? {} }, { fingerprints: backup?.revoked ?? [], peers: backup?.revokedPeers ?? {} });
+			if (merged.fingerprints.length > 0) data.revoked = merged.fingerprints;
+			if (Object.keys(merged.peers).length > 0) data.revokedPeers = merged.peers;
 			await store.writeJSON('founder.json', data);
 		});
 		// A clean device has no certificate of its own, and the screens offer a founder no request to make.
@@ -462,9 +479,8 @@ export class OverlayAccess {
 		const { overlay, store, row } = this.overlayOf(networkID);
 		if (!store.has('ca.key')) return false;
 		const own = await this.deps.nodes.ownCertificate(store, overlay.caCert).catch(() => null);
-		// Revoked as far as anything here knows: the signed state, and the member list and revocations of a backup.
-		const known = await store.readFounder();
-		const revoked = own ? [...((await this.deps.nodes.currentState(networkID, overlay))?.revoked ?? []), ...known.members.filter(m => m.revoked).map(m => m.fingerprint), ...(known.revoked ?? [])].includes(own.fingerprint) : false;
+		// Revoked as far as anything here knows: the signed states, and the member list and revocations of a backup.
+		const revoked = own ? isRevoked(await this.revocations(networkID, overlay), own) : false;
 		if (own && !revoked && Date.parse(own.notAfter) - Date.now() > OWN_RENEWAL_MS) return false;
 		// A renewal keeps the lighthouse and relay roles the node holds (usually the founder's own): one without them
 		// would take the node out of the lishnet's infrastructure.
@@ -484,7 +500,7 @@ export class OverlayAccess {
 		const helper = await nodes.helperStatus(networkID);
 		const tunnels = new Map((helper?.hosts ?? []).map(h => [h.vpnAddrs[0] ?? '', h]));
 		const infra = new Set([...overlay.lighthouses, ...overlay.relays].map(h => h.vpnIP));
-		const revoked = cert ? (state?.revoked.includes(cert.fingerprint) ?? false) : false;
+		const revoked = cert ? isRevoked(await this.revocations(networkID, overlay), cert) : false;
 		// A member whose certificate is revoked or expired asks again; its new request is shown like a first one.
 		const request = !cert || revoked || Date.parse(cert.notAfter) <= Date.now() ? await store.readRequest() : null;
 		const ownIP = cert?.networks[0]?.split('/')[0];

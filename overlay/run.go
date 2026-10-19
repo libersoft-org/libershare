@@ -299,10 +299,13 @@ func pipe(a, b net.Conn) {
 // hostStatus describes one tunnel. Remote is the underlay address of a direct tunnel; for a member that is only
 // ever an infrastructure node or a LAN neighbour (the lighthouse hides everything else).
 type hostStatus struct {
-	VpnAddrs   []string `json:"vpnAddrs"`
-	Name       string   `json:"name"`
-	Remote     string   `json:"remote,omitempty"`
-	RelayedVia []string `json:"relayedVia"`
+	VpnAddrs []string `json:"vpnAddrs"`
+	Name     string   `json:"name"`
+	// Fingerprint and NotBefore of the peer's certificate let the backend apply revocations by member.
+	Fingerprint string   `json:"fingerprint"`
+	NotBefore   string   `json:"notBefore"`
+	Remote      string   `json:"remote,omitempty"`
+	RelayedVia  []string `json:"relayedVia"`
 }
 
 func (b *bridge) status() map[string]any {
@@ -312,7 +315,10 @@ func (b *bridge) status() map[string]any {
 		if !h.CurrentRemote.IsValid() && len(h.CurrentRelaysToMe) == 0 {
 			continue
 		}
-		hs := hostStatus{Name: h.Cert.Name(), RelayedVia: []string{}}
+		hs := hostStatus{Name: h.Cert.Name(), NotBefore: h.Cert.NotBefore().UTC().Format(time.RFC3339), RelayedVia: []string{}}
+		if fp, err := h.Cert.Fingerprint(); err == nil {
+			hs.Fingerprint = fp
+		}
 		for _, a := range h.VpnAddrs {
 			hs.VpnAddrs = append(hs.VpnAddrs, a.String())
 		}

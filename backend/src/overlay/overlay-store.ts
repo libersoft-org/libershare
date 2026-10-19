@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CodedError, ErrorCodes, type OverlayAccessRequest, type OverlayMember, type OverlayPendingRequest, type SignedOverlayState } from '@shared';
+import { CodedError, ErrorCodes, type OverlayAccessRequest, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type SignedOverlayState } from '@shared';
 
 /** Files of one protected lishnet. Keys are written once, owner-readable only, and never leave this directory. */
 export type OverlayFile =
@@ -22,6 +22,11 @@ export type OverlayFile =
 	| 'founder.json'
 	/** The newest signed state this node has verified ({@link SignedOverlayState}). */
 	| 'state.json'
+	/**
+	 * Every revocation this node has seen in any verified state, plus the fingerprints of revoked members' certificates
+	 * found on its tunnels ({@link OverlayRevocations}). Only grows: a newer state without a revocation does not lift it.
+	 */
+	| 'revoked.json'
 	/** Scratch files of one certificate issue or import, removed right after. */
 	| 'issue.pub'
 	| 'issue.crt';
@@ -37,6 +42,8 @@ export interface FounderData {
 	 * device holding the CA key. Every new state keeps them.
 	 */
 	revoked?: string[];
+	/** Members revoked by peer ID ({@link OverlayRevocations.peers}), kept the same way. */
+	revokedPeers?: Record<string, string>;
 }
 
 /** A network ID is used as a directory name, so it must not be able to name anything but one directory. */
@@ -122,6 +129,10 @@ export class OverlayStore {
 
 	readState(): Promise<SignedOverlayState | null> {
 		return this.readJSON<SignedOverlayState>('state.json');
+	}
+
+	async readRevocations(): Promise<OverlayRevocations> {
+		return (await this.readJSON<OverlayRevocations>('revoked.json')) ?? { fingerprints: [], peers: {} };
 	}
 
 	async readFounder(): Promise<FounderData> {

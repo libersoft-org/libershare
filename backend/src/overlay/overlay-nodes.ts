@@ -2,7 +2,7 @@ import { Mutex } from 'async-mutex';
 import * as dns from 'node:dns/promises';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayState, type SignedOverlayState } from '@shared';
+import { isRevoked, mergeRevocations, type BootstrapStatus, type LISHNetworkConfig, type LISHOverlayDefinition, type OverlayRevocations, type OverlayState, type SignedOverlayState } from '@shared';
 import { Network } from '../protocol/network.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
@@ -21,6 +21,14 @@ const STATE_PUBLISH_MIN_GAP_MS = 5_000;
 const REVOCATION_NOTICE_MS = 1_000;
 const RESTART_DELAY_MIN_MS = 1_000;
 const RESTART_DELAY_MAX_MS = 30_000;
+
+/** Whether two sets of revocations hold the same fingerprints and the same revoked members at the same times. */
+function sameRevocations(a: OverlayRevocations, b: OverlayRevocations): boolean {
+	const fingerprints = new Set(a.fingerprints);
+	if (fingerprints.size !== new Set(b.fingerprints).size || b.fingerprints.some(f => !fingerprints.has(f))) return false;
+	const peers = Object.keys(a.peers);
+	return peers.length === Object.keys(b.peers).length && peers.every(p => b.peers[p] === a.peers[p]);
+}
 
 export function stateTopic(networkID: string): string {
 	return `lish-overlay-state/${networkID}`;
@@ -164,12 +172,68 @@ export class OverlayNodes {
 		return { byHost, ips: [...new Set([...byHost.values()].flat())].sort() };
 	}
 
+	/**
+	 * Every revocation this node knows: the current signed state, every one it accepted before (a newer state that
+	 * lacks one does not lift it), and on a founder's node the member list and the revocations of a restored backup.
+	 */
+	async knownRevocations(networkID: string, overlay: LISHOverlayDefinition): Promise<OverlayRevocations> {
+		const store = this.store(networkID);
+		const state = await this.currentState(networkID, overlay);
+		let known = mergeRevocations(await store.readRevocations(), { fingerprints: state?.revoked ?? [], peers: state?.revokedPeers ?? {} });
+		if (store.has('founder.json')) {
+			const founder = await store.readFounder();
+			known = mergeRevocations(known, { fingerprints: [...founder.members.filter(m => m.revoked).map(m => m.fingerprint), ...(founder.revoked ?? [])], peers: founder.revokedPeers ?? {} });
+		}
+		return known;
+	}
+
+	/**
+	 * Whether a libp2p connection over the lishnet's overlay may stand: the tunnel it came through must exist, carry a
+	 * certificate named after the peer ID the connection proved (so no member speaks for another), and that certificate
+	 * must not be revoked, by fingerprint or as a revoked member's. A revoked one also goes onto Nebula's blocklist.
+	 */
+	async authorizePeer(networkID: string, peerID: string, overlayIP: string): Promise<boolean> {
+		const entry = this.running.get(networkID);
+		const row = this.deps.getRow(networkID);
+		if (!entry || !row?.overlay || !entry.helper.isRunning()) return false;
+		const host = (await entry.helper.status().catch(() => null))?.hosts.find(h => h.vpnAddrs.includes(overlayIP));
+		const tag = `[Overlay ${networkID.slice(0, 8)}]`;
+		if (!host) {
+			console.warn(`${tag} refused ${peerID.slice(0, 12)}: no tunnel to ${overlayIP}`);
+			return false;
+		}
+		if (host.name !== peerID) {
+			console.warn(`${tag} refused ${peerID.slice(0, 12)} at ${overlayIP}: the certificate there names ${host.name.slice(0, 12)}`);
+			return false;
+		}
+		if (isRevoked(await this.knownRevocations(networkID, row.overlay), host)) {
+			console.warn(`${tag} refused ${peerID.slice(0, 12)}: its certificate is revoked`);
+			void this.sweepRevokedPeers(networkID).catch(() => {});
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Certificates of revoked members found on this node's tunnels go onto Nebula's blocklist: a member revoked by peer
+	 * ID may hold one issued by another device holding the CA key, whose fingerprint no state lists.
+	 */
+	async sweepRevokedPeers(networkID: string): Promise<void> {
+		const entry = this.running.get(networkID);
+		const row = this.deps.getRow(networkID);
+		if (!entry || !row?.overlay || !entry.helper.isRunning()) return;
+		const known = await this.knownRevocations(networkID, row.overlay);
+		const found = ((await entry.helper.status().catch(() => null))?.hosts ?? []).filter(h => h.fingerprint && !known.fingerprints.includes(h.fingerprint) && isRevoked(known, h)).map(h => h.fingerprint);
+		if (found.length === 0) return;
+		await this.lock(networkID).runExclusive(async () => {
+			await entry.store.writeJSON('revoked.json', mergeRevocations(await entry.store.readRevocations(), { fingerprints: found, peers: {} }));
+		});
+		console.log(`[Overlay ${networkID.slice(0, 8)}] blocking ${found.length} certificate(s) of revoked members`);
+		await this.reconfigure(networkID);
+	}
+
 	/** Write the Nebula configuration; returns the infrastructure addresses it allows. */
 	private async writeConfig(entry: { networkID: string; store: OverlayStore; vpnIP: string; peerID: string }, overlay: LISHOverlayDefinition, known: Map<string, string[]>): Promise<{ byHost: Map<string, string[]>; ips: string[] }> {
-		const state = await this.currentState(entry.networkID, overlay);
-		// A founder restored from a backup knows revocations no signed state has brought it yet: they block from the start.
-		const founder = entry.store.has('founder.json') ? await entry.store.readFounder() : null;
-		const revoked = [...new Set([...(state?.revoked ?? []), ...(founder?.members.filter(m => m.revoked).map(m => m.fingerprint) ?? []), ...(founder?.revoked ?? [])])];
 		const resolved = await this.resolveInfra(entry.networkID, overlay, known);
 		const { ips } = resolved;
 		const config = buildNebulaConfig({
@@ -177,7 +241,7 @@ export class OverlayNodes {
 			overlay,
 			vpnIP: entry.vpnIP,
 			peerID: entry.peerID,
-			revoked,
+			revoked: (await this.knownRevocations(entry.networkID, overlay)).fingerprints,
 			infraIPs: ips,
 		});
 		await entry.store.writeJSON('nebula.yml', config);
@@ -238,7 +302,7 @@ export class OverlayNodes {
 					await entry.helper.setInboundPort(port);
 				},
 			};
-			entry.network = new Network(store.dir, this.deps.dataServer, this.deps.settings, { overlay: { vpnIP, port: OVERLAY_LIBP2P_PORT, bridge }, lishScope: row.networkID });
+			entry.network = new Network(store.dir, this.deps.dataServer, this.deps.settings, { overlay: { vpnIP, port: OVERLAY_LIBP2P_PORT, bridge, authorize: (peerID, overlayIP) => this.authorizePeer(row.networkID, peerID, overlayIP) }, lishScope: row.networkID });
 			entry.network.onPeerCountChange = () => this.deps.onPeerCountChange();
 			entry.network.onBootstrapStatusChange = (id, status) => this.deps.onBootstrapStatusChange(id, status);
 			try {
@@ -260,7 +324,7 @@ export class OverlayNodes {
 			});
 			entry.republishTimer = setInterval(() => {
 				void this.publishState(row.networkID, true);
-				const applied = entry.unapplied ? this.reconfigure(row.networkID) : this.followInfraAddresses(row.networkID);
+				const applied = entry.unapplied ? this.reconfigure(row.networkID) : this.followInfraAddresses(row.networkID).then(() => this.sweepRevokedPeers(row.networkID));
 				void applied.catch(err => console.error(`[Overlay ${row.networkID.slice(0, 8)}] reconfiguration failed: ${err?.message ?? err}`));
 			}, STATE_REPUBLISH_MS);
 			this.running.set(row.networkID, entry);
@@ -403,26 +467,34 @@ export class OverlayNodes {
 		const overlay = row.overlay;
 		const store = this.store(networkID);
 		const incoming = await verifyState(signed, await this.caPublicKey(store, overlay.caCert), networkID, overlay.subnet);
-		const { changed, previous } = await this.lock(networkID).runExclusive(async () => {
+		const { changed, previous, revokes } = await this.lock(networkID).runExclusive(async () => {
+			// Every verified state adds its revocations, whatever its version: a newer one that lacks one (signed on a
+			// device restored from an older backup) does not lift it.
+			const before = await store.readRevocations();
+			const after = mergeRevocations(before, { fingerprints: incoming.revoked, peers: incoming.revokedPeers ?? {} });
+			const revokes = !sameRevocations(before, after);
+			if (revokes) await store.writeJSON('revoked.json', after);
 			const previous = await this.currentState(networkID, overlay);
-			if (previous && incoming.version <= previous.version) return { changed: false, previous };
+			if (previous && incoming.version <= previous.version) return { changed: false, previous, revokes };
 			await store.writeJSON('state.json', signed);
 			this.deps.saveOverlay(networkID, applyState(overlay, incoming));
-			return { changed: true, previous };
+			return { changed: true, previous, revokes };
 		});
 		const held = changed ? incoming : previous!;
 		if (store.has('ca.key')) {
-			const union = [...new Set([...(previous?.revoked ?? []), ...incoming.revoked])];
-			if (union.length > held.revoked.length) {
-				await this.publishNewState(networkID, { lighthouses: held.lighthouses, relays: held.relays, revoked: union });
+			// The founder answers a state that misses revocations it knows with one that has them all.
+			const known = await this.knownRevocations(networkID, overlay);
+			if (!sameRevocations(mergeRevocations({ fingerprints: held.revoked, peers: held.revokedPeers ?? {} }, known), { fingerprints: held.revoked, peers: held.revokedPeers ?? {} })) {
+				await this.publishNewState(networkID, { lighthouses: held.lighthouses, relays: held.relays, revoked: known.fingerprints, revokedPeers: known.peers });
 				return true;
 			}
 		}
 		if (!changed) {
 			// The sender is behind; our newer state reaches it through the topic.
 			if (incoming.version < held.version) void this.publishState(networkID, false);
-			// Stored but never applied (writing the configuration or the reload failed): this copy is the next chance.
-			if (this.running.get(networkID)?.unapplied) await this.reconfigure(networkID);
+			// Stored but never applied (writing the configuration or the reload failed), or an older state that still
+			// carried a revocation this node lacked: this copy is the chance to apply it.
+			if (revokes || this.running.get(networkID)?.unapplied) await this.reconfigure(networkID);
 			return false;
 		}
 		console.log(`[Overlay ${networkID.slice(0, 8)}] accepted network state v${incoming.version} (${incoming.lighthouses.length} lighthouse(s), ${incoming.relays.length} relay(s), ${incoming.revoked.length} revoked)`);
@@ -431,8 +503,9 @@ export class OverlayNodes {
 		await this.publishState(networkID, true);
 		// This message is the only way a revoked member learns why its tunnels went, and every node cuts it off once
 		// configured: give it time to get there first.
-		if (incoming.revoked.some(f => !previous?.revoked.includes(f))) await Bun.sleep(REVOCATION_NOTICE_MS);
+		if (revokes) await Bun.sleep(REVOCATION_NOTICE_MS);
 		await this.reconfigure(networkID);
+		if (revokes) await this.sweepRevokedPeers(networkID);
 		return true;
 	}
 
@@ -444,7 +517,8 @@ export class OverlayNodes {
 		const caKey = await store.readText('ca.key');
 		if (!caKey) throw new Error('only the founder can sign the network state');
 		const current = await this.currentState(networkID, row.overlay);
-		const state: OverlayState = { networkID, version: nextVersion(Math.max(current?.version ?? 0, row.overlay.version)), lighthouses: change.lighthouses, relays: change.relays, revoked: change.revoked };
+		const peers = change.revokedPeers ?? {};
+		const state: OverlayState = { networkID, version: nextVersion(Math.max(current?.version ?? 0, row.overlay.version)), lighthouses: change.lighthouses, relays: change.relays, revoked: change.revoked, ...(Object.keys(peers).length > 0 ? { revokedPeers: peers } : {}) };
 		const signed = await signState(state, caKey);
 		if (!(await this.acceptState(networkID, signed))) throw new Error('the new network state was not accepted');
 		return state;
