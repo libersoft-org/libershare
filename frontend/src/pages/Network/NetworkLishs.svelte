@@ -2,7 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type LishSearchResult, type LISHNetworkConfig } from '@shared';
-	import { getNetworks } from '../../scripts/lishNetwork.ts';
+	import { getUsableNetworks } from '../../scripts/lishNetwork.ts';
 	import { formatSize } from '../../scripts/utils.ts';
 	import { type LishSearchSession } from '../../scripts/lishSearch.svelte.ts';
 	import { networkSummary } from '../../scripts/networks.ts';
@@ -63,7 +63,7 @@
 	let place = $state<string>('');
 	let placeError = $state('');
 	onMount(() => {
-		getNetworks()
+		getUsableNetworks()
 			.then(list => {
 				networks = list.filter(n => n.enabled);
 				const hasPublic = networks.some(n => !n.overlay);

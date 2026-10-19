@@ -27,7 +27,9 @@
 	import DownloadDetailPeer from './DownloadDetailPeer.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
 	import DownloadDetailMove from './DownloadDetailMove.svelte';
-	import { getNetworks } from '../../scripts/lishNetwork.ts';
+	import { getUsableNetworks } from '../../scripts/lishNetwork.ts';
+	import { get } from 'svelte/store';
+	import { privateOnly } from '../../scripts/settings.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { translateError } from '../../scripts/language.ts';
 	import ChoiceDialog from '../../components/Dialog/ChoiceDialog.svelte';
@@ -73,11 +75,11 @@
 	let scopeOptions = $state<Array<{ value: string; label: string; icon?: string }>>([]);
 	let showScopeDialog = $state(false);
 	onMount(() => {
-		getNetworks()
+		getUsableNetworks()
 			.then(nets => {
 				networkNames = new Map(nets.map(n => [n.networkID, n.name]));
 				const protectedNets = nets.filter(n => n.overlay);
-				scopeOptions = protectedNets.length > 0 ? [{ value: '', label: $t('lish.create.sharePublic') }, ...protectedNets.map(n => ({ value: n.networkID, label: n.name, icon: '/img/lock.svg' }))] : [];
+				scopeOptions = protectedNets.length > 0 ? [...(get(privateOnly) ? [] : [{ value: '', label: $t('lish.create.sharePublic') }]), ...protectedNets.map(n => ({ value: n.networkID, label: n.name, icon: '/img/lock.svg' }))] : [];
 			})
 			.catch(() => {});
 	});

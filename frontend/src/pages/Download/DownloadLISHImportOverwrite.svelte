@@ -4,7 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { type ILISH, type LISHNetworkConfig } from '@shared';
 	import { api } from '../../scripts/api.ts';
-	import { getNetworks } from '../../scripts/lishNetwork.ts';
+	import { getUsableNetworks } from '../../scripts/lishNetwork.ts';
 	import ChoiceDialog from '../../components/Dialog/ChoiceDialog.svelte';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import Dialog from '../../components/Dialog/Dialog.svelte';
@@ -81,7 +81,7 @@
 		void (async () => {
 			let nets: LISHNetworkConfig[];
 			try {
-				nets = await getNetworks();
+				nets = await getUsableNetworks();
 			} catch (error) {
 				// Unknown lishnets are no answer to where the LISHs go: taken as none, the import shared them publicly.
 				onError(error);

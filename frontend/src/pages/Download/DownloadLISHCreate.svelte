@@ -8,8 +8,8 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename, compressionExtension, stripCompressionExtension, type CompressionAlgorithm } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
-	import { getNetworks } from '../../scripts/lishNetwork.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, privateOnly } from '../../scripts/settings.ts';
+	import { getUsableNetworks } from '../../scripts/lishNetwork.ts';
 	import { type LISHNetworkConfig } from '@shared';
 
 	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
@@ -187,7 +187,7 @@
 	let protectedNets = $state<LISHNetworkConfig[]>([]);
 	let scope = $state('');
 	onMount(() => {
-		getNetworks()
+		getUsableNetworks()
 			.then(nets => {
 				protectedNets = nets.filter(n => n.overlay);
 				// With no public lishnet in use, sharing publicly is never what the user means.
@@ -428,7 +428,9 @@
 				<div>
 					<div class="label">{$t('lish.create.shareIn')}:</div>
 					<div class="algo-selector">
-						<Button label={$t('lish.create.sharePublic')} position={[0, 12]} active={scope === ''} onConfirm={() => (scope = '')} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{#if !$privateOnly}
+							<Button label={$t('lish.create.sharePublic')} position={[0, 12]} active={scope === ''} onConfirm={() => (scope = '')} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{/if}
 						{#each protectedNets as net, i}
 							<Button icon="/img/lock.svg" label={net.name} position={[i + 1, 12]} active={scope === net.networkID} onConfirm={() => (scope = net.networkID)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
 						{/each}
