@@ -268,6 +268,7 @@ describe('protected lishnet on loopback', () => {
 		await bob.api.overlay.requestAccess(network.networkID, 'Bob');
 		const pending = await until('the renewal reaches the founder', async () => (await founder.api.overlay.listRequests(network.networkID)).find(r => r.renewal && r.name === 'Bob'), 90_000);
 		await bob.api.lishnets.setEnabled(network.networkID, false);
+		await until('bob is offline', async () => !(await bob.api.overlay.status(network.networkID)).running, 30_000);
 		const stateBefore = (await founder.api.overlay.status(network.networkID)).stateVersion;
 		await founder.api.overlay.approve(network.networkID, pending.id, { validUntil: new Date(Date.now() + 2 * 3600_000).toISOString() });
 		const rows = (await founder.api.overlay.listMembers(network.networkID)).filter(m => m.name === 'Bob');
