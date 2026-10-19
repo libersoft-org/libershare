@@ -191,6 +191,15 @@ describe('OverlayNodes network state', () => {
 			answers.set('relay.example.test', '198.51.100.6');
 			await (h.nodes as any).followInfraAddresses(NET);
 			expect(await allowed()).toEqual(['198.51.100.1/32', '198.51.100.6/32']);
+			// The two swap addresses: the same set, but each name's last address changed.
+			answers.set('lighthouse.example.test', '198.51.100.6');
+			answers.set('relay.example.test', '198.51.100.1');
+			await (h.nodes as any).followInfraAddresses(NET);
+			// Then the lighthouse's name fails and the relay moves on: the lighthouse keeps .6, its own last address.
+			answers.set('lighthouse.example.test', null);
+			answers.set('relay.example.test', '198.51.100.7');
+			await (h.nodes as any).followInfraAddresses(NET);
+			expect(await allowed()).toEqual(['198.51.100.6/32', '198.51.100.7/32']);
 		} finally {
 			lookup.mockRestore();
 			await h.cleanup();

@@ -192,7 +192,10 @@ export class OverlayNodes {
 		const entry = this.running.get(networkID);
 		const row = this.deps.getRow(networkID);
 		if (!entry || !row?.overlay) return;
-		const { ips } = await this.resolveInfra(networkID, row.overlay, entry.infraByHost);
+		const { ips, byHost } = await this.resolveInfra(networkID, row.overlay, entry.infraByHost);
+		// Kept even when the whole set did not change (two names that swapped addresses): a later failed lookup falls
+		// back to what each name resolved to last, not to an older pairing.
+		entry.infraByHost = byHost;
 		if (ips.join(',') !== entry.infraIPs.join(',')) await this.reconfigure(networkID);
 	}
 
