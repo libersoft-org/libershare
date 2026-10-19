@@ -1,11 +1,11 @@
 import { Mutex } from 'async-mutex';
-import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { join } from 'node:path';
 import { generateKeyPair, generateKeyPairFromSeed, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { type Socket } from 'node:net';
-import { CodedError, decodeInvite, encodeInvite, ErrorCodes, ipInSubnet, isHostPort, isRevoked, MEMBER_RENEWAL_WINDOW_MS, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayInviteAnswer, type OverlayInviteState, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
+import { CodedError, decodeInvite, encodeInvite, ErrorCodes, ipInSubnet, isHostPort, isOverlayLimit, isRevoked, MEMBER_RENEWAL_WINDOW_MS, mergeRevocations, parseSubnet, subnetAddress, validateAccessRequest, validateOverlayHosts, type LISHNetworkConfig, type LISHOverlayDefinition, type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayInviteAnswer, type OverlayInviteState, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type OverlayRole, type OverlayStatus } from '@shared';
 import { SqliteDatastore } from '../protocol/datastore.ts';
 import { PRIVATE_KEY_PATH, writeIdentityKey } from '../protocol/identity-store.ts';
 import { runOverlayCommand, type CertificateInfo } from './overlay-binary.ts';
@@ -135,9 +135,8 @@ function parseMemberList(text: string, subnet: string): Pick<FounderData, 'nextH
 	if (!Array.isArray(revoked) || revoked.some((f: unknown) => typeof f !== 'string' || !FINGERPRINT.test(f))) throw invalid();
 	const revokedPeers = list.revokedPeers ?? {};
 	if (typeof revokedPeers !== 'object' || revokedPeers === null || Array.isArray(revokedPeers) || Object.entries(revokedPeers).some(([p, at]) => !str(p) || typeof at !== 'string' || Number.isNaN(Date.parse(at)))) throw invalid();
-	const time = (t: unknown): boolean => typeof t === 'string' && !Number.isNaN(Date.parse(t));
 	const limits = list.limits ?? {};
-	if (typeof limits !== 'object' || limits === null || Array.isArray(limits) || Object.entries(limits).some(([p, l]) => !str(p) || !Array.isArray(l) || l.some(e => !Array.isArray(e) || e.length !== 2 || !time(e[0]) || !time(e[1])))) throw invalid();
+	if (typeof limits !== 'object' || limits === null || Array.isArray(limits) || Object.entries(limits).some(([p, l]) => !str(p) || !Array.isArray(l) || !l.every(isOverlayLimit))) throw invalid();
 	// Backups made before lanes know only the founding device's.
 	const lanes = list.lanes ?? [0];
 	if (!Array.isArray(lanes) || lanes.some((l: unknown) => !Number.isInteger(l) || (l as number) < 0)) throw invalid();
@@ -470,8 +469,10 @@ export class OverlayAccess {
 		if (roles.some(r => !ROLES.includes(r))) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'unknown role');
 		const until = opts.validUntil ? new Date(opts.validUntil) : new Date(Date.now() + DEFAULT_MEMBER_DAYS * 86_400_000);
 		if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'validity must end in the future');
-		const bundleMember = await this.founderLock(networkID).runExclusive(async () => {
+		const approved = await this.founderLock(networkID).runExclusive(async () => {
 			const data = await store.readFounder();
+			// A change the new state cannot carry is undone whole: it must not block every later state (a revocation).
+			const before = structuredClone(data);
 			const request = data.requests.find(r => r.id === requestID);
 			if (!request) throw new CodedError(ErrorCodes.OVERLAY_REQUEST_NOT_FOUND, requestID);
 			if (roles.length > 0 && !request.infraAddr) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'an infrastructure role needs the public address the request offers');
@@ -502,15 +503,20 @@ export class OverlayAccess {
 			// every older certificate out, also one another device issued) and after the start of its last approval (whose
 			// limit below must not reach this one). Certificates count whole seconds; a start still ahead is waited for.
 			const known = mergeRevocations(await this.revocations(networkID, overlay), { fingerprints: [], peers: data.revokedPeers ?? {}, ...(data.limits ? { limits: data.limits } : {}) });
-			const earlier = [known.peers[request.peerID], ...(known.limits?.[request.peerID] ?? []).map(l => l[0])].filter((t): t is string => t !== undefined).map(t => Math.floor(Date.parse(t) / 1000) + 1);
+			const limits = known.limits?.[request.peerID] ?? [];
+			const earlier = [known.peers[request.peerID], ...limits.map(l => l[0])].filter((t): t is string => t !== undefined).map(t => Math.floor(Date.parse(t) / 1000) + 1);
 			const after = Math.max(Math.floor((Date.now() - 60_000) / 1000), ...earlier) * 1000;
 			if (after > Date.now()) await Bun.sleep(after - Date.now());
 			const notBefore = new Date(after).toISOString().replace(/\.\d{3}Z$/, 'Z');
 			const cert = await this.issueCertificate(store, request, vpnIP, subnet.bits, ['member', ...roles], notAfter, notBefore);
 			// The newest decision on how long the member stays bounds its older certificates: a longer one, also one another
-			// device holding the CA key issued and this one never saw, ends with this one. They stay valid until then, so a
-			// member offline now still gets this certificate over the lishnet.
-			data.limits = { ...data.limits, [request.peerID]: [...(data.limits?.[request.peerID] ?? []), [cert.notBefore, cert.notAfter]] };
+			// device holding the CA key issued, ends with this one. They stay valid until then, so a member offline now still
+			// gets this certificate over the lishnet. What this device knew of other devices' approvals goes along: their
+			// clocks do not order decisions, so one it did not know of is weighed by its length instead (limitCaps).
+			data.device ??= randomBytes(4).toString('hex');
+			const seen: Record<string, string> = {};
+			for (const l of limits) if (l[2] !== undefined && l[2] !== data.device && (!seen[l[2]] || Date.parse(l[0]) > Date.parse(seen[l[2]]!))) seen[l[2]] = l[0];
+			data.limits = { ...data.limits, [request.peerID]: [...(data.limits?.[request.peerID] ?? []), [cert.notBefore, cert.notAfter, data.device, seen]] };
 			const member: OverlayMember = { name: request.name, peerID: request.peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false };
 			data.members.push(member);
 			data.requests = data.requests.filter(r => r.id !== requestID);
@@ -519,33 +525,26 @@ export class OverlayAccess {
 			const host: LISHOverlayHost = { vpnIP, addr: request.infraAddr ?? '', peerID: request.peerID };
 			const others = (list: LISHOverlayHost[]): LISHOverlayHost[] => list.filter(h => h.vpnIP !== host.vpnIP);
 			const hostsChange = roles.length > 0 || current.some(m => m.roles.length > 0);
-			await this.publishLocked(networkID, o => (hostsChange ? { lighthouses: roles.includes('lighthouse') ? [...others(o.lighthouses), host] : others(o.lighthouses), relays: roles.includes('relay') ? [...others(o.relays), host] : others(o.relays) } : { lighthouses: o.lighthouses, relays: o.relays }), []);
-			return { member, cert: cert.cert, invite: request.invite, renewal: request.renewal ? request : undefined };
+			try {
+				await this.publishLocked(networkID, o => (hostsChange ? { lighthouses: roles.includes('lighthouse') ? [...others(o.lighthouses), host] : others(o.lighthouses), relays: roles.includes('relay') ? [...others(o.relays), host] : others(o.relays) } : { lighthouses: o.lighthouses, relays: o.relays }), []);
+			} catch (err) {
+				await store.writeJSON('founder.json', before);
+				throw err;
+			}
+			const state = await store.readState();
+			const bundle: OverlayCertificateBundle = { type: 'lish-overlay-certificate', networkID, certificate: cert.cert, ...(state ? { state } : {}) };
+			// Recorded with the approval, under the same lock: a request handed in again meanwhile finds it decided.
+			// One that came through an invite gets its certificate back the same way, when the node asks next.
+			const invite = request.invite ? data.invites?.find(i => i.id === request.invite) : undefined;
+			if (invite) invite.bundle = bundle;
+			// A renewal handed in over the lishnet gets its certificate over the lishnet: now, and again every minute for a while.
+			const decision = request.renewal ? await this.decideRenewal(networkID, data, request, bundle) : null;
+			if (invite || decision) await store.writeJSON('founder.json', data);
+			return { bundle, decision, peerID: request.peerID };
 		});
-		const state = await store.readState();
-		const bundle: OverlayCertificateBundle = { type: 'lish-overlay-certificate', networkID, certificate: bundleMember.cert, ...(state ? { state } : {}) };
-		// A request that came through an invite gets its certificate back the same way, when the node asks next.
-		if (bundleMember.invite)
-			await this.founderLock(networkID).runExclusive(async () => {
-				const data = await store.readFounder();
-				const invite = data.invites?.find(i => i.id === bundleMember.invite);
-				if (!invite) return;
-				invite.bundle = bundle;
-				await store.writeJSON('founder.json', data);
-			});
-		// A renewal handed in over the lishnet gets its certificate over the lishnet: now, and again every minute for a while.
-		const renewal = bundleMember.renewal;
-		if (renewal) {
-			const decision = await this.founderLock(networkID).runExclusive(async () => {
-				const data = await store.readFounder();
-				const made = await this.decideRenewal(networkID, data, renewal, bundle);
-				await store.writeJSON('founder.json', data);
-				return made;
-			});
-			await this.sendDecision(networkID, renewal.peerID, decision);
-		}
+		if (approved.decision) await this.sendDecision(networkID, approved.peerID, approved.decision);
 		this.deps.emit('overlay:members', { networkID });
-		return bundle;
+		return approved.bundle;
 	}
 
 	/**

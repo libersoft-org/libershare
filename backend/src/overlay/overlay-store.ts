@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CodedError, ErrorCodes, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type SignedOverlayState } from '@shared';
+import { CodedError, ErrorCodes, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayLimit, type OverlayMember, type OverlayPendingRequest, type OverlayRevocations, type SignedOverlayState } from '@shared';
 
 /** Files of one protected lishnet. Keys are written once, owner-readable only, and never leave this directory. */
 export type OverlayFile =
@@ -95,7 +95,14 @@ export interface FounderData {
 	/** Members revoked by peer ID ({@link OverlayRevocations.peers}), kept the same way. */
 	revokedPeers?: Record<string, string>;
 	/** Limits every approval puts on the member's older certificates ({@link OverlayRevocations.limits}). */
-	limits?: Record<string, Array<[string, string]>>;
+	limits?: Record<string, OverlayLimit[]>;
+	/** This device's ID in the limits it signs ({@link OverlayLimit}); every device holding the CA key has its own. */
+	device?: string;
+	/**
+	 * The lanes plain backups hand to the device restoring them ({@link OverlayAccess.exportCA}): taken once, so making
+	 * backups again and again does not use up this device's addresses.
+	 */
+	backupRange?: [number, number];
 	/**
 	 * The block of addresses this device hands out (256 per lane): 0 for the founding device, another one for each
 	 * device restored from a backup, so two devices holding the CA key do not give two members one address.

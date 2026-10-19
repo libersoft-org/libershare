@@ -2,7 +2,7 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compactRevocations, isRevoked } from '@shared';
+import { compactRevocations, isRevoked, MAX_LIMITS_PER_MEMBER, type OverlayLimit, type OverlayRevocations } from '@shared';
 import { OverlayAccess } from '../../../src/overlay/overlay-access.ts';
 import { OverlayStore } from '../../../src/overlay/overlay-store.ts';
 
@@ -13,8 +13,9 @@ const at = (ms: number): string => new Date(Math.floor(ms / 1000) * 1000).toISOS
 
 /** Every approval limits the member's older certificates to the new one's end ({@link OverlayRevocations.limits}). */
 describe('changing how long a member stays', () => {
-	async function setup(notAfter: number) {
+	async function setup(notAfter: number, known: Partial<OverlayRevocations> = {}) {
 		const dir = await mkdtemp(join(tmpdir(), 'overlay-shorten-'));
+		const control = { failPublish: false };
 		const issued: Array<{ notBefore: string; notAfter: string }> = [];
 		const issue = spyOn(OverlayAccess.prototype as any, 'issueCertificate').mockImplementation(async (...args: unknown[]) => {
 			const cert = { cert: 'crt', fingerprint: String(issued.length).repeat(64), notBefore: args[6] as string, notAfter: args[5] as string };
@@ -24,7 +25,16 @@ describe('changing how long a member stays', () => {
 		const published: any[] = [];
 		const peerID = '1'.repeat(46);
 		const access = new OverlayAccess({
-			nodes: { store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async (_id: string, change: unknown) => void published.push(change) } as any,
+			nodes: {
+				store: (id: string) => new OverlayStore(dir, id),
+				ownCertificate: async () => null,
+				currentState: async () => null,
+				knownRevocations: async () => ({ fingerprints: [], peers: {}, ...known }),
+				publishNewState: async (_id: string, change: unknown) => {
+					if (control.failPublish) throw new Error('the state is too large to sign');
+					published.push(change);
+				},
+			} as any,
 			getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
 			addNetwork: async () => {},
 			listOverlayIDs: () => [],
@@ -40,7 +50,7 @@ describe('changing how long a member stays', () => {
 			issue.mockRestore();
 			await rm(dir, { recursive: true, force: true });
 		};
-		return { store, published, issued, peerID, approve, done };
+		return { store, published, issued, peerID, approve, done, control };
 	}
 
 	// A shorter approval revoked the member at once: offline, it could no longer reach the lishnet to fetch the new certificate.
@@ -51,7 +61,7 @@ describe('changing how long a member stays', () => {
 			const data = await f.store.readFounder();
 			expect(data.revokedPeers).toBeUndefined();
 			expect(data.members[0]!.revoked).toBe(false);
-			expect(data.limits?.[f.peerID]).toEqual([[f.issued[0]!.notBefore, f.issued[0]!.notAfter]]);
+			expect(data.limits?.[f.peerID]).toEqual([[f.issued[0]!.notBefore, f.issued[0]!.notAfter, data.device!, {}]]);
 			expect(f.published[f.published.length - 1]?.limits).toEqual(data.limits);
 			const revocations = { fingerprints: [], peers: {}, limits: data.limits! };
 			const older = { name: f.peerID, fingerprint: 'a'.repeat(64), notBefore: at(Date.now() - 30 * DAY) };
@@ -93,6 +103,57 @@ describe('changing how long a member stays', () => {
 			await f.done();
 		}
 	});
+
+	// The 65th approval was stored with its limit before the state carrying it was refused; every later state, a
+	// revocation of another member too, was then refused the same way.
+	it('leaves nothing behind when the state an approval needs cannot be signed', async () => {
+		const f = await setup(Date.now() + DAY);
+		try {
+			f.control.failPublish = true;
+			await expect(f.approve(30)).rejects.toThrow('too large');
+			const data = await f.store.readFounder();
+			expect(data.members).toHaveLength(1);
+			expect(data.limits).toBeUndefined();
+			// The request waits for a decision again.
+			expect(data.requests).toHaveLength(1);
+			f.control.failPublish = false;
+			await f.approve(30);
+			expect((await f.store.readFounder()).members).toHaveLength(2);
+		} finally {
+			await f.done();
+		}
+	});
+
+	// Device A did not know of device B's longer approval and its clock ran behind: its newer, shorter decision got an
+	// earlier start and did not reach B's certificate, so the member kept access past the end A set.
+	it('records what it knew of other devices, and their longer certificate ends with its shorter decision', async () => {
+		const now = Date.now();
+		const fromDeviceB = { name: '1'.repeat(46), fingerprint: 'e'.repeat(64), notBefore: at(now + 3_600_000) };
+		const deviceB: OverlayLimit = [fromDeviceB.notBefore, at(now + 300 * DAY), 'bbbbbbbb', {}];
+		const deviceC: OverlayLimit = [at(now - DAY), at(now + 300 * DAY), 'cccccccc', {}];
+		const f = await setup(now + DAY, { limits: { [fromDeviceB.name]: [deviceC] } });
+		try {
+			await f.approve(7);
+			const data = await f.store.readFounder();
+			const own = data.limits![f.peerID]!;
+			const mine = own[own.length - 1]!;
+			expect(mine[3]).toEqual({ cccccccc: deviceC[0] });
+			// B's approval reaches this device later: it started after this one by B's clock, unaware of it.
+			const revocations = { fingerprints: [], peers: {}, limits: { [f.peerID]: [...data.limits![f.peerID]!, deviceB] } };
+			expect(Date.parse(fromDeviceB.notBefore)).toBeGreaterThan(Date.parse(mine[0]));
+			expect(isRevoked(revocations, fromDeviceB, now + 6 * DAY)).toBe(false);
+			expect(isRevoked(revocations, fromDeviceB, now + 8 * DAY)).toBe(true);
+			expect(isRevoked(compactRevocations(revocations, now + 8 * DAY), fromDeviceB, now + 8 * DAY)).toBe(true);
+			// A later renewal by B that knew of this decision is not ended by it.
+			const renewed: OverlayLimit = [at(now + 2 * DAY), at(now + 400 * DAY), 'bbbbbbbb', { [data.device!]: mine[0] }];
+			const later = { ...revocations, limits: { [f.peerID]: [...revocations.limits[f.peerID]!, renewed] } };
+			expect(isRevoked(later, { name: f.peerID, fingerprint: 'd'.repeat(64), notBefore: renewed[0] }, now + 8 * DAY)).toBe(false);
+			// This device's own certificate is not ended by B's longer one.
+			expect(isRevoked(revocations, { name: f.peerID, fingerprint: '0'.repeat(64), notBefore: mine[0] }, now + 6 * DAY)).toBe(false);
+		} finally {
+			await f.done();
+		}
+	});
 });
 
 describe('compacted revocations', () => {
@@ -117,6 +178,21 @@ describe('compacted revocations', () => {
 				const cert = { name: peer, fingerprint: 'a'.repeat(64), notBefore };
 				expect(isRevoked(compact, cert, later)).toBe(isRevoked(r, cert, later));
 			}
+	});
+
+	// Each approval added a limit and states took 64 per member: the 65th approval made a state no node accepted.
+	it('stay within the limits a state may carry per member, ending no certificate later', () => {
+		const now = Date.parse('2026-06-01T00:00:00Z');
+		const peer = '1'.repeat(46);
+		const limits: OverlayLimit[] = Array.from({ length: 70 }, (_, i) => [at(now - (100 - i) * 60_000), at(now + (10 + i) * DAY), 'aaaaaaaa', {}]);
+		// An older certificate of another device, and two the approvals issued.
+		const certs = [{ notBefore: at(now - 200 * 60_000) }, { notBefore: limits[0]![0] }, { notBefore: limits[69]![0] }].map(c => ({ ...c, name: peer, fingerprint: 'a'.repeat(64) }));
+		const full = { fingerprints: [], peers: {}, limits: { [peer]: limits } };
+		const compact = compactRevocations(full, now);
+		expect(compact.limits![peer]!.length).toBeLessThanOrEqual(MAX_LIMITS_PER_MEMBER);
+		for (const cert of certs) for (let day = 0; day <= 90; day++) if (isRevoked(full, cert, now + day * DAY)) expect(isRevoked(compact, cert, now + day * DAY)).toBe(true);
+		// The newest certificate still lasts to its own end.
+		expect(isRevoked(compact, certs[2]!, now + 78 * DAY)).toBe(false);
 	});
 });
 
