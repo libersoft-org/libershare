@@ -291,7 +291,7 @@
 						<Input bind:value={infraAddr} label={$t('settings.lishNetwork.protected.infraAddr')} placeholder="203.0.113.7:4242" position={[0, 2]} />
 					</div>
 					<ButtonBar basePosition={[0, 3]}>
-						<Button icon="/img/key.svg" label={$t(`settings.lishNetwork.protected.${status.certificate && !founder ? 'requestRenewal' : 'requestAccess'}`)} disabled={busy} onConfirm={requestAccess} />
+						<Button icon="/img/key.svg" label={$t(`settings.lishNetwork.protected.${inLishnet ? 'requestRenewal' : 'requestAccess'}`)} disabled={busy} onConfirm={requestAccess} />
 					</ButtonBar>
 				{:else if !founder}
 					<!-- An invite or a running member carries the request and the certificate by itself; the JSON is for passing them by hand. -->
