@@ -270,6 +270,30 @@ test('a later start from a .lish file outranks an older switch-off when the down
 	}
 });
 
+/** The scope moved from lishnet A to B while a start was reading its manifest: the start went on and asked A. */
+test('a start under way when the scope moves gives up and runs in the new lishnet', async () => {
+	const w = world('moved-while-starting', ['net-a']);
+	let rehoming: Promise<void> | undefined;
+	const original = Downloader.prototype.initFromManifest;
+	// The scope moves (and the move is asked for) while the first start reads its manifest.
+	const read = spyOn(Downloader.prototype, 'initFromManifest').mockImplementation(async function (this: Downloader, lish: any) {
+		if (!rehoming) {
+			initLISHScopes(new Map([['moved-while-starting', ['net-b']]]), () => {});
+			rehoming = w.handlers.rehomeDownload('moved-while-starting');
+		}
+		return original.call(this, lish);
+	});
+	try {
+		await w.handlers.enableDownload({ lishID: 'moved-while-starting' });
+		await rehoming;
+		await w.started(1);
+		expect(w.used.map(u => u.node)).toEqual([w.nodes.get('net-b')]);
+	} finally {
+		read.mockRestore();
+		await w.cleanup();
+	}
+});
+
 /** A protected lishnet joined again runs on a new node; the download held on to the stopped one. */
 test("a download follows its protected lishnet's new node", async () => {
 	const w = world('new-node', ['net-b']);

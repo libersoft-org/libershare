@@ -601,6 +601,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// Withdrawal takes precedence over suspension, which would otherwise revive a deleted download.
 		if ((requestEpoch.get(lishID) ?? 0) !== prepared.scheduledAt || (prepared.requireEnabled && !downloadEnabledLishs.has(lishID))) return 'download withdrawn while starting';
 		if (disabled) return undefined;
+		// The LISH's scope moved while the start read its manifest: it would ask the old lishnet. The move waits for this
+		// start and then starts it again where it belongs.
+		if (!onRightNode(lishID, prepared.downloader)) return 'its scope moved while starting';
 		const networkIDs = prepared.downloader.getNetworkIDs();
 		if (!networkIDs.some(id => networks.isJoined(id))) {
 			const original = prepared.downloader.getOriginalNetworkIDs();
@@ -667,9 +670,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * node), keeping it on or off as it was. A download already in place is left alone.
 	 */
 	async function rehomeDownload(lishID: string): Promise<void> {
+		// A start still reading its manifest is not active yet; it gives up when the scope moved, and is started below.
+		await pendingDownloads.get(lishID)?.catch(() => {});
 		const dl = activeDownloaders.get(lishID);
 		const suspended = networkSuspended.has(lishID);
-		if (dl ? onRightNode(lishID, dl) : !suspended) return;
+		if (dl ? onRightNode(lishID, dl) : !suspended && !downloadEnabledLishs.has(lishID)) return;
 		// A download started with `download <lishPath>` runs without the stored "enabled" flag: running counts too.
 		const wanted = downloadEnabledLishs.has(lishID) || suspended || (dl !== undefined && !dl.isDisabled());
 		if (dl) {
