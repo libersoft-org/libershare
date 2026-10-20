@@ -110,6 +110,14 @@ export interface OverlayRevocations {
 const sameLimit = (x: OverlayLimit, y: OverlayLimit): boolean => JSON.stringify(x) === JSON.stringify(y);
 
 /**
+ * Whether a limit is a marker {@link compactRevocations} leaves of a device's decisions that ended: `[at, at, device, {}]`,
+ * the start of the newest. Every certificate of the member not issued knowing of it is revoked.
+ */
+const isMarker = (l: OverlayLimit): boolean => l[0] === l[1];
+/** Whether a limit has ended at `now`; a marker ended when it was made, whatever this node's clock says. */
+const ended = (l: OverlayLimit, now: number): boolean => isMarker(l) || Date.parse(l[1]) <= now;
+
+/**
  * Whether the approval behind `l` knew of the one behind `e`. One device orders its own approvals by their start (each
  * starts after every one it knows); across devices only what `l`'s device had seen counts — their clocks may differ.
  */
@@ -157,9 +165,10 @@ function mergeLimits(older: OverlayLimit, newer: OverlayLimit): OverlayLimit {
 }
 
 /**
- * The same revocations in their smallest form at `now`: a limit whose `until` has passed revokes, from now on, every
- * certificate valid from before its `before` — a revocation of the member at that time — unless it also ends a newer
- * certificate (of a device that did not know of it), and a limit that ends nothing not revoked already goes. Past
+ * The same revocations in their smallest form at `now`: the limits of one device whose `until` has passed are one marker
+ * of the newest ({@link isMarker}); a limit of no device whose `until` has passed revokes, from now on, every certificate
+ * valid from before its `before` — a revocation of the member at that time — unless it also ends a newer certificate
+ * (of a device that did not know of it), and a limit that ends nothing not revoked already goes. Past
  * {@link MAX_LIMITS_PER_MEMBER} the oldest ones are merged ({@link mergeLimits}). States signed with it stay small and
  * valid; it holds the same for any later time.
  */
@@ -167,11 +176,19 @@ export function compactRevocations(r: OverlayRevocations, now: number = Date.now
 	const peers = { ...r.peers };
 	const after = (t: string, peerID: string): boolean => !peers[peerID] || Date.parse(t) > Date.parse(peers[peerID]!);
 	/** Certificates still in force `l` ends that its start alone does not cover: of approvals that did not know of it. */
-	const newerCapped = (l: OverlayLimit, list: OverlayLimit[], peerID: string): boolean => list.some(e => e !== l && Date.parse(e[1]) > now && Date.parse(e[0]) >= Date.parse(l[0]) && after(e[0], peerID) && limitCaps(l, e));
-	for (const [peerID, list] of Object.entries(r.limits ?? {})) for (const l of list) if (Date.parse(l[1]) <= now && !newerCapped(l, list, peerID) && after(l[0], peerID)) peers[peerID] = l[0];
+	const newerCapped = (l: OverlayLimit, list: OverlayLimit[], peerID: string): boolean => list.some(e => e !== l && !ended(e, now) && Date.parse(e[0]) >= Date.parse(l[0]) && after(e[0], peerID) && limitCaps(l, e));
+	// A device's decision that ended stays one ({@link isMarker}): as a revocation by time, a certificate another device
+	// issued unaware of it, with a later start by its clock, would outlast it once it reaches this node.
+	const byDevice = (l: OverlayLimit): boolean => l[2] !== undefined && ended(l, now);
+	for (const [peerID, list] of Object.entries(r.limits ?? {})) for (const l of list) if (!byDevice(l) && ended(l, now) && !newerCapped(l, list, peerID) && after(l[0], peerID)) peers[peerID] = l[0];
 	const limits: Record<string, OverlayLimit[]> = {};
 	for (const [peerID, list] of Object.entries(r.limits ?? {})) {
-		const kept = list.filter(l => (Date.parse(l[1]) > now && after(l[0], peerID)) || newerCapped(l, list, peerID)).sort((x, y) => Date.parse(x[0]) - Date.parse(y[0]) || JSON.stringify(x).localeCompare(JSON.stringify(y)));
+		// Of one device's decisions that ended the newest says it all: a certificate not issued knowing of an older one
+		// did not know of the newest either.
+		const markers: Record<string, string> = {};
+		for (const l of list.filter(byDevice)) if (!markers[l[2]!] || Date.parse(l[0]) > Date.parse(markers[l[2]!]!)) markers[l[2]!] = l[0];
+		const open = list.filter(l => !byDevice(l) && ((!ended(l, now) && after(l[0], peerID)) || newerCapped(l, list, peerID)));
+		const kept = [...open, ...Object.entries(markers).map(([device, at]): OverlayLimit => [at, at, device, {}])].sort((x, y) => Date.parse(x[0]) - Date.parse(y[0]) || JSON.stringify(x).localeCompare(JSON.stringify(y)));
 		while (kept.length > MAX_LIMITS_PER_MEMBER) kept.splice(0, 2, mergeLimits(kept[0]!, kept[1]!));
 		if (kept.length > 0) limits[peerID] = kept;
 	}
@@ -182,14 +199,15 @@ export function compactRevocations(r: OverlayRevocations, now: number = Date.now
 
 /** The earliest end of a limit still ahead of `now`: when a certificate in use may next become revoked. */
 export function nextLimitEnd(r: OverlayRevocations, now: number = Date.now()): number | null {
-	const ends = Object.values(r.limits ?? {}).flatMap(list => list.map(l => Date.parse(l[1])).filter(t => t > now));
+	const ends = Object.values(r.limits ?? {}).flatMap(list => list.filter(l => !isMarker(l)).map(l => Date.parse(l[1])).filter(t => t > now));
 	return ends.length > 0 ? Math.min(...ends) : null;
 }
 
 /**
  * Whether a certificate is revoked: by its fingerprint, as a member's certificate issued before the member was
- * revoked, or as one a limit of another approval ends ({@link limitCaps}) at an end that has passed. A certificate
- * whose own approval no limit records anymore counts by its start: ended by every approval that started later.
+ * revoked, as one a limit of another approval ends ({@link limitCaps}) at an end that has passed, or as one not issued
+ * knowing of a marker ({@link isMarker}). A certificate whose own approval no limit records (yet) counts by its start:
+ * ended by every approval that started later.
  */
 export function isRevoked(revocations: OverlayRevocations, cert: { name: string; fingerprint: string; notBefore: string }, now: number = Date.now()): boolean {
 	if (revocations.fingerprints.includes(cert.fingerprint)) return true;
@@ -199,7 +217,7 @@ export function isRevoked(revocations: OverlayRevocations, cert: { name: string;
 	const list = revocations.limits?.[cert.name] ?? [];
 	// Limits signed before they carried a fingerprint are found by their start.
 	const own = list.find(l => l[4] === cert.fingerprint) ?? list.find(l => l[4] === undefined && Date.parse(l[0]) === from);
-	return list.some(l => l !== own && now >= Date.parse(l[1]) && (own ? limitCaps(l, own) : from < Date.parse(l[0])));
+	return list.some(l => l !== own && ended(l, now) && (own ? (isMarker(l) ? !knows(own, l) : limitCaps(l, own)) : from < Date.parse(l[0])));
 }
 
 /** An {@link OverlayState} as JSON with an ed25519 signature (hex) by the lishnet's CA key. */

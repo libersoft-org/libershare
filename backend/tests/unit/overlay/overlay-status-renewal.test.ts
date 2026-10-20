@@ -2,7 +2,7 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compactRevocations, isRevoked, MAX_LIMITS_PER_MEMBER, type OverlayLimit, type OverlayRevocations } from '@shared';
+import { compactRevocations, isRevoked, MAX_LIMITS_PER_MEMBER, mergeRevocations, type OverlayLimit, type OverlayRevocations } from '@shared';
 import { OverlayAccess } from '../../../src/overlay/overlay-access.ts';
 import { OverlayStore } from '../../../src/overlay/overlay-store.ts';
 
@@ -194,6 +194,24 @@ describe('compacted revocations', () => {
 				const cert = { name: peer, fingerprint: 'a'.repeat(64), notBefore };
 				expect(isRevoked(compact, cert, later)).toBe(isRevoked(r, cert, later));
 			}
+	});
+
+	// Device A's 7-day limit ended and became a revocation by time; device B's 100-day certificate, issued unaware of it
+	// a second later by B's clock, reached the node after that and was let in.
+	it('keep a decision that ended for a certificate of another device that arrives later', () => {
+		const now = Date.parse('2026-06-01T00:00:00Z');
+		const peer = '1'.repeat(46);
+		const a: OverlayLimit = [at(now), at(now + 7 * DAY), 'aaaaaaaa', {}, 'a'.repeat(64)];
+		const b: OverlayLimit = [at(now + 1000), at(now + 100 * DAY), 'bbbbbbbb', {}, 'b'.repeat(64)];
+		const compact = compactRevocations({ fingerprints: [], peers: {}, limits: { [peer]: [a] } }, now + 8 * DAY);
+		const late = mergeRevocations(compact, { fingerprints: [], peers: {}, limits: { [peer]: [b] } });
+		const cert = { name: peer, fingerprint: 'b'.repeat(64), notBefore: b[0] };
+		expect(isRevoked(late, cert, now + 8 * DAY)).toBe(true);
+		expect(isRevoked(compactRevocations(late, now + 8 * DAY), cert, now + 8 * DAY)).toBe(true);
+		// A renewal by B that knew of A's decision is not ended by it.
+		const renewed: OverlayLimit = [at(now + 2 * DAY), at(now + 200 * DAY), 'bbbbbbbb', { aaaaaaaa: a[0] }, 'c'.repeat(64)];
+		const known = mergeRevocations(late, { fingerprints: [], peers: {}, limits: { [peer]: [renewed] } });
+		expect(isRevoked(known, { name: peer, fingerprint: 'c'.repeat(64), notBefore: renewed[0] }, now + 8 * DAY)).toBe(false);
 	});
 
 	// Each approval added a limit and states took 64 per member: the 65th approval made a state no node accepted.
