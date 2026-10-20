@@ -781,7 +781,14 @@ export class OverlayAccess {
 			for (const m of node) m.revoked = true;
 			// The member itself, not only the certificates this device issued: one another device holding the CA key
 			// issued (a renewal after a restore) is revoked too, as is every certificate of the node issued before now.
-			if (member) data.revokedPeers = { ...data.revokedPeers, [member.peerID]: new Date().toISOString() };
+			// As a marker of this device too: a certificate another device issued unaware of the revocation is revoked
+			// however far its clock is ahead of this one's (isMarker in the shared overlay types).
+			if (member) {
+				const at = new Date().toISOString();
+				data.revokedPeers = { ...data.revokedPeers, [member.peerID]: at };
+				data.device ??= randomBytes(4).toString('hex');
+				data.limits = { ...data.limits, [member.peerID]: [...(data.limits?.[member.peerID] ?? []), [at, at, data.device, {}]] };
+			}
 			if (member) await store.writeJSON('founder.json', data);
 			const keep = (list: LISHOverlayHost[]): LISHOverlayHost[] => (member ? list.filter(h => h.vpnIP !== member.vpnIP || h.peerID !== member.peerID) : list);
 			await this.publishLocked(networkID, o => ({ lighthouses: keep(o.lighthouses), relays: keep(o.relays) }), [fingerprint, ...node.map(m => m.fingerprint)]);

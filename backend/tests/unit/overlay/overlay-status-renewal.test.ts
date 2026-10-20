@@ -156,6 +156,40 @@ describe('changing how long a member stays', () => {
 	});
 });
 
+/** Device A revoked a member with its clock behind: device B's certificate, issued unaware of it, started after the revocation by B's clock and stayed valid. */
+describe('revoking a member', () => {
+	it('revokes a certificate another device issued unaware of it, whatever its clock', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'overlay-revoke-'));
+		const store = new OverlayStore(dir, NET);
+		const peerID = '1'.repeat(46);
+		const access = new OverlayAccess({
+			nodes: { store: (id: string) => new OverlayStore(dir, id), ownCertificate: async () => null, currentState: async () => null, knownRevocations: async () => ({ fingerprints: [], peers: {} }), publishNewState: async () => {} } as any,
+			getRow: () => ({ networkID: NET, name: 'n', description: '', bootstrapPeers: [], enabled: true, created: '', overlay: { type: 'nebula', caCert: 'ca', subnet: '100.64.0.0/16', lighthouses: [], relays: [], lanDirect: false, version: 0 } }),
+			addNetwork: async () => {},
+			listOverlayIDs: () => [],
+			refresh: async () => {},
+			emit: () => {},
+		});
+		try {
+			await store.ensureDir();
+			await store.writeText('ca.key', 'key');
+			await store.writeJSON('founder.json', { nextHost: 2, lane: 0, members: [{ name: 'm', peerID, vpnIP: '100.64.0.7', roles: [], notAfter: new Date(Date.now() + DAY).toISOString(), fingerprint: 'a'.repeat(64), issued: '', revoked: false }], requests: [] });
+			await access.revoke(NET, 'a'.repeat(64));
+			const data = await store.readFounder();
+			const fromDeviceB: OverlayLimit = [at(Date.now() + 120_000), at(Date.now() + 100 * DAY), 'bbbbbbbb', {}, 'e'.repeat(64)];
+			const revocations = { fingerprints: [], peers: data.revokedPeers ?? {}, limits: { [peerID]: [...(data.limits?.[peerID] ?? []), fromDeviceB] } };
+			const cert = { name: peerID, fingerprint: 'e'.repeat(64), notBefore: fromDeviceB[0] };
+			expect(isRevoked(revocations, cert)).toBe(true);
+			expect(isRevoked(compactRevocations(revocations), cert)).toBe(true);
+			// Approved again by B knowing of the revocation, it is not.
+			const renewed: OverlayLimit = [at(Date.now() + 180_000), at(Date.now() + 100 * DAY), 'bbbbbbbb', { [data.device!]: data.limits![peerID]![0]![0] }, 'f'.repeat(64)];
+			expect(isRevoked({ ...revocations, limits: { [peerID]: [...revocations.limits[peerID]!, renewed] } }, { name: peerID, fingerprint: 'f'.repeat(64), notBefore: renewed[0] })).toBe(false);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 /** Two devices unaware of each other approved one member in the same second: the longer certificate took the shorter approval for its own, and outlasted it. */
 describe('certificates of two devices starting in the same second', () => {
 	it('end with the shorter of the two approvals', () => {
