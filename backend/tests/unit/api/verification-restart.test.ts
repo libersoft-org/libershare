@@ -200,7 +200,17 @@ it('an explicit stop-all still removes the preserved verification queue', async 
 it('real transfer restoration waits for verification and retains download intent after a failed restart', async () => {
 	const f = await fixture();
 	const node = { pauseLISHProtocolHandlersAndDrain: async () => {}, resumeLISHProtocolHandlers: () => {}, onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true };
-	const networks = { getNetwork: () => node, getRunningNetwork: () => node, getEnabled: () => [{ networkID: 'network-a' }], isJoined: (id: string) => id === 'network-a' } as never;
+	const networks = {
+		getNetwork: () => node,
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
+		getRunningNetwork: () => node,
+		getEnabled: () => [{ networkID: 'network-a' }],
+		isJoined: (id: string) => id === 'network-a',
+	} as never;
 	const transferEvents: Array<{ event: string; lishID: string; busy: string | undefined }> = [];
 	const transfer = initTransferHandlers(
 		networks,

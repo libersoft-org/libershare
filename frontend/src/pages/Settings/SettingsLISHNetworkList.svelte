@@ -7,7 +7,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { navigateTo } from '../../scripts/navigation.ts';
-	import { type LISHNetworkConfig, type NetworkNodeInfo } from '@shared';
+	import { type LISHNetworkConfig, type NetworkNodeInfo, type OverlayStatus } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { getNetworks, deleteNetwork as deleteNetworkFromAPI, updateNetwork as updateNetworkFromAPI, addNetwork as addNetworkFromAPI, formDataToNetwork, replaceNetworks, setNetworkEnabled, type NetworkFormData } from '../../scripts/lishNetwork.ts';
 	import { peerCounts, subscribePeerCounts, unsubscribePeerCounts, bootstrapStatuses, subscribeBootstrapStatuses, unsubscribeBootstrapStatuses, networkMeshStates, type MeshState } from '../../scripts/networks.ts';
@@ -22,6 +22,9 @@
 	import LISHNetworkExportAll from './SettingsLISHNetworkExportAll.svelte';
 	import LISHNetworkPublic from './SettingsLISHNetworkPublic.svelte';
 	import LISHNetworkBootstrap from './SettingsLISHNetworkPeers.svelte';
+	import LISHNetworkProtectedCreate from './SettingsLISHNetworkProtectedCreate.svelte';
+	import LISHNetworkAccess from './SettingsLISHNetworkAccess.svelte';
+	import LISHNetworkInvite from './SettingsLISHNetworkInvite.svelte';
 	import NodeInfoRow from '../../components/NodeInfo/NodeInfoRow.svelte';
 	interface Props {
 		areaID: string;
@@ -58,6 +61,42 @@
 	const connectSubPage = createSubPage(navHandle, () => areaID);
 	const bootstrapSubPage = createSubPage(navHandle, () => areaID);
 	let bootstrapNetwork = $state<LISHNetworkConfig | null>(null);
+	const protectedCreateSubPage = createSubPage(navHandle, () => areaID);
+	const accessSubPage = createSubPage(navHandle, () => areaID);
+	const inviteSubPage = createSubPage(navHandle, () => areaID);
+	let accessNetwork = $state<LISHNetworkConfig | null>(null);
+
+	function openProtectedCreate(): void {
+		protectedCreateSubPage.enter($t('settings.lishNetwork.protected.createTitle'), () => void protectedCreateSubPage.exit());
+	}
+
+	async function handleProtectedCreated(network: LISHNetworkConfig): Promise<void> {
+		await protectedCreateSubPage.exit();
+		await loadNetworks();
+		openAccess(networks.find(n => n.networkID === network.networkID) ?? network);
+	}
+
+	function openInvite(): void {
+		inviteSubPage.enter($t('settings.lishNetwork.protected.joinByInvite'), () => void inviteSubPage.exit());
+	}
+
+	async function handleInviteJoined(status: OverlayStatus): Promise<void> {
+		await inviteSubPage.exit();
+		await loadNetworks();
+		const network = networks.find(n => n.networkID === status.networkID);
+		if (network) openAccess(network);
+	}
+
+	function openAccess(network: LISHNetworkConfig): void {
+		accessNetwork = network;
+		accessSubPage.enter(`${network.name} - ${$t('settings.lishNetwork.protected.access')}`, () => void closeAccess());
+	}
+
+	async function closeAccess(): Promise<void> {
+		accessNetwork = null;
+		await accessSubPage.exit();
+		await loadNetworks();
+	}
 
 	function openBootstrap(network: LISHNetworkConfig): void {
 		bootstrapNetwork = network;
@@ -190,7 +229,8 @@
 			// Update existing
 			await updateNetworkFromAPI(network);
 			const index = networks.findIndex(n => n.networkID === editingNetwork!.networkID);
-			if (index !== -1) networks[index] = network;
+			// Merged, not replaced: the form holds no overlay, and a renamed protected lishnet lost its lock and access button.
+			if (index !== -1) networks[index] = { ...networks[index]!, ...network };
 			await closeAddEdit();
 		} else {
 			// Add new - backend generates networkID and key if empty. Detect the new
@@ -293,6 +333,18 @@
 		color: var(--primary-foreground);
 	}
 
+	.network .protected {
+		display: flex;
+		align-items: center;
+		gap: 0.5vh;
+		padding: 0.5vh 1vh;
+		border-radius: 1vh;
+		font-size: 1.6vh;
+		font-weight: bold;
+		border: 0.2vh solid var(--primary-foreground);
+		color: var(--primary-foreground);
+	}
+
 	.network .peer-count {
 		padding: 1vh;
 		border-radius: 1vh;
@@ -340,6 +392,12 @@
 	<LISHNetworkExportAll {areaID} {position} onBack={() => void exportAllSubPage.exit()} />
 {:else if publicSubPage.active}
 	<LISHNetworkPublic {areaID} {position} onBack={() => void closePublic()} />
+{:else if protectedCreateSubPage.active}
+	<LISHNetworkProtectedCreate {areaID} {position} onBack={() => void protectedCreateSubPage.exit()} onCreated={handleProtectedCreated} />
+{:else if inviteSubPage.active}
+	<LISHNetworkInvite {areaID} {position} onBack={() => void inviteSubPage.exit()} onJoined={handleInviteJoined} />
+{:else if accessSubPage.active && accessNetwork}
+	<LISHNetworkAccess {areaID} {position} network={accessNetwork} onBack={() => void closeAccess()} />
 {:else if bootstrapSubPage.active && bootstrapNetwork}
 	<LISHNetworkBootstrap {areaID} {position} network={bootstrapNetwork} status={$bootstrapStatuses[bootstrapNetwork.networkID]} onUpdated={handleBootstrapUpdated} onBack={() => void closeBootstrap()} />
 {:else if deleteSubPage.active && deletingNetwork}
@@ -353,6 +411,8 @@
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/online.svg" label={$t('settings.lishNetwork.publicList')} onConfirm={openPublic} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/plus.svg" label={$t('common.add')} onConfirm={openAddNetwork} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/lock.svg" label={$t('settings.lishNetwork.protected.create')} onConfirm={openProtectedCreate} padding="1vh 1.5vh" fontSize="1.6vh" />
+				<Button icon="/img/link.svg" label={$t('settings.lishNetwork.protected.joinByInvite')} onConfirm={openInvite} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/import.svg" label={$t('common.import')} onConfirm={openImport} padding="1vh 1.5vh" fontSize="1.6vh" />
 				<Button icon="/img/export.svg" label={$t('common.exportAll')} onConfirm={openExportAll} padding="1vh 1.5vh" fontSize="1.6vh" />
 			</ButtonBar>
@@ -373,6 +433,9 @@
 										<Icon img="/img/network.svg" alt={$t(`settings.lishNetwork.meshStateNetwork.${meshState}`)} size="2.5vh" padding="0" colorVariable={meshStateColorVar(meshState)} />
 									</div>
 									<div class="name">{network.name}</div>
+									{#if network.overlay}
+										<div class="protected" data-testid="protected-badge-{network.networkID}"><Icon img="/img/lock.svg" alt="" size="1.8vh" padding="0" colorVariable="--primary-foreground" />{$t('settings.lishNetwork.protected.badge')}</div>
+									{/if}
 								</div>
 								{#if network.enabled && $peerCounts[network.networkID] !== undefined}
 									<div class="peer-count">{$t('settings.lishNetwork.connectedPeers', { count: String($peerCounts[network.networkID]!) })}</div>
@@ -384,6 +447,9 @@
 									{#each network.description.split('\n') as line, li}{#if li > 0}<br />{/if}{line}{/each}
 								</div>
 							{/if}
+							{#if network.overlay && network.enabled && $peerCounts[network.networkID] === undefined}
+								<Alert type="info" message={$t('settings.lishNetwork.protected.waitingCertificate')} />
+							{/if}
 							{#if networkErrors[network.networkID]}
 								<Alert type="error" message={networkErrors[network.networkID]!} />
 							{/if}
@@ -393,17 +459,20 @@
 							{/if}
 							<div class="buttons">
 								<Button icon="/img/connect.svg" label={network.enabled ? $t('common.disconnect') : $t('common.connect')} active={network.enabled} position={[0, rowY]} onConfirm={() => connectNetwork(network)} />
-								{#if network.enabled}
-									<Button icon={configuredProblems(network.networkID) > 0 ? '/img/warning.svg' : '/img/person.svg'} label={$t('settings.lishNetwork.bootstrap.openLabel')} position={[1, rowY]} onConfirm={() => openBootstrap(network)} />
+								{#if network.overlay}
+									<Button icon="/img/key.svg" label={$t('settings.lishNetwork.protected.access')} position={[1, rowY]} onConfirm={() => openAccess(network)} />
 								{/if}
-								<Button icon="/img/export.svg" label={$t('common.export')} position={[2, rowY]} onConfirm={() => openExport(network)} />
-								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[3, rowY]} onConfirm={() => openEditNetwork(network)} />
-								<Button icon="/img/del.svg" label={$t('common.delete')} position={[4, rowY]} onConfirm={() => deleteNetwork(network)} />
+								{#if network.enabled}
+									<Button icon={configuredProblems(network.networkID) > 0 ? '/img/warning.svg' : '/img/person.svg'} label={$t('settings.lishNetwork.bootstrap.openLabel')} position={[2, rowY]} onConfirm={() => openBootstrap(network)} />
+								{/if}
+								<Button icon="/img/export.svg" label={$t('common.export')} position={[3, rowY]} onConfirm={() => openExport(network)} />
+								<Button icon="/img/edit.svg" label={$t('common.edit')} position={[4, rowY]} onConfirm={() => openEditNetwork(network)} />
+								<Button icon="/img/del.svg" label={$t('common.delete')} position={[5, rowY]} onConfirm={() => deleteNetwork(network)} />
 								{#if i > 0}
-									<Button icon="/img/up.svg" position={[5, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
+									<Button icon="/img/up.svg" position={[6, rowY]} onConfirm={() => moveNetwork(i, true)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
 								{#if i < networks.length - 1}
-									<Button icon="/img/down.svg" position={[6, rowY]} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
+									<Button icon="/img/down.svg" position={[7, rowY]} onConfirm={() => moveNetwork(i, false)} padding="1vh" fontSize="4vh" width="auto" />
 								{/if}
 							</div>
 						</div>

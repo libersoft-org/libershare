@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { type Networks } from '../lishnet/lishnets.ts';
+import { type Network } from '../protocol/network.ts';
 import { type Settings } from '../settings.ts';
 import { lishTopic, MAX_SEARCH_QUERY_LENGTH } from '../protocol/constants.ts';
 import { trace } from '../logger.ts';
@@ -42,6 +43,11 @@ interface SearchSession {
 	results: Map<string, LishSearchResult>;
 	/** Peers we have already dispatched a unicast getLishs to. */
 	queried: Queried;
+	/**
+	 * The node each queried peer was found on. A peer of a protected lishnet is reachable only through that
+	 * lishnet's own node, and a public peer only through the public one.
+	 */
+	nodes: Map<string, Network>;
 	/** Disposer for the `peer:connect` listener, called on timeout/cancel. */
 	disposePeerConnect: () => void;
 	/** Retry bookkeeping for peers that refused us; see {@link RefusalState}. */
@@ -83,6 +89,10 @@ interface SearchSession {
 	 * the dial is what lets a cancelled search stop occupying the slots the next one needs.
 	 */
 	abort: AbortController;
+	/** The search IDs the protected lishnets' nodes sent the query under ({@link SearchSession.searchID} is the public node's). */
+	aliases: string[];
+	/** The nodes of the lishnets the search was asked for: their peers are the ones queried directly. */
+	searchNodes: Network[];
 }
 
 /**
@@ -100,7 +110,8 @@ interface RefusalState {
 }
 
 export interface SearchManager {
-	startSearch: (p: { query: string }) => Promise<{ searchID: string }>;
+	/** `networkIDs`: search these lishnets only; absent, every joined one. */
+	startSearch: (p: { query: string; networkIDs?: string[] }) => Promise<{ searchID: string }>;
 	cancelSearch: (p: { searchID: string }) => { ok: true };
 	stopAll: () => void;
 }
@@ -171,11 +182,13 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		session.inFlightClients.clear();
 		session.disposePeerConnect();
 		unregisterSearchResultHandler(searchID);
+		for (const alias of session.aliases) unregisterSearchResultHandler(alias);
 		sessions.delete(searchID);
 		broadcast('search:lishs:complete', { searchID, reason, refusedPeers: session.refusedListing.size });
 	}
 
-	function handleResult(ann: SearchResultAnnouncement): void {
+	/** `node`: the one the answer came in on; it decides the lishnet the result belongs to. */
+	function handleResult(ann: SearchResultAnnouncement, node: Network): void {
 		trace(`[Search] result in: searchID=${ann.searchID.slice(0, 8)} from=${ann.peerID.slice(0, 12)} lishs=${ann.lishs.length} sessionExists=${sessions.has(ann.searchID)}`);
 		const session = sessions.get(ann.searchID);
 		if (!session) return;
@@ -184,10 +197,9 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		session.answered.add(ann.peerID);
 		session.refusedListing.delete(ann.peerID);
 		clearRefusal(session, ann.peerID);
-		// Map peerID → networkID is non-trivial without checking pubsub subscribers across topics;
-		// for the UI we only need the peerID + a representative networkID. Pick the first joined network
-		// the peer is a member of (so the FE can later open PeerDetail with that networkID).
-		const networkID = findNetworkForPeer(ann.peerID);
+		// An answer on a protected lishnet's node belongs to that lishnet. Looked up by peer ID instead, a member using one
+		// key on the public lishnet too turned a private result into a public source, fetched and saved publicly.
+		const networkID = node.lishScope ?? findPublicNetworkForPeer(ann.peerID);
 		const updates: LishSearchResult[] = [];
 		for (const lish of ann.lishs) {
 			if (typeof lish.id !== 'string' || lish.id.length === 0) continue;
@@ -202,7 +214,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				session.results.set(lish.id, row);
 			}
 			// Avoid duplicate peer entries for the same LISH (same peer responding twice via mesh paths).
-			if (!row.peers.some(p => p.peerID === ann.peerID)) {
+			if (!row.peers.some(p => p.peerID === ann.peerID && p.networkID === networkID)) {
 				row.peers.push({ peerID: ann.peerID, networkID });
 			}
 			updates.push(row);
@@ -211,47 +223,59 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	}
 
 	/**
-	 * Best-effort lookup: find any joined network this peer is currently subscribed to.
-	 * Used so the FE can later dial the peer through that network. Empty string if not found
-	 * (peer is reachable on a different network or already disconnected — FE shows it but dial may fail).
+	 * Best-effort lookup for an answer on the public node: a joined public lishnet this peer is subscribed to, so the FE
+	 * can later dial it through that one. Empty string if not found (already disconnected — FE shows it but dial may fail).
 	 */
-	function findNetworkForPeer(peerID: string): string {
+	function findPublicNetworkForPeer(peerID: string): string {
 		const network = networks.getNetwork();
-		if (!network.isRunning()) return '';
 		for (const config of networks.list()) {
-			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
-			if (network.getTopicPeers(config.networkID).includes(peerID)) return config.networkID;
+			if (config.overlay || !config.enabled || !networks.isJoined(config.networkID)) continue;
+			if (network.isRunning() && network.getTopicPeers(config.networkID).includes(peerID)) return config.networkID;
 		}
 		return '';
 	}
 
-	async function startSearch(p: { query: string }): Promise<{ searchID: string }> {
+	async function startSearch(p: { query: string; networkIDs?: string[] }): Promise<{ searchID: string }> {
 		const query = (p.query ?? '').trim();
 		if (query.length === 0) throw new Error('search query is empty');
 		// Refuse here what every responder refuses anyway. Without this the search is sent,
 		// each peer drops it on the same bound and answers with an empty list, and the user is
 		// told nothing was found — which is not what happened.
 		if (query.length > MAX_SEARCH_QUERY_LENGTH) throw new CodedError(ErrorCodes.SEARCH_QUERY_TOO_LONG, String(query.length));
+		if (p.networkIDs !== undefined && (!Array.isArray(p.networkIDs) || p.networkIDs.some(id => typeof id !== 'string'))) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'networkIDs must be a list of lishnet IDs');
 		const searchID = randomUUID();
 		const timeoutMs = settings.get('network.searchTimeout') ?? 30_000;
 		const network = networks.getRunningNetwork();
-		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
+		// Asked only where the user chose: the query itself tells the lishnets it reaches what this member looks for, so a
+		// search in a protected lishnet must not go out on the public one too.
+		const chosen = p.networkIDs ? new Set(p.networkIDs) : null;
+		const inScope = (networkID: string): boolean => chosen === null || chosen.has(networkID);
+		const publicChosen = chosen === null || networks.list().some(c => !c.overlay && chosen.has(c.networkID));
+		const nodes = [...(publicChosen ? [network] : []), ...networks.protectedNodes().filter(node => inScope(node.lishScope ?? ''))];
+		const selfPeerIDs = new Set(nodes.map(node => node.getNodeInfo()?.peerID ?? ''));
 		const queried: Queried = new Set();
+		const peerNodes = new Map<string, Network>();
 		const refusals = new Map<string, RefusalState>();
 		// Live listener: every peer that completes a libp2p connection while
 		// this search is in flight gets a unicast `getLishs(query)`. Catches
 		// the case where a peer appears via mDNS / peer-announce / hole-punch
 		// AFTER the user clicked Search but BEFORE the timeout fires, so the
 		// result shows up without the user having to retry.
-		const disposePeerConnect = network.onPeerConnect(peerID => {
-			if (!sessions.has(searchID)) return;
-			if (!peerID || peerID === selfPeerID) return;
-			if (queried.has(peerID)) return;
-			queried.add(peerID);
-			void queryOnePeer(searchID, query, peerID).catch(() => {
-				/* logged inside queryOnePeer */
-			});
-		});
+		const disposers = nodes.map(node =>
+			node.onPeerConnect(peerID => {
+				if (!sessions.has(searchID)) return;
+				if (!peerID || selfPeerIDs.has(peerID)) return;
+				if (queried.has(peerID)) return;
+				queried.add(peerID);
+				peerNodes.set(peerID, node);
+				void queryOnePeer(searchID, query, peerID).catch(() => {
+					/* logged inside queryOnePeer */
+				});
+			})
+		);
+		const disposePeerConnect = (): void => {
+			for (const dispose of disposers) dispose();
+		};
 		// NOT driven by the peer's SUBSCRIBE, deliberately. That event says only that WE now
 		// know the peer is a member; the refusal we are recovering from is the other
 		// direction — it has not processed OUR subscription yet — so the event carries no
@@ -267,22 +291,38 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 			results: new Map(),
 			timeout: setTimeout(() => endSession(searchID, 'timeout'), timeoutMs),
 			queried,
+			nodes: peerNodes,
 			disposePeerConnect,
 			refusals,
 			refusedListing: new Set<string>(),
 			answered: new Set<string>(),
 			inFlightClients: new Set<LISHClient>(),
 			abort: new AbortController(),
+			aliases: [],
+			searchNodes: nodes,
 		};
 		sessions.set(searchID, session);
-		registerSearchResultHandler(searchID, handleResult);
+		registerSearchResultHandler(searchID, ann => handleResult(ann, network));
+		// Every node sends the query under an ID of its own: one ID on the public and a protected lishnet would tell a
+		// member of both that the two identities are one machine. Answers to any of them land in this session.
+		const nodeSearchIDs = new Map<Network, string>([[network, searchID]]);
+		const idFor = (node: Network): string => {
+			let id = nodeSearchIDs.get(node);
+			if (!id) {
+				id = randomUUID();
+				nodeSearchIDs.set(node, id);
+				session.aliases.push(id);
+				registerSearchResultHandler(id, ann => handleResult({ ...ann, searchID }, node), node.lishScope ?? null);
+			}
+			return id;
+		};
 		// Broadcast the query on every joined network topic. If broadcast fails on a particular
 		// topic, log and continue — the search is still useful on other networks.
-		const message = { type: 'searchLishs', searchID, query };
 		for (const config of networks.list()) {
-			if (!config.enabled || !networks.isJoined(config.networkID)) continue;
+			if (!config.enabled || !networks.isJoined(config.networkID) || !inScope(config.networkID)) continue;
 			try {
-				await network.broadcast(lishTopic(config.networkID), message);
+				const node = config.overlay ? networks.networkFor(config.networkID) : network;
+				await node.broadcast(lishTopic(config.networkID), { type: 'searchLishs', searchID: idFor(node), query });
 			} catch (err: any) {
 				console.warn(`[Search] broadcast on ${config.networkID.slice(0, 8)} failed: ${err?.message ?? err}`);
 			}
@@ -310,14 +350,21 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 	 */
 	async function runUnicastFallback(session: SearchSession): Promise<void> {
 		const { searchID, query, queried } = session;
-		const network = networks.getRunningNetwork();
-		const selfPeerID = network.getNodeInfo()?.peerID ?? '';
+		const nodes = session.searchNodes;
+		const selfPeerIDs = new Set(nodes.map(node => node.getNodeInfo()?.peerID ?? ''));
 		// `getPeers()` is the libp2p-connection peer set, NOT the gossipsub
 		// subscriber set. Includes peers freshly dialed via mDNS for whom
 		// gossipsub SUBSCRIBE has not yet completed — exactly the case the
-		// fallback exists to fix.
-		const peerList = network.getPeers().filter(p => p && p !== selfPeerID && !queried.has(p));
-		for (const p of peerList) queried.add(p);
+		// fallback exists to fix. Every node is asked for its own peers.
+		const peerList: string[] = [];
+		for (const node of nodes) {
+			for (const p of node.getPeers()) {
+				if (!p || selfPeerIDs.has(p) || queried.has(p)) continue;
+				queried.add(p);
+				session.nodes.set(p, node);
+				peerList.push(p);
+			}
+		}
 		if (peerList.length === 0) {
 			trace(`[Search] unicast fallback ${searchID.slice(0, 8)}: no connected peers in snapshot`);
 			return;
@@ -409,7 +456,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 		// And the peer may have answered over the other channel while we queued. Asking it
 		// again would spend a slot the peers we are still waiting on need.
 		if (session.answered.has(peerID)) return;
-		const network = networks.getRunningNetwork();
+		const network = session.nodes.get(peerID) ?? networks.getRunningNetwork();
 		let client: LISHClient | undefined;
 		try {
 			const { stream } = await network.dialProtocolByPeerId(peerID, LISH_PROTOCOL, session.abort.signal);
@@ -445,7 +492,7 @@ export function initSearchManager(networks: Networks, settings: Settings, broadc
 				// Re-use the same aggregation/dedup path as the pubsub-driven
 				// responses, so a peer reachable through both channels never
 				// produces a duplicate row in the FE result list.
-				handleResult({ searchID, peerID, lishs: matches });
+				handleResult({ searchID, peerID, lishs: matches }, network);
 			}
 			// The peer answered, so nothing is owed — including a timer armed by an earlier
 			// refusal, which would otherwise fire after the question was already settled.

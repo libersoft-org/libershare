@@ -40,6 +40,17 @@ const errorCodes = [
 	'NETWORK_NOT_STARTED',
 	'NETWORK_PORT_IN_USE',
 
+	// Protected (overlay) lishnets
+	// The operation needs the lishnet's CA key, which only its founder holds.
+	'OVERLAY_NOT_FOUNDER',
+	'OVERLAY_NO_CERTIFICATE',
+	'OVERLAY_CERTIFICATE_INVALID',
+	'OVERLAY_HELPER_UNAVAILABLE',
+	'OVERLAY_REQUEST_NOT_FOUND',
+	'OVERLAY_ADDRESSES_EXHAUSTED',
+	// A public LISH while only protected lishnets may be used.
+	'OVERLAY_PRIVATE_ONLY',
+
 	// Host network configuration (Settings -> Network). Distinct from the LISH
 	// network codes above: these are about the operating system's own interfaces.
 	'NETCONFIG_INVALID',

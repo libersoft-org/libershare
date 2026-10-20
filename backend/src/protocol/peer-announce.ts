@@ -206,6 +206,8 @@ export interface PeerAnnounceManagerDeps {
 	 * gossip intake has nothing to reconcile against and ignores it.
 	 */
 	addBootstrapPeers(multiaddrs: string[], networkID: string, origin: BootstrapPeerOrigin): Promise<unknown>;
+	/** Networks this node reaches directly; defaults to the host interfaces. */
+	localCidrs?(): string[];
 }
 
 /**
@@ -437,7 +439,7 @@ export class PeerAnnounceManager {
 		// identity-mismatch storm. Even though emitPeerAnnounce now filters
 		// these out on our side, we cannot trust older peers in the fleet to
 		// do the same — every receiver must be defensive.
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.deps.localCidrs?.() ?? getLocalCidrs();
 		// Third stage: collapse addresses that mean the same thing. The cap counts
 		// UNIQUE addresses, so a message repeating one address 128 times no longer
 		// consumes the whole budget — and, more to the point, no longer turns into
@@ -578,7 +580,7 @@ export class PeerAnnounceManager {
 		if (this.isSuperseded(generation)) return;
 		// No minimum peerStore size: a node behind NAT that knows only its bootstrap is
 		// exactly the one whose relay addresses nobody else can learn any other way.
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.deps.localCidrs?.() ?? getLocalCidrs();
 		const myID = node.peerId.toString();
 		// Our own multiaddrs (shared across all topics — we are a member of every
 		// topic we are subscribed to, so advertising self everywhere is correct).

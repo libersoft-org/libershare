@@ -62,6 +62,8 @@ export interface DownloadData {
 	chunkSize: number;
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
+	/** Protected lishnets the LISH is shared in only; empty = the public lishnets. */
+	scope: string[];
 	errorCode?: string | undefined;
 	errorMessage?: string | undefined;
 	recoveryRetryCount?: number | undefined;
@@ -127,6 +129,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		chunkSize: detail.chunkSize,
 		totalUploadedBytes: detail.totalUploadedBytes ?? 0,
 		totalDownloadedBytes: detail.totalDownloadedBytes ?? 0,
+		scope: detail.scope ?? [],
 	};
 }
 
@@ -282,6 +285,11 @@ export async function initDownloads(): Promise<void> {
 				addNotification(tt('downloads.lishAdded', { name: detail.name ?? detail.id }), 'info');
 				return [entry, ...list];
 			});
+		});
+
+		// lishs:scope — where a LISH is shared changed (lishs.setScope)
+		api.on('lishs:scope', (data: { lishID: string; scope: string[] }) => {
+			downloads.update(list => list.map(d => (d.id === data.lishID ? { ...d, scope: data.scope } : d)));
 		});
 
 		// lishs:remove — LISH deleted (broadcast from backend)
@@ -811,6 +819,7 @@ export async function initDownloads(): Promise<void> {
 	}
 	// Subscribe on every connect (backend has fresh subscribedEvents after reconnect)
 	api.subscribe('lishs:add');
+	api.subscribe('lishs:scope');
 	api.subscribe('lishs:remove');
 	api.subscribe('lishs:verify');
 	api.subscribe('lishs:move');
@@ -886,6 +895,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 		chunkSize: 0,
 		totalUploadedBytes: 0,
 		totalDownloadedBytes: 0,
+		scope: [],
 	};
 	downloads.update(list => [dl, ...list]);
 }
@@ -893,7 +903,7 @@ export function addCatalogDownload(entry: { lishID: string; name: string; totalS
 // Table columns definition
 export const DOWNLOAD_TABLE_COLUMNS = '1fr 5vw 11vw 9vw 8vw 7vw 7vw 5vw 11vw';
 // Toolbar action IDs for download detail view
-export type DownloadToolbarActionID = 'back' | 'copy-lish-id' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'export' | 'move' | 'delete';
+export type DownloadToolbarActionID = 'back' | 'copy-lish-id' | 'open-directory' | 'toggle-download' | 'toggle-upload' | 'find-peers' | 'verify' | 'stop-verify' | 'share-in' | 'export' | 'move' | 'delete';
 export interface DownloadToolbarAction {
 	id: DownloadToolbarActionID;
 	icon: string | ((downloadPaused: boolean, uploadPaused: boolean) => string);
@@ -908,6 +918,7 @@ export const DOWNLOAD_TOOLBAR_ACTIONS: DownloadToolbarAction[] = [
 	{ id: 'find-peers', icon: '/img/search.svg', getLabel: (t): string => t('downloads.findPeers') },
 	{ id: 'verify', icon: '/img/check.svg', getLabel: (t): string => t('downloads.verify') },
 	{ id: 'stop-verify', icon: '/img/cross.svg', getLabel: (t): string => t('downloads.stopVerify') },
+	{ id: 'share-in', icon: '/img/lock.svg', getLabel: (t): string => t('lish.create.shareIn') },
 	{ id: 'export', icon: '/img/upload.svg', getLabel: (t): string => t('common.export') },
 	{ id: 'move', icon: '/img/move.svg', getLabel: (t): string => t('downloads.moveData') },
 	{ id: 'delete', icon: '/img/del.svg', getLabel: (t): string => t('common.delete') },

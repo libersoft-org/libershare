@@ -80,6 +80,11 @@ beforeAll(async () => {
 		settings
 	);
 	const networks = {
+		get: () => ({ networkID: 'net-1' }),
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
 		getRunningNetwork: () => ({ dialProtocolByPeerId: async () => ({ stream: heldStream() }) }),
 	} as never;
 	// The same wiring APIServer uses: the admitted import, and the gate the public entry takes.

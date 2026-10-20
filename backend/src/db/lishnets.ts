@@ -1,6 +1,6 @@
 import { type Database } from 'bun:sqlite';
 import { initPeerCleanupTable } from './peer-cleanup.ts';
-import { type LISHNetworkConfig, type LISHNetworkDefinition } from '@shared';
+import { type LISHNetworkConfig, type LISHNetworkDefinition, type LISHOverlayDefinition } from '@shared';
 import { canonicalMultiaddr } from '../protocol/multiaddr-utils.ts';
 
 /**
@@ -44,9 +44,18 @@ export function initLISHnetsTables(db: Database): void {
 			description     TEXT,
 			enabled         BOOL NOT NULL DEFAULT FALSE,
 			created         TIMESTAMP,
-			added           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			added           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			overlay         TEXT
 		)
 	`);
+	// Databases created before protected lishnets have no overlay column; their rows are public lishnets (NULL).
+	if (
+		!db
+			.query<{ name: string }, []>('PRAGMA table_info(lishnets)')
+			.all()
+			.some(c => c.name === 'overlay')
+	)
+		db.run('ALTER TABLE lishnets ADD COLUMN overlay TEXT');
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS lishnets_peers (
@@ -60,6 +69,10 @@ export function initLISHnetsTables(db: Database): void {
 }
 
 // -- Internal helpers --
+
+function overlayColumn(overlay: LISHOverlayDefinition | undefined): string | null {
+	return overlay ? JSON.stringify(overlay) : null;
+}
 
 function getInternalID(db: Database, networkID: string): number | null {
 	const row = db.query<{ id: number }, [string]>('SELECT id FROM lishnets WHERE lishnet_id = ?').get(networkID);
@@ -85,6 +98,7 @@ interface LISHnetRow {
 	description: string | null;
 	enabled: number;
 	created: string | null;
+	overlay: string | null;
 }
 
 function buildConfig(db: Database, row: LISHnetRow): LISHNetworkConfig {
@@ -96,6 +110,7 @@ function buildConfig(db: Database, row: LISHnetRow): LISHNetworkConfig {
 		bootstrapPeers: peers,
 		enabled: row.enabled === 1,
 		created: row.created ?? '',
+		...(row.overlay ? { overlay: JSON.parse(row.overlay) as LISHOverlayDefinition } : {}),
 	};
 }
 
@@ -107,18 +122,18 @@ export function lishnetExists(db: Database, networkID: string): boolean {
 }
 
 export function getLISHnet(db: Database, networkID: string): LISHNetworkConfig | undefined {
-	const row = db.query<LISHnetRow, [string]>('SELECT id, lishnet_id, name, description, enabled, created FROM lishnets WHERE lishnet_id = ?').get(networkID);
+	const row = db.query<LISHnetRow, [string]>('SELECT id, lishnet_id, name, description, enabled, created, overlay FROM lishnets WHERE lishnet_id = ?').get(networkID);
 	if (!row) return undefined;
 	return buildConfig(db, row);
 }
 
 export function listLISHnets(db: Database): LISHNetworkConfig[] {
-	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created FROM lishnets ORDER BY added ASC').all();
+	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created, overlay FROM lishnets ORDER BY added ASC').all();
 	return rows.map(r => buildConfig(db, r));
 }
 
 export function listEnabledLISHnets(db: Database): LISHNetworkConfig[] {
-	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created FROM lishnets WHERE enabled = TRUE ORDER BY added ASC').all();
+	const rows = db.query<LISHnetRow, []>('SELECT id, lishnet_id, name, description, enabled, created, overlay FROM lishnets WHERE enabled = TRUE ORDER BY added ASC').all();
 	return rows.map(r => buildConfig(db, r));
 }
 
@@ -128,9 +143,9 @@ export function addLISHnet(db: Database, network: LISHNetworkConfig): boolean {
 
 	const tx = db.transaction(() => {
 		const result = db.run(
-			`INSERT INTO lishnets (lishnet_id, name, description, enabled, created)
-			 VALUES (?, ?, ?, ?, ?)`,
-			[networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null]
+			`INSERT INTO lishnets (lishnet_id, name, description, enabled, created, overlay)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			[networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, overlayColumn(network.overlay)]
 		);
 		const internalID = Number(result.lastInsertRowid);
 
@@ -140,6 +155,10 @@ export function addLISHnet(db: Database, network: LISHNetworkConfig): boolean {
 	return true;
 }
 
+/**
+ * A config without `overlay` leaves the stored one alone: an edit from an older client, or one that only changes
+ * the name or the bootstrap list, must not turn a protected lishnet into a public one.
+ */
 export function updateLISHnet(db: Database, network: LISHNetworkConfig): boolean {
 	const internalID = getInternalID(db, network.networkID);
 	if (internalID === null) return false;
@@ -150,6 +169,7 @@ export function updateLISHnet(db: Database, network: LISHNetworkConfig): boolean
 			 WHERE id = ?`,
 			[network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, internalID]
 		);
+		if (network.overlay !== undefined) db.run('UPDATE lishnets SET overlay = ? WHERE id = ?', [overlayColumn(network.overlay), internalID]);
 
 		// Replace peers
 		db.run('DELETE FROM lishnets_peers WHERE id_lishnets = ?', [internalID]);
@@ -183,8 +203,8 @@ export function importLISHnets(db: Database, networks: LISHNetworkDefinition[]):
 /**
  * Upsert a lishnet from an ILISHNetwork import (file or JSON).
  */
-export function upsertLISHnet(db: Database, networkID: string, name: string, description: string, bootstrapPeers: string[], enabled: boolean, created: string): void {
-	const config: LISHNetworkConfig = { networkID, name, description, bootstrapPeers, enabled, created };
+export function upsertLISHnet(db: Database, networkID: string, name: string, description: string, bootstrapPeers: string[], enabled: boolean, created: string, overlay?: LISHOverlayDefinition): void {
+	const config: LISHNetworkConfig = { networkID, name, description, bootstrapPeers, enabled, created, ...(overlay ? { overlay } : {}) };
 	if (lishnetExists(db, networkID)) updateLISHnet(db, config);
 	else addLISHnet(db, config);
 }
@@ -194,16 +214,28 @@ export function upsertLISHnet(db: Database, networkID: string, name: string, des
  */
 export function replaceLISHnets(db: Database, networks: LISHNetworkConfig[]): void {
 	const tx = db.transaction(() => {
+		// A reorder from a client that does not know overlays must keep them, as {@link updateLISHnet} does.
+		const overlays = new Map(
+			db
+				.query<{ lishnet_id: string; overlay: string | null }, []>('SELECT lishnet_id, overlay FROM lishnets')
+				.all()
+				.map(r => [r.lishnet_id, r.overlay])
+		);
 		db.run('DELETE FROM lishnets');
 		for (const network of networks) {
 			const result = db.run(
-				`INSERT INTO lishnets (lishnet_id, name, description, enabled, created)
-				 VALUES (?, ?, ?, ?, ?)`,
-				[network.networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null]
+				`INSERT INTO lishnets (lishnet_id, name, description, enabled, created, overlay)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				[network.networkID, network.name, network.description || null, network.enabled ? 1 : 0, network.created || null, network.overlay !== undefined ? overlayColumn(network.overlay) : (overlays.get(network.networkID) ?? null)]
 			);
 			const internalID = Number(result.lastInsertRowid);
 			writeBootstrapPeers(db, internalID, network.bootstrapPeers);
 		}
 	});
 	tx();
+}
+
+/** Store a newer overlay definition of a lishnet, e.g. hosts from a verified signed state. */
+export function setLISHnetOverlay(db: Database, networkID: string, overlay: LISHOverlayDefinition): boolean {
+	return db.run('UPDATE lishnets SET overlay = ? WHERE lishnet_id = ?', [JSON.stringify(overlay), networkID]).changes > 0;
 }

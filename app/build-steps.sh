@@ -56,6 +56,9 @@ build_backend() {
 		bun build --compile --target bun-darwin-x64 src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"' --outfile "$LIPO_TMP/lish-backend-x64" --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		bun build --compile --target bun-darwin-arm64 src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js --define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' --define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"' --outfile "$LIPO_TMP/lish-backend-arm64" --define "LISH_NETWORK_HELPER_SHA256=\"$HELPER_HASH\""
 		lipo -create "$LIPO_TMP/lish-backend-x64" "$LIPO_TMP/lish-backend-arm64" -output build/lish-backend
+		bun "$ROOT_DIR/overlay/build.ts" --out "$LIPO_TMP/lish-overlay-x64" darwin/amd64
+		bun "$ROOT_DIR/overlay/build.ts" --out "$LIPO_TMP/lish-overlay-arm64" darwin/arm64
+		lipo -create "$LIPO_TMP/lish-overlay-x64" "$LIPO_TMP/lish-overlay-arm64" -output build/lish-overlay
 		rm -r "$LIPO_TMP"
 		echo "=== Universal backend done ($(elapsed_since $_t)) ==="
 	else
@@ -64,6 +67,7 @@ build_backend() {
 		cd "$ROOT_DIR/backend"
 		./build.sh --target "$BUN_TARGET"
 		echo "=== Backend done ($(elapsed_since $_t)) ==="
+		build_overlay "$BUN_TARGET"
 	fi
 }
 
@@ -104,6 +108,33 @@ sync_product_info() {
 	fi
 }
 
+# The protected-lishnet helper (Go, overlay/) goes next to the backend binary, where the backend looks for it.
+# Argument: the bun target of the backend (empty = this machine).
+build_overlay() {
+	_t=$(date +%s)
+	echo "=== Building overlay helper ==="
+	case "$1" in
+	bun-linux-x64) _go_target=linux/amd64 ;;
+	bun-linux-arm64) _go_target=linux/arm64 ;;
+	bun-windows-x64) _go_target=windows/amd64 ;;
+	bun-windows-arm64) _go_target=windows/arm64 ;;
+	bun-darwin-x64) _go_target=darwin/amd64 ;;
+	bun-darwin-arm64) _go_target=darwin/arm64 ;;
+	*) _go_target="$(go env GOOS)/$(go env GOARCH)" ;;
+	esac
+	_overlay_out="$ROOT_DIR/backend/build/lish-overlay"
+	case "$_go_target" in windows/*) _overlay_out="$_overlay_out.exe" ;; esac
+	bun "$ROOT_DIR/overlay/build.ts" --out "$_overlay_out" "$_go_target"
+	case "$_go_target" in windows/*)
+		if [ -n "${WINDOWS_CERTIFICATE_PFX:-}" ]; then
+			osslsigncode sign -pkcs12 "$WINDOWS_CERTIFICATE_PFX" -pass "${WINDOWS_CERTIFICATE_PASSWORD:-}" -h sha256 -t http://timestamp.digicert.com -in "$_overlay_out" -out "$_overlay_out.signed"
+			mv "$_overlay_out.signed" "$_overlay_out"
+		fi
+		;;
+	esac
+	echo "=== Overlay helper done ($(elapsed_since $_t)) ==="
+}
+
 sign_macos_network_binaries() {
 	[ "$BUILD_OS" = "macos" ] || return 0
 	if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
@@ -112,4 +143,5 @@ sign_macos_network_binaries() {
 	fi
 	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.backend" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-backend"
 	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.network-helper" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-network-helper"
+	codesign --force --options runtime --timestamp --identifier "${PRODUCT_IDENTIFIER}.overlay" --sign "$APPLE_SIGNING_IDENTITY" "$ROOT_DIR/backend/build/lish-overlay"
 }

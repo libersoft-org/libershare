@@ -770,6 +770,16 @@ if defined WINDOWS_CERTIFICATE_THUMBPRINT (
     "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-backend.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
     if errorlevel 1 ( endlocal & exit /b 1 )
 )
+rem The protected-lishnet helper (Go, overlay/) goes next to the backend, where the backend looks for it.
+where go >nul 2>&1 || ( echo Error: Go is required for the overlay helper. Install from https://go.dev/dl & endlocal & exit /b 1 )
+set "_go_target=windows/amd64"
+if /i "!BUN_TGT!"=="bun-windows-arm64" set "_go_target=windows/arm64"
+call bun "!ROOT_DIR!\overlay\build.ts" --out build\lish-overlay.exe !_go_target!
+if errorlevel 1 ( endlocal & exit /b 1 )
+if defined WINDOWS_CERTIFICATE_THUMBPRINT (
+    "!SIGN_POWERSHELL!" -NoProfile -NonInteractive -File scripts\sign-windows-binary.ps1 -Path build\lish-overlay.exe -Thumbprint "!WINDOWS_CERTIFICATE_THUMBPRINT!"
+    if errorlevel 1 ( endlocal & exit /b 1 )
+)
 set "_be_elapsed=0"
 call :elapsed_since !_be_start! _be_elapsed
 echo === Backend done ^(!_be_elapsed!^) ===
@@ -807,6 +817,7 @@ if exist "!ZIP_STAGING!" rmdir /s /q "!ZIP_STAGING!"
 mkdir "!ZIP_STAGING!"
 copy /y "!BUILD_RELEASE_DIR!\!PRODUCT_NAME!.exe" "!ZIP_STAGING!\!PRODUCT_NAME!.exe" >nul
 copy /y "!ROOT_DIR!\backend\build\lish-backend.exe" "!ZIP_STAGING!\lish-backend.exe" >nul
+copy /y "!ROOT_DIR!\backend\build\lish-overlay.exe" "!ZIP_STAGING!\lish-overlay.exe" >nul
 rem No network helper here on purpose: it may only elevate from an administrator-
 rem owned directory (Program Files), and a portable ZIP runs from wherever it was
 rem extracted. Host network settings are read-only in this bundle.

@@ -30,6 +30,14 @@ jobs:
           (cd cli && bun install --frozen-lockfile)
       - name: Formatting
         run: ./prettier-all.sh --check
+      # The backend's protected-lishnet e2e test runs the real helper, so it is built first. The runner's Go
+      # fetches the toolchain go.mod asks for (GOTOOLCHAIN=auto).
+      - name: Overlay helper (build, Go tests)
+        working-directory: overlay
+        run: |
+          bun build.ts
+          go vet ./...
+          go test ./...
       - name: Backend (typecheck, unit, e2e)
         run: ./test-be.sh
       - name: Frontend (svelte-check, unit)
@@ -156,12 +164,19 @@ jobs:
         run: |
           brew install imagemagick librsvg
           cargo install tauri-cli --version 2.12.1 --locked
+      # The package build compiles the protected-lishnet helper (overlay/), and the macOS runner has no Go.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: overlay/go.mod
+          cache-dependency-path: overlay/go.sum
       - name: Build universal macOS packages
         run: sh app/build.sh --os macos --target universal --format dmg zip --compress min
       - name: Verify both macOS architectures
         run: |
           lipo backend/build/lish-backend -verify_arch x86_64 arm64
           lipo backend/build/lish-network-helper -verify_arch x86_64 arm64
+          lipo backend/build/lish-overlay -verify_arch x86_64 arm64
+          lipo app/build/universal-apple-darwin/release/bundle/macos/LiberShare.app/Contents/MacOS/lish-overlay -verify_arch x86_64 arm64
           lipo app/build/universal-apple-darwin/release/bundle/macos/LiberShare.app/Contents/MacOS/LiberShare -verify_arch x86_64 arm64
 
   windows-arm64-native:
@@ -244,6 +259,10 @@ jobs:
           exit 1
       - name: Verify read-only network and time APIs in the actual image
         run: docker exec lish-backend-ci /native-smoke
+      - name: Verify the protected-lishnet helper in the actual image
+        run: |
+          docker exec lish-backend-ci /app/lish-overlay version
+          docker exec lish-backend-ci /app/lish-overlay ca --name ci --network 100.64.0.0/16 --out-crt /tmp/ca.crt --out-key /tmp/ca.key
       - name: Remove the container
         if: always()
         run: |

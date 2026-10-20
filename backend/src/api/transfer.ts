@@ -1,12 +1,13 @@
 import { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 export { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
+import { type Network } from '../protocol/network.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { storedDatasetFilesPresent } from '../lish/stored-dataset.ts';
-import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads } from '../protocol/lish-protocol.ts';
+import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads, getLISHScope } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
 import { isBusy, getBusyReason } from './busy.ts';
@@ -39,6 +40,8 @@ interface TransferHandlers {
 	download: (p: { networkID: string; lishPath: string }, client: any) => Promise<DownloadResponse>;
 	disableDownload: (p: { lishID: string }) => { success: boolean };
 	enableDownload: (p: { lishID: string }, client?: any) => Promise<{ success: boolean }>;
+	/** Move a running download to the node its LISH belongs to now (a scope change). */
+	rehomeDownload: (lishID: string) => Promise<void>;
 	disableUpload: (p: { lishID: string }) => { success: boolean };
 	enableUpload: (p: { lishID: string }) => { success: boolean };
 	getActiveTransfers: () => ActiveTransfer[];
@@ -415,6 +418,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				console.error(`[Transfer] ${lishID.slice(0, 8)}: re-attaching ${networkID.slice(0, 8)} failed:`, err?.message ?? err);
 			}
 		}
+		// A protected lishnet joined again runs on a new node; its downloads still hold the stopped one.
+		for (const lishID of [...activeDownloaders.keys()]) {
+			if (networkSuspended.has(lishID)) continue;
+			rehomeDownload(lishID).catch(err => console.error(`[Transfer] ${lishID.slice(0, 8)}: moving the download to its node failed:`, err?.message ?? err));
+		}
 		// Resume a suspended download only when a lishnet it is BOUND to re-joins (an
 		// empty bound set = no known binding → resume on any join). Drop the suspension
 		// ONLY once the resume actually succeeds — a transient failure (busy verifying,
@@ -482,11 +490,41 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 
 	async function downloadAdmitted(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
-		const network = networks.getRunningNetwork();
+		const network = networks.networkFor(p.networkID);
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
-		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
+		let downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
 		await downloader.init(p.lishPath);
 		const lishID = downloader.getLISHID();
+		// Starting it is the user's latest word: an older switch-off must not stop a later move of this download.
+		lastManualIntent.set(lishID, true);
+		// A scope change while this start is not active yet finds nothing to move: it waits for the start instead.
+		let started!: () => void;
+		const starting = new Promise<void>(resolve => (started = resolve));
+		directStarts.set(lishID, starting);
+		try {
+			// A LISH already stored for protected lishnets downloads on their node, whichever lishnet the caller named
+			// (the CLI names the first enabled one): asking a public lishnet for it would tell it what this member wants.
+			// Checked again after every read of the manifest: the scope can move meanwhile.
+			for (;;) {
+				const target = downloadNode(lishID, [p.networkID]);
+				if (!target) {
+					await downloader.destroy();
+					throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, `none of the protected lishnets of ${lishID} is joined`);
+				}
+				const node = downloader.getNetwork();
+				if (isPublicNode(target.node) ? isPublicNode(node) : target.node === node) break;
+				await downloader.destroy();
+				downloader = new Downloader(downloadDir, target.node, dataServer, target.networkIDs);
+				await downloader.init(p.lishPath);
+			}
+			return await launchDirectDownload(lishID, downloader, downloadDir, client);
+		} finally {
+			if (directStarts.get(lishID) === starting) directStarts.delete(lishID);
+			started();
+		}
+	}
+
+	async function launchDirectDownload(lishID: string, downloader: Downloader, downloadDir: string, client: any): Promise<DownloadResponse> {
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
 
@@ -545,6 +583,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * fails, nothing is left to resume the download from.
 	 */
 	const pendingDownloads = new Map<string, Promise<{ success: boolean }>>();
+	/** Starts from a `.lish` file ({@link downloadAdmitted}) not registered as active yet, keyed by LISH. */
+	const directStarts = new Map<string, Promise<void>>();
 	/**
 	 * The last state the USER asked for, kept apart from whatever attempt is in flight.
 	 *
@@ -579,6 +619,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		// Withdrawal takes precedence over suspension, which would otherwise revive a deleted download.
 		if ((requestEpoch.get(lishID) ?? 0) !== prepared.scheduledAt || (prepared.requireEnabled && !downloadEnabledLishs.has(lishID))) return 'download withdrawn while starting';
 		if (disabled) return undefined;
+		// The LISH's scope moved while the start read its manifest: it would ask the old lishnet. The move waits for this
+		// start and then starts it again where it belongs.
+		if (!onRightNode(lishID, prepared.downloader)) return 'its scope moved while starting';
 		const networkIDs = prepared.downloader.getNetworkIDs();
 		if (!networkIDs.some(id => networks.isJoined(id))) {
 			const original = prepared.downloader.getOriginalNetworkIDs();
@@ -599,6 +642,69 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		return launchPreparedDownloader(lishID, await prepareStoredDownloader(lishID, networkIDs, originalNetworkIDs, disabled, requireEnabled, scheduledAt), disabled, client);
 	}
 
+	/**
+	 * The node and lishnets a stored download runs on, from the LISH's scope. A downloader takes its peers from one
+	 * node; a LISH shared in protected lishnets is served only by those lishnets' nodes and a public one only by the
+	 * public node, so peers anywhere else would refuse it — with two protected lishnets joined, the first one in the
+	 * list was taken and every peer answered "not shared".
+	 *
+	 * Null for a LISH of protected lishnets none of which is joined: asking for it anywhere else would tell other
+	 * lishnets what the member wants and could fetch it from outside its lishnet.
+	 */
+	function downloadNode(lishID: string, networkIDs: string[]): { node: Network; networkIDs: string[] } | null {
+		const scope = getLISHScope(lishID);
+		if (scope.length > 0) {
+			// shortcut: one node per download, so a LISH shared in two protected lishnets takes peers from one of them.
+			const protectedID = scope.find(id => networks.isJoined(id));
+			return protectedID ? { node: networks.networkFor(protectedID), networkIDs: [protectedID] } : null;
+		}
+		const publicIDs = networkIDs.filter(id => !networks.get(id)?.overlay);
+		if (publicIDs.length > 0) return { node: networks.getRunningNetwork(), networkIDs: publicIDs };
+		// A public LISH with no public lishnet joined: wait where the old choice put it, the restore logic suspends it on leave.
+		const fallbackID = networkIDs.find(id => networks.get(id)?.overlay);
+		return { node: fallbackID ? networks.networkFor(fallbackID) : networks.getRunningNetwork(), networkIDs };
+	}
+
+	/** The public node serves no protected lishnet; a protected lishnet's node has it as its scope. */
+	function isPublicNode(node: Network): boolean {
+		return (node.lishScope ?? null) === null;
+	}
+
+	/**
+	 * Whether a download still runs on the node {@link downloadNode} picks for its LISH now. There is one public node;
+	 * a protected lishnet gets a new node object whenever it is joined again, so that one is compared by identity.
+	 */
+	function onRightNode(lishID: string, dl: Downloader): boolean {
+		// The lishnets joined now count too: a LISH made public while it downloaded on a protected lishnet has no
+		// public lishnet in its own list, and would be sent straight back there.
+		const target = downloadNode(lishID, [...new Set([...dl.getOriginalNetworkIDs(), ...dl.getNetworkIDs(), ...getJoinedEnabledNetworkIDs(networks)])]);
+		if (!target) return false;
+		const node = dl.getNetwork();
+		return isPublicNode(target.node) ? isPublicNode(node) : target.node === node;
+	}
+
+	/**
+	 * Move a running download to the node its LISH belongs to now (after a scope change or a protected lishnet's new
+	 * node), keeping it on or off as it was. A download already in place is left alone.
+	 */
+	async function rehomeDownload(lishID: string): Promise<void> {
+		// A start still reading its manifest is not active yet; it gives up when the scope moved, and is started below.
+		await pendingDownloads.get(lishID)?.catch(() => {});
+		await directStarts.get(lishID);
+		const dl = activeDownloaders.get(lishID);
+		const suspended = networkSuspended.has(lishID);
+		if (dl ? onRightNode(lishID, dl) : !suspended && !downloadEnabledLishs.has(lishID)) return;
+		// A download started with `download <lishPath>` runs without the stored "enabled" flag: running counts too.
+		const wanted = downloadEnabledLishs.has(lishID) || suspended || (dl !== undefined && !dl.isDisabled());
+		if (dl) {
+			await dl.destroy();
+			if (activeDownloaders.get(lishID) === dl) activeDownloaders.delete(lishID);
+		}
+		// A suspension waited for the lishnets the download had before; the new start decides where it waits now.
+		networkSuspended.delete(lishID);
+		if (wanted) await enableDownload({ lishID }, undefined, false);
+	}
+
 	/** Prepared candidates retain the request epoch across the handoff and batch preparation. */
 	async function prepareStoredDownloader(lishID: string, networkIDs: string[], originalNetworkIDs: string[], disabled: boolean, requireEnabled = false, scheduledAt = requestEpoch.get(lishID) ?? 0): Promise<PreparedStoredDownloader> {
 		const lish = dataServer.get(lishID);
@@ -609,7 +715,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			await access(hasChunks ? downloadDir : dirname(downloadDir), constants.R_OK | constants.W_OK);
 		}
 
-		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), networks.getRunningNetwork(), dataServer, networkIDs, originalNetworkIDs);
+		const target = downloadNode(lishID, networkIDs);
+		if (!target) {
+			// It waits for one of its own lishnets; a switched-off download stays off.
+			if (!disabled && claimSuspension(lishID, getLISHScope(lishID), scheduledAt)) downloadEnabledLishs.delete(lishID);
+			throw new DownloadStartAbandoned(lishID, 'none of its protected lishnets is joined');
+		}
+		// Only lishnets its node serves: one left and joined again is re-attached from this list, and a protected one
+		// on a public download (or the reverse) would carry the download's requests into the other lishnet.
+		const fits = (id: string): boolean => (isPublicNode(target.node) ? !networks.get(id)?.overlay : target.networkIDs.includes(id));
+		const downloader = new Downloader(dataServer.getDatasetRoot(lishID) ?? conservativeDatasetRoot(downloadDir), target.node, dataServer, target.networkIDs, originalNetworkIDs.filter(fits));
 		await downloader.initFromManifest(lish);
 		const prepared = { downloader, requireEnabled, scheduledAt, destroy: () => downloader.destroy() };
 		const refusal = storedStartRefusal(lishID, prepared, disabled);
@@ -823,9 +938,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				downloadEnabledLishs.delete(p.lishID);
 				return { success: false };
 			}
-			// If downloader is in error state, destroy it and create a fresh one
-			if (dl.getError()) {
-				console.debug(`[Transfer] ${p.lishID.slice(0, 8)}: destroying error-state downloader, will create fresh`);
+			// If downloader is in error state, or on a node that no longer fits its LISH (a scope change, a protected
+			// lishnet's new node after a rejoin or restart), destroy it and create a fresh one
+			if (dl.getError() || !onRightNode(p.lishID, dl)) {
+				console.debug(`[Transfer] ${p.lishID.slice(0, 8)}: destroying ${dl.getError() ? 'error-state' : 'misplaced'} downloader, will create fresh`);
 				await dl.destroy();
 				if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
 				// Fall through to create new downloader below
@@ -1134,10 +1250,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * then wait for every operation already past either gate.
 	 */
 	async function pauseAllTransfers(): Promise<void> {
-		const network = networks.getNetwork();
+		// Every node serves the same shared data, protected lishnets' nodes included.
+		const nodes = [networks.getNetwork(), ...networks.protectedNodes()];
 		// An admitted retry restores download and upload before this gate can close.
 		await recovery.pauseAllAndDrain();
-		await Promise.all([transferAdmission.closeAndDrain(), network.pauseLISHProtocolHandlersAndDrain()]);
+		await Promise.all([transferAdmission.closeAndDrain(), ...nodes.map(node => node.pauseLISHProtocolHandlersAndDrain())]);
 		if (pendingDownloaderCleanups.size > 0) await Promise.allSettled([...pendingDownloaderCleanups]);
 	}
 
@@ -1261,10 +1378,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	}
 
 	function resumeAllTransfers(): void {
-		networks.getNetwork().resumeLISHProtocolHandlers();
+		for (const node of [networks.getNetwork(), ...networks.protectedNodes()]) node.resumeLISHProtocolHandlers();
 		transferAdmission.open();
 		recovery.resumeAll();
 	}
 
-	return { download, disableDownload, enableDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, pauseAll: pauseAllTransfers, clearAll: clearAllTransfers, clearUploads: clearUploadRuntime, restoreAll: restoreAllTransfers, resumeAll: resumeAllTransfers };
+	return { download, disableDownload, enableDownload, rehomeDownload, disableUpload: disableUploadHandler, enableUpload: enableUploadHandler, getActiveTransfers, subscribePeers: subscribePeersHandler, unsubscribePeers: unsubscribePeersHandler, debugPeers: debugPeersHandler, findPeers: findPeersHandler, pauseAll: pauseAllTransfers, clearAll: clearAllTransfers, clearUploads: clearUploadRuntime, restoreAll: restoreAllTransfers, resumeAll: resumeAllTransfers };
 }

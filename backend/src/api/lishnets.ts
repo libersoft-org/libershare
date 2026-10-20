@@ -46,7 +46,7 @@ interface LISHnetsHandlers {
 	updateBootstrapPeers: (p: { networkID: string; bootstrapPeers: string[]; detailed?: boolean }) => Promise<LISHNetworkConfig | NetworkMutationOutcome<LISHNetworkConfig>>;
 }
 /** The import pipeline WITHOUT its admission gate — the caller here already holds it. */
-type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+type ImportManifestFn = (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean; scope?: string[] }) => Promise<ImportLISHResponse>;
 type RunLISHMutationFn = <T>(operation: () => Promise<T>) => Promise<T>;
 
 /**
@@ -68,8 +68,9 @@ export function toSetEnabledResponse(result: SetEnabledResult): SetLISHNetworkEn
  * shutdown does not wait out a peer that answered the dial and then never sent the manifest.
  */
 export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer, broadcast: (event: string, data: any) => void, settings: Settings, importManifestAdmitted: ImportManifestFn, runLISHMutation: RunLISHMutationFn, shutdownSignal: AbortSignal): LISHnetsHandlers {
-	function withPeerClient<T>(peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
-		return withLISHClient(networks.getRunningNetwork(), peerID, shutdownSignal, request);
+	/** A peer of a lishnet is reached through that lishnet's node: its own for a protected lishnet. */
+	function withPeerClient<T>(networkID: string, peerID: string, request: (client: LISHClient) => Promise<T>): Promise<T> {
+		return withLISHClient(networks.networkFor(networkID), peerID, shutdownSignal, request);
 	}
 
 	function list(): LISHNetworkConfig[] {
@@ -238,7 +239,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function getPeerLishsOnce(p: { peerID: string; networkID: string }): Promise<{ lishs: PeerLishEntry[] }> {
 		try {
-			const lishs = await withPeerClient(p.peerID, client => client.requestList());
+			const lishs = await withPeerClient(p.networkID, p.peerID, client => client.requestList());
 			shutdownSignal.throwIfAborted();
 			return { lishs };
 		} catch (error: any) {
@@ -252,7 +253,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		assert(p, ['lishID', 'peerID', 'networkID']);
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			const manifest = await withPeerClient(p.networkID, p.peerID, client => client.requestManifest(p.lishID, onProgress));
 			shutdownSignal.throwIfAborted();
 			// Strip checksums from files and compute summary
 			const files = (manifest.files ?? []).map(f => {
@@ -290,10 +291,16 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 
 	async function addPeerLishAdmitted(p: { lishID: string; peerID: string; networkID: string }): Promise<{ lishID: string }> {
 		assert(p, ['lishID', 'peerID', 'networkID']);
+		// Decided before the manifest is on its way: a protected lishnet deleted meanwhile is no longer found, and its
+		// content would be stored public. A lishnet whose row is already gone (a deletion still stopping its node) is
+		// refused outright; the node the request goes through counts as well as the row.
+		const row = networks.get(p.networkID);
+		if (!row) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
+		const fromProtected = row.overlay !== undefined || networks.networkFor(p.networkID).lishScope === p.networkID;
 		let manifest;
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress));
+			manifest = await withPeerClient(p.networkID, p.peerID, client => client.requestManifest(p.lishID, onProgress));
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw error;
@@ -312,7 +319,10 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const downloadPath = settings.get('storage.downloadPath') ?? `~/${productName}/finished/`;
 		const enableSharing = settings.get('network.autoStartSharing') ?? true;
 		const enableDownloading = settings.get('network.autoStartDownloading') ?? true;
-		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading });
+		// What came from a protected lishnet is shared back into that lishnet only; with the lishnet gone, it is not taken.
+		if (fromProtected && networks.get(p.networkID)?.overlay === undefined) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, p.networkID);
+		const scope = fromProtected ? [p.networkID] : undefined;
+		const result = await importManifestAdmitted(manifest, downloadPath, { enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 		return { lishID: result.lishID };
 	}
 	function getNodeInfo(): NetworkNodeInfo | null {
@@ -320,7 +330,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	function getStatus(p: { networkID: string }): NetworkStatus {
 		assert(p, ['networkID']);
-		const network = networks.getRunningNetwork();
+		const network = networks.networkFor(p.networkID);
 		const allPeers = network.getPeers();
 		const topicPeers = networks.getTopicPeers(p.networkID);
 		return {
@@ -353,9 +363,11 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const result: NetworkInfo[] = [];
 		for (const config of configs) {
 			const info: NetworkInfo = { ...config };
-			if (config.enabled && nodeInfo) {
-				info.peerID = nodeInfo.peerID;
-				info.addresses = nodeInfo.addresses;
+			// A protected lishnet has its own identity and overlay addresses, and none while it is not running.
+			const node = config.overlay ? (networks.isJoined(config.networkID) ? networks.networkFor(config.networkID).getNodeInfo() : null) : nodeInfo;
+			if (config.enabled && node) {
+				info.peerID = node.peerID;
+				info.addresses = node.addresses;
 				const topicPeers = networks.getTopicPeers(config.networkID);
 				info.connected = topicPeers.length;
 				info.connectedPeers = topicPeers;

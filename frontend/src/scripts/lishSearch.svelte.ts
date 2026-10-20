@@ -11,6 +11,8 @@ import { translateError } from './language.ts';
  */
 export interface LishSearchSession {
 	query: string;
+	/** The lishnets to search; null for every joined one. */
+	networkIDs: string[] | null;
 	readonly searching: boolean;
 	readonly results: LishSearchResult[];
 	readonly error: string;
@@ -33,6 +35,7 @@ export interface LishSearchSession {
 
 export function createLishSearch(): LishSearchSession {
 	let query = $state('');
+	let networkIDs = $state<string[] | null>(null);
 	let searching = $state(false);
 	let searchID = $state<string | null>(null);
 	let error = $state('');
@@ -95,7 +98,7 @@ export function createLishSearch(): LishSearchSession {
 		results = [];
 		startedAt = performance.now();
 		try {
-			const res = await api.search.startSearch(trimmed);
+			const res = await api.search.startSearch(trimmed, networkIDs ?? undefined);
 			searchID = res.searchID;
 		} catch (e: any) {
 			error = translateError(e);
@@ -134,6 +137,12 @@ export function createLishSearch(): LishSearchSession {
 		},
 		set query(v: string) {
 			query = v;
+		},
+		get networkIDs(): string[] | null {
+			return networkIDs;
+		},
+		set networkIDs(v: string[] | null) {
+			networkIDs = v;
 		},
 		get searching(): boolean {
 			return searching;

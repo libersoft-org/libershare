@@ -13,9 +13,20 @@ COPY shared/package.json ./shared/
 WORKDIR /src/backend
 RUN bun install --frozen-lockfile
 
+# Go and git build the protected-lishnet helper (overlay/); go.mod pins the toolchain it then uses
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates curl git \
+	&& rm -rf /var/lib/apt/lists/*
+RUN ARCH=$(dpkg --print-architecture) \
+	&& curl -fsSL "https://go.dev/dl/go1.26.0.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz \
+	&& tar -C /usr/local -xzf /tmp/go.tar.gz \
+	&& rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 WORKDIR /src
 COPY backend ./backend
 COPY shared ./shared
+COPY overlay ./overlay
 
 ARG TARGETARCH
 RUN set -eu; \
@@ -28,7 +39,8 @@ RUN set -eu; \
 	bun build --compile --target "$BUN_TARGET" src/app.ts src/native/worker-runtime.ts src/system-network-corewlan-worker.js \
 		--define 'LISH_NATIVE_WORKER_ENTRY="./native/worker-runtime.ts"' \
 		--define 'LISH_COREWLAN_WORKER_ENTRY="./system-network-corewlan-worker.js"' \
-		--outfile build/lish-backend
+		--outfile build/lish-backend; \
+	bun ../overlay/build.ts --out build/lish-overlay "linux/$TARGETARCH"
 
 FROM debian:trixie-slim AS runtime
 
@@ -47,8 +59,10 @@ RUN groupadd --gid 1000 lish \
 
 WORKDIR /app
 COPY --from=build /src/backend/build/lish-backend /app/lish-backend
+# Next to the backend executable, where it looks for the helper of protected lishnets
+COPY --from=build /src/backend/build/lish-overlay /app/lish-overlay
 COPY docker/backend-entrypoint.sh /app/backend-entrypoint.sh
-RUN chmod 0755 /app/lish-backend /app/backend-entrypoint.sh
+RUN chmod 0755 /app/lish-backend /app/lish-overlay /app/backend-entrypoint.sh
 
 USER 1000:1000
 

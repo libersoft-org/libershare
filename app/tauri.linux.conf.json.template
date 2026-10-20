@@ -3,7 +3,8 @@
 	"mainBinaryName": "{{PRODUCT_NAME_LOWER}}",
 	"bundle": {
 		"resources": {
-			"../backend/build/lish-backend": "./lish-backend"
+			"../backend/build/lish-backend": "./lish-backend",
+			"../backend/build/lish-overlay": "./lish-overlay"
 		},
 		"linux": {
 			"deb": {

@@ -1,5 +1,6 @@
 **/node_modules/
 **/build/
+overlay/.nebula/
 **/.svelte-kit/
 **/.vite-cache/
 frontend/build/

@@ -223,6 +223,8 @@ export interface ILISHDetail {
 	totalChunks: number;
 	totalUploadedBytes: number;
 	totalDownloadedBytes: number;
+	/** Protected lishnets the LISH is shared in only; empty = shared in the public lishnets. */
+	scope?: string[];
 }
 
 // Result of `lishs.list`: the summaries plus the transient per-LISH activity sets.

@@ -6,6 +6,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { normalizePath } from '../../scripts/utils.ts';
+	import { privateOnly } from '../../scripts/settings.ts';
 	import Alert from '../Alert/Alert.svelte';
 	import ButtonBar from '../Buttons/ButtonBar.svelte';
 	import Button from '../Buttons/Button.svelte';
@@ -151,6 +152,9 @@
 					<Input bind:value={downloadPath} label={effectiveDownloadPathLabel} position={[0, 1]} flex />
 					<Button icon="/img/directory.svg" position={[1, 1]} onConfirm={openDownloadPathBrowse} padding="1vh" fontSize="4vh" borderRadius="1vh" width="6.6vh" height="6.6vh" />
 				</div>
+			{/if}
+			{#if $privateOnly}
+				<Alert type="warning" message={$t('import.privateOnlyURL')} />
 			{/if}
 			{#if errorMessage}
 				<Alert type="error" message={errorMessage} />

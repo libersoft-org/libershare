@@ -18,6 +18,11 @@ const LISH_ID = 'lish-withdrawn';
 
 function makeNetworks(): Networks {
 	return {
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
 		getRunningNetwork: (): any => ({ onPeerDisconnect: (): (() => void) => () => {} }),
 		getEnabled: (): any[] => [{ networkID: 'net-a' }],
 		isJoined: (): boolean => true,

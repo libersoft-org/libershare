@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
 import { initLISHnetsTables, addLISHnet, getLISHnet } from '../../../src/db/lishnets.ts';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
+import { OverlayNodes } from '../../../src/overlay/overlay-nodes.ts';
 
 /**
  * Unit tests for Networks.leaveNetwork peer-disconnect behaviour:
@@ -141,6 +142,8 @@ function makeNetworks(net: MockNet, joined: string[], configs: Record<string, st
 	const rows = new Map<string, { networkID: string; bootstrapPeers: string[]; enabled: boolean }>();
 	for (const id of new Set([...joined, ...Object.keys(configs)])) rows.set(id, { networkID: id, bootstrapPeers: configs[id] ?? [], enabled: joined.includes(id) });
 	(networks as any).network = net;
+	// No protected lishnet in these fixtures: their own nodes stay empty.
+	(networks as any).overlayNodes = new OverlayNodes({} as any);
 	(networks as any).rows = rows;
 	(networks as any).joinedNetworks = new Set(joined);
 	(networks as any).networkOperations = new Map();

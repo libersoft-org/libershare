@@ -31,6 +31,11 @@ describe('lishnets.addPeerLish reset admission', () => {
 		let networkTouched = false;
 		let gateEntered = false;
 		const networks = {
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
 			getRunningNetwork: () => {
 				networkTouched = true;
 				throw new Error('peer I/O must stay behind the gate');
@@ -88,7 +93,14 @@ describe('lishnets.getPeerLishs listing refusal', () => {
 			},
 		};
 		const handlers = initLISHnetsHandlers(
-			{ getRunningNetwork: () => network } as never,
+			{
+				get: () => undefined,
+				networkFor(this: any) {
+					return this.getRunningNetwork();
+				},
+				protectedNodes: () => [],
+				getRunningNetwork: () => network,
+			} as never,
 			{} as never,
 			() => {},
 			{} as never,

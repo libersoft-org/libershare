@@ -111,19 +111,24 @@ export interface HaveAnnouncement {
 	chunks: HaveChunks;
 }
 type HaveAnnouncementHandler = (ann: HaveAnnouncement) => void;
-const haveAnnouncementHandlers = new Map<string, HaveAnnouncementHandler>();
+/**
+ * One handler per LISH, with the scope of the node its downloader runs on. An announcement is handed over only when
+ * it arrived on a node of that scope: the downloader dials the addresses it carries through its own node, so a member
+ * of a protected lishnet could otherwise make a public downloader dial it and learn the victim's public address.
+ */
+const haveAnnouncementHandlers = new Map<string, { handler: HaveAnnouncementHandler; scope: string | null }>();
 
 /**
  * Register the single handler for a LISH and return an ownership-aware disposer.
  * A stale downloader may only remove its own registration, never a newer owner's.
  */
-export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler): () => boolean {
-	haveAnnouncementHandlers.set(lishID, handler);
+export function registerHaveAnnouncementHandler(lishID: string, handler: HaveAnnouncementHandler, scope: string | null = null): () => boolean {
+	haveAnnouncementHandlers.set(lishID, { handler, scope });
 	return () => unregisterHaveAnnouncementHandler(lishID, handler);
 }
 
 export function unregisterHaveAnnouncementHandler(lishID: string, owner?: HaveAnnouncementHandler): boolean {
-	if (owner && haveAnnouncementHandlers.get(lishID) !== owner) return false;
+	if (owner && haveAnnouncementHandlers.get(lishID)?.handler !== owner) return false;
 	return haveAnnouncementHandlers.delete(lishID);
 }
 
@@ -137,20 +142,25 @@ export interface SearchResultAnnouncement {
 	lishs: Array<{ id: string; name?: string; totalSize?: number }>;
 }
 type SearchResultHandler = (ann: SearchResultAnnouncement) => void;
-const searchResultHandlers = new Map<string, SearchResultHandler>();
+const searchResultHandlers = new Map<string, { handler: SearchResultHandler; scope: string | null }>();
 
-/** Register a handler for incoming unicast search results for a given searchID. Only one handler per searchID. */
-export function registerSearchResultHandler(searchID: string, handler: SearchResultHandler): void {
-	searchResultHandlers.set(searchID, handler);
+/**
+ * Register a handler for incoming unicast search results for a given searchID, with the scope of the node that sent the
+ * query under it. Only answers arriving on a node of that scope reach it: a member that saw a protected lishnet's search
+ * ID could otherwise slip a public offer into a search limited to that lishnet. Only one handler per searchID.
+ */
+export function registerSearchResultHandler(searchID: string, handler: SearchResultHandler, scope: string | null = null): void {
+	searchResultHandlers.set(searchID, { handler, scope });
 }
 
 export function unregisterSearchResultHandler(searchID: string): void {
 	searchResultHandlers.delete(searchID);
 }
 
-/** The handler a `searchResult` message would be delivered to, or undefined if the search is over. */
-export function getSearchResultHandler(searchID: string): SearchResultHandler | undefined {
-	return searchResultHandlers.get(searchID);
+/** The handler a `searchResult` arriving on a node of `scope` would be delivered to, or undefined. */
+export function getSearchResultHandler(searchID: string, scope: string | null = null): SearchResultHandler | undefined {
+	const registered = searchResultHandlers.get(searchID);
+	return registered?.scope === scope ? registered.handler : undefined;
 }
 
 // Client-side stream wrapper that can send multiple requests
@@ -510,6 +520,40 @@ export function isUploadEnabled(lishID: string): boolean {
 export function isUploadAdvertisable(lishID: string): boolean {
 	return uploadEnabled.has(lishID) && !isBusy(lishID);
 }
+
+/**
+ * The protected lishnets each LISH is shared in. A LISH without an entry is public and served by the public node
+ * only; one with an entry is served only by the nodes of those protected lishnets. Every node shares one data
+ * server, so without this a file shared inside a protected lishnet would be listed, searched and served to any
+ * peer of a public lishnet, from the member's public address.
+ */
+const lishScopes = new Map<string, string[]>();
+let persistLISHScope: ((lishID: string, networkIDs: string[]) => void) | null = null;
+
+export function initLISHScopes(scopes: Map<string, string[]>, persistFn: (lishID: string, networkIDs: string[]) => void): void {
+	lishScopes.clear();
+	for (const [lishID, networkIDs] of scopes) if (networkIDs.length > 0) lishScopes.set(lishID, [...networkIDs]);
+	persistLISHScope = persistFn;
+}
+/** Restrict a LISH to these protected lishnets; an empty list makes it public. */
+export function setLISHScope(lishID: string, networkIDs: string[]): void {
+	const ids = [...new Set(networkIDs)];
+	if (ids.length > 0) lishScopes.set(lishID, ids);
+	else lishScopes.delete(lishID);
+	persistLISHScope?.(lishID, ids);
+}
+export function getLISHScope(lishID: string): string[] {
+	return lishScopes.get(lishID) ?? [];
+}
+/** Forget a deleted LISH's scope (its row, and with it the stored scope, is gone). */
+export function removeLISHScope(lishID: string): void {
+	lishScopes.delete(lishID);
+}
+/** Whether a node serves a LISH: the public node (`scope` null) public LISHs, a protected lishnet's node its own. */
+export function isServedOn(lishID: string, scope: string | null): boolean {
+	const ids = lishScopes.get(lishID);
+	return scope === null ? ids === undefined : ids?.includes(scope) === true;
+}
 export function getEnabledUploads(): Set<string> {
 	return uploadEnabled;
 }
@@ -559,7 +603,8 @@ export function toManifest(lish: import('@shared').IStoredLISH): import('@shared
 	return exportData as import('@shared').IStoredLISH;
 }
 
-export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal): Promise<void> {
+export async function handleLISHProtocol(stream: Stream, dataServer: DataServer, remotePeerID?: string, connectionType?: ConnectionType, sharesNetworkWith?: (peerID: string) => boolean, canListShares?: (peerID: string) => boolean, abortSignal?: AbortSignal, scope: string | null = null): Promise<void> {
+	const advertisable = (lishID: string): boolean => isUploadAdvertisable(lishID) && isServedOn(lishID, scope);
 	const servedLishIDs = new Set<string>();
 	const listPages = new LISHListPages();
 	// Keeps the files this stream reads open between its chunk requests; closed with the stream.
@@ -648,7 +693,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					continue;
 				}
 				try {
-					await reply(listPages.respond(request, () => dataServer.list(), isUploadAdvertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
+					await reply(listPages.respond(request, () => dataServer.list(), advertisable, Math.min(MAX_LIST_RESPONSE_SIZE, getMaxMessageSize())));
 				} catch (error) {
 					listPages.clear();
 					if (!(error instanceof CodedError)) throw error;
@@ -658,7 +703,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'getLish') {
 				// Only return manifest for LISHs with upload enabled — and only to
 				// peers we share a joined lishnet with (same gate as getLishs).
-				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !isUploadAdvertisable(request.lishID)) {
+				if (serveGateBlocks(sharesNetworkWith, remotePeerID) || !advertisable(request.lishID)) {
 					const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					await reply(codecEncode(response));
 				} else {
@@ -686,7 +731,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 					await reply(codecEncode(gatedResponse));
 					continue;
 				}
-				if (!uploadEnabled.has(chunkReq.lishID)) {
+				if (!uploadEnabled.has(chunkReq.lishID) || !isServedOn(chunkReq.lishID, scope)) {
 					const blockedResponse: LISHGetChunkResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 					await reply(codecEncode(blockedResponse));
 					continue;
@@ -797,10 +842,10 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 				// Unicast HAVE announcement from a seeder in response to our pubsub WANT.
 				// Dispatch to the registered Downloader (if any) — peerID is the verified stream remote,
 				// NOT a field from the wire, so it can't be spoofed.
-				const handler = haveAnnouncementHandlers.get(request.lishID);
-				if (handler && remotePeerID) {
+				const registered = haveAnnouncementHandlers.get(request.lishID);
+				if (registered && registered.scope === scope && remotePeerID) {
 					try {
-						handler({
+						registered.handler({
 							lishID: request.lishID,
 							peerID: remotePeerID,
 							multiaddrs: Array.isArray(request.multiaddrs) ? request.multiaddrs : [],
@@ -815,7 +860,7 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 			} else if (request.type === 'searchResult') {
 				// Unicast search response from a peer in reply to our pubsub `searchLishs` query.
 				// peerID is the verified stream remote (anti-spoofing).
-				const handler = searchResultHandlers.get(request.searchID);
+				const handler = getSearchResultHandler(request.searchID, scope);
 				if (handler && remotePeerID) {
 					try {
 						handler({

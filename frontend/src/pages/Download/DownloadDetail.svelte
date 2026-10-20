@@ -27,6 +27,12 @@
 	import DownloadDetailPeer from './DownloadDetailPeer.svelte';
 	import DownloadLISHExport from './DownloadLISHExport.svelte';
 	import DownloadDetailMove from './DownloadDetailMove.svelte';
+	import { getUsableNetworks } from '../../scripts/lishNetwork.ts';
+	import { get } from 'svelte/store';
+	import { privateOnly } from '../../scripts/settings.ts';
+	import { addNotification } from '../../scripts/notifications.ts';
+	import { translateError } from '../../scripts/language.ts';
+	import ChoiceDialog from '../../components/Dialog/ChoiceDialog.svelte';
 	import FileBrowser from '../FileBrowser/FileBrowser.svelte';
 	interface Props {
 		areaID: string;
@@ -63,6 +69,26 @@
 	let peerElements: HTMLElement[] = $state([]);
 	let itemElements: HTMLElement[] = $state([]);
 	let containerElement: HTMLElement | null = $state(null);
+	// Names of the lishnets a LISH can be restricted to, for the "Share in" row.
+	let networkNames = $state(new Map<string, string>());
+	// Where the LISH may be shared can be changed here; offered when protected lishnets are joined.
+	let scopeOptions = $state<Array<{ value: string; label: string; icon?: string }>>([]);
+	let showScopeDialog = $state(false);
+	onMount(() => {
+		getUsableNetworks()
+			.then(nets => {
+				networkNames = new Map(nets.map(n => [n.networkID, n.name]));
+				const protectedNets = nets.filter(n => n.overlay);
+				scopeOptions = protectedNets.length > 0 ? [...(get(privateOnly) ? [] : [{ value: '', label: $t('lish.create.sharePublic') }]), ...protectedNets.map(n => ({ value: n.networkID, label: n.name, icon: '/img/lock.svg' }))] : [];
+			})
+			.catch(() => {});
+	});
+
+	function chooseScope(value: string): void {
+		showScopeDialog = false;
+		if (!download) return;
+		api.lishs.setScope(download.id, value ? [value] : []).catch(err => addNotification(translateError(err), 'error'));
+	}
 	let selectedInfoIndex = $state(0);
 	let infoRowElements: HTMLElement[] = $state([]);
 	type InfoRowKind = 'text' | 'description' | 'progress' | 'status' | 'allowed';
@@ -71,7 +97,7 @@
 		kind: InfoRowKind;
 		value?: string;
 	}
-	let infoRows = $derived<InfoRow[]>(download ? [{ label: $t('downloads.id'), kind: 'text' as InfoRowKind, value: download.id }, { label: $t('common.name'), kind: 'text' as InfoRowKind, value: download.name }, ...(download.description ? [{ label: $t('common.description'), kind: 'description' as InfoRowKind, value: download.description }] : []), { label: $t('downloads.targetDirectory'), kind: 'text' as InfoRowKind, value: download.directory ?? '-' }, { label: $t('common.size'), kind: 'text' as InfoRowKind, value: download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size }, { label: $t('downloads.chunks'), kind: 'text' as InfoRowKind, value: `${download.totalChunks} (${formatSize(download.chunkSize)})` }, { label: $t('common.progress'), kind: 'progress' as InfoRowKind }, { label: $t('common.status'), kind: 'status' as InfoRowKind }, { label: $t('downloads.allowed'), kind: 'allowed' as InfoRowKind }, { label: $t('downloads.downloadingFrom'), kind: 'text' as InfoRowKind, value: String(download.downloadPeers) }, { label: $t('downloads.uploadingTo'), kind: 'text' as InfoRowKind, value: String(download.uploadPeers) }, { label: $t('downloads.downloadSpeed'), kind: 'text' as InfoRowKind, value: download.downloadSpeed }, { label: $t('downloads.uploadSpeed'), kind: 'text' as InfoRowKind, value: download.uploadSpeed }, { label: $t('downloads.downloaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalDownloadedBytes) }, { label: $t('downloads.uploaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalUploadedBytes) }] : []);
+	let infoRows = $derived<InfoRow[]>(download ? [{ label: $t('downloads.id'), kind: 'text' as InfoRowKind, value: download.id }, { label: $t('common.name'), kind: 'text' as InfoRowKind, value: download.name }, ...(download.description ? [{ label: $t('common.description'), kind: 'description' as InfoRowKind, value: download.description }] : []), { label: $t('downloads.targetDirectory'), kind: 'text' as InfoRowKind, value: download.directory ?? '-' }, { label: $t('common.size'), kind: 'text' as InfoRowKind, value: download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size }, { label: $t('downloads.chunks'), kind: 'text' as InfoRowKind, value: `${download.totalChunks} (${formatSize(download.chunkSize)})` }, { label: $t('common.progress'), kind: 'progress' as InfoRowKind }, { label: $t('common.status'), kind: 'status' as InfoRowKind }, { label: $t('downloads.allowed'), kind: 'allowed' as InfoRowKind }, { label: $t('lish.create.shareIn'), kind: 'text' as InfoRowKind, value: download.scope.length > 0 ? download.scope.map(id => networkNames.get(id) ?? id).join(', ') : $t('lish.create.sharePublic') }, { label: $t('downloads.downloadingFrom'), kind: 'text' as InfoRowKind, value: String(download.downloadPeers) }, { label: $t('downloads.uploadingTo'), kind: 'text' as InfoRowKind, value: String(download.uploadPeers) }, { label: $t('downloads.downloadSpeed'), kind: 'text' as InfoRowKind, value: download.downloadSpeed }, { label: $t('downloads.uploadSpeed'), kind: 'text' as InfoRowKind, value: download.uploadSpeed }, { label: $t('downloads.downloaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalDownloadedBytes) }, { label: $t('downloads.uploaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalUploadedBytes) }] : []);
 	// Per-peer data for this LISH
 	let currentPeers = $derived([...($peerDetails.get(lishID) ?? [])].sort((a, b) => a.peerID.localeCompare(b.peerID)));
 	let peerSnapshotLoaded = $derived($peerSnapshotReceived.get(lishID) === true);
@@ -95,6 +121,7 @@
 			if (action.id === 'verify' && !isVerifying && !isMoving && !isAllocating) return true;
 			if (action.id === 'stop-verify' && isVerifying) return true;
 			if (action.id === 'verify' || action.id === 'stop-verify') return false;
+			if (action.id === 'share-in') return scopeOptions.length > 0;
 			return true;
 		}).map(action => ({
 			id: action.id,
@@ -264,6 +291,10 @@
 		}
 		if (actionID === 'find-peers' && download) {
 			api.call('transfer.findPeers', { lishID: download.id }).catch(err => console.error('Find peers failed:', err));
+			return;
+		}
+		if (actionID === 'share-in' && download) {
+			showScopeDialog = true;
 			return;
 		}
 		if (actionID === 'copy-lish-id' && download) {
@@ -936,6 +967,20 @@
 			</div>
 		{/if}
 	</div>
+	{#if showScopeDialog && download}
+		<ChoiceDialog
+			title={download.name}
+			message={$t('lish.create.shareIn') + ':'}
+			options={scopeOptions}
+			initial={Math.max(
+				0,
+				scopeOptions.findIndex(o => o.value === (download?.scope[0] ?? ''))
+			)}
+			{position}
+			onChoose={chooseScope}
+			onBack={() => (showScopeDialog = false)}
+		/>
+	{/if}
 	{#if showDeleteDialog && download}
 		<DownloadDetailDelete lishID={download.id} lishName={download.name} {position} onResult={handleDeleteResult} onBack={handleDeleteCancel} />
 	{/if}

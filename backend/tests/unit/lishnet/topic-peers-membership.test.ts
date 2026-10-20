@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { Networks } from '../../../src/lishnet/lishnets.ts';
+import { OverlayNodes } from '../../../src/overlay/overlay-nodes.ts';
 
 /**
  * Networks.getTopicPeers / getTopicPeersInfo answer for THIS node's membership.
@@ -21,6 +22,7 @@ describe('Networks.getTopicPeers — scoped to networks this node is in', () => 
 			getTopicPeers: () => [PEER],
 			getTopicPeersInfo: () => [{ peerID: PEER, direction: 'outbound' }],
 		};
+		(networks as any).overlayNodes = new OverlayNodes({} as any);
 		(networks as any).joinedNetworks = new Set(joined);
 		return networks;
 	}

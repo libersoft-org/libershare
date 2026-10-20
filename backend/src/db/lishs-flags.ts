@@ -39,6 +39,30 @@ export function getDownloadEnabledLishs(db: Database): Set<string> {
 	);
 }
 
+/** Persists the protected lishnets a LISH is restricted to; an empty list makes it public (NULL). */
+export function setLISHScope(db: Database, lishID: LISHid, networkIDs: string[]): void {
+	db.run('UPDATE lishs SET scope = ? WHERE lish_id = ?', [networkIDs.length > 0 ? JSON.stringify(networkIDs) : null, lishID]);
+}
+
+/** The stored scope column as a list; [] for NULL. A value that does not parse fails closed to a scope no node has. */
+export function parseLISHScope(raw: string | null): string[] {
+	if (raw === null) return [];
+	let ids: unknown;
+	try {
+		ids = JSON.parse(raw);
+	} catch {}
+	const list = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+	// A damaged scope must not turn a protected LISH public.
+	return list.length > 0 ? list : [''];
+}
+
+/** Every LISH restricted to protected lishnets, with those lishnets. */
+export function getLISHScopes(db: Database): Map<string, string[]> {
+	const scopes = new Map<string, string[]>();
+	for (const row of db.query<{ lish_id: string; scope: string }, []>('SELECT lish_id, scope FROM lishs WHERE scope IS NOT NULL').all()) scopes.set(row.lish_id, parseLISHScope(row.scope));
+	return scopes;
+}
+
 /** Persists whether a LISH has a verification that has not run to its end yet. */
 export function setVerifyPending(db: Database, lishID: LISHid, pending: boolean): void {
 	db.run('UPDATE lishs SET verify_pending = ? WHERE lish_id = ?', [pending ? 1 : 0, lishID]);

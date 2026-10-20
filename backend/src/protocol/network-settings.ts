@@ -13,6 +13,8 @@ export interface EffectiveNetworkConfig {
 	/** Null when mDNS is off: its interval then builds nothing. */
 	readonly mdnsInterval: number | null;
 	readonly upnp: boolean;
+	/** The public node is sealed: see `SettingsData.network.privateOnly`. */
+	readonly privateOnly: boolean;
 	/** Null when this node serves no relay; 0 means unlimited reservations. */
 	readonly relayReservations: number | null;
 	/** How many relay reservations this node makes as a client; 0 disables the client role. */
@@ -37,6 +39,7 @@ export function effectiveNetworkConfig(network: Partial<SettingsData['network']>
 		announceAddresses: [...(network?.announceAddresses ?? [])],
 		mdnsInterval: mdnsEnabled ? (network?.mdnsInterval ?? 30000) : null,
 		upnp: !!network?.upnpEnabled,
+		privateOnly: network?.privateOnly === true,
 		relayReservations: network?.allowRelay === true ? (isRelayReservationLimit(network.maxRelayReservations) ? network.maxRelayReservations : DEFAULT_MAX_RELAY_RESERVATIONS) : null,
 		relayClientSlots: useRelayClients ? (typeof rawMaxRelayClients === 'number' && rawMaxRelayClients > 0 ? Math.min(rawMaxRelayClients, 20) : 5) : 0,
 		peerExchange: {
@@ -54,7 +57,7 @@ export function effectiveNetworkConfig(network: Partial<SettingsData['network']>
  * search timeout, primary interface) is read by the next action or the UI and needs nothing
  * from the node.
  */
-const P2P_SETTING_KEYS = new Set(['maxDownloadSpeed', 'maxUploadSpeed', 'maxDownloadPeersPerLISH', 'maxUploadPeersPerLISH', 'maxChunkSize', 'maxMessageSize', 'incomingPort', 'announceAddresses', 'mdnsEnabled', 'mdnsInterval', 'upnpEnabled', 'allowRelay', 'maxRelayReservations', 'useRelayClients', 'maxRelayClients', 'peerExchange']);
+const P2P_SETTING_KEYS = new Set(['maxDownloadSpeed', 'maxUploadSpeed', 'maxDownloadPeersPerLISH', 'maxUploadPeersPerLISH', 'maxChunkSize', 'maxMessageSize', 'incomingPort', 'announceAddresses', 'mdnsEnabled', 'mdnsInterval', 'upnpEnabled', 'privateOnly', 'allowRelay', 'maxRelayReservations', 'useRelayClients', 'maxRelayClients', 'peerExchange']);
 
 /**
  * Whether a write asked for P2P settings to be applied: one of its accepted paths is the

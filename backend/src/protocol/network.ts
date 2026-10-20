@@ -13,7 +13,7 @@ import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
-import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.ts';
+import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS, type OverlayNodeOptions } from './network-config.ts';
 import { effectiveNetworkConfig, type EffectiveNetworkConfig } from './network-settings.ts';
 import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
@@ -24,7 +24,7 @@ import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@libp2p/gossipsub/score';
 import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
 import { multiaddr as Multiaddr } from '@multiformats/multiaddr';
-import { applyGossipsubPatches } from './gossipsub-patches.ts';
+import { applyGossipsubOutboundRenewPatch, applyGossipsubPatches } from './gossipsub-patches.ts';
 import { BootstrapStatusTracker } from './bootstrap-status.ts';
 import { logStatusDebug, dumpGossipsubScores } from './status-logger.ts';
 import { ONE_WAY_PUBSUB_GRACE_MS, OneWayPubsubWatch } from './one-way-pubsub-watch.ts';
@@ -635,9 +635,15 @@ export class Network {
 	private listeners: Array<{ target: EventTarget; event: string; handler: (evt: any) => void }> = [];
 
 	private readonly settings: Settings;
+	/** Set for the node of a protected lishnet: it then lives inside that network's overlay only. */
+	private readonly overlay: OverlayNodeOptions | undefined;
+	/** The protected lishnet whose LISHs this node serves; null for the public node, which serves public LISHs. */
+	readonly lishScope: string | null;
 
-	constructor(dataDir: string, dataServer: DataServer, settings: Settings) {
+	constructor(dataDir: string, dataServer: DataServer, settings: Settings, options: { overlay?: OverlayNodeOptions; lishScope?: string } = {}) {
 		this.dataDir = dataDir;
+		this.overlay = options.overlay;
+		this.lishScope = options.lishScope ?? null;
 
 		this.dataServer = dataServer;
 		this.settings = settings;
@@ -651,6 +657,7 @@ export class Network {
 			canServePubsubRequestTo: (peerID, treatAsDirect): boolean => this.canServePubsubRequestTo(peerID, treatAsDirect),
 			isDirectPeer: (peerID): boolean => this.isDirectPeer(peerID),
 			isJoinedToLishnet: (networkID): boolean => this.isJoinedToLishnet(networkID),
+			scope: this.lishScope,
 		});
 		// Lets the discovered-row cap keep live participants and drop dead addresses first.
 		this.bootstrapTracker.setMembersProvider((networkID): Set<string> => new Set(this.getTopicPeers(networkID)));
@@ -662,7 +669,16 @@ export class Network {
 			getPubsub: (): any => this.pubsub,
 			broadcast: (topic, msg, pubsub): Promise<void> => Network.publishOn(pubsub, topic, msg),
 			addBootstrapPeers: (multiaddrs, networkID, origin): Promise<BootstrapDialResult> => this.addBootstrapPeers(multiaddrs, networkID, origin),
+			localCidrs: (): string[] => this.localCidrs(),
 		});
+	}
+
+	/**
+	 * The networks this node can reach without a router of its own: the host's interfaces, or for the node of a
+	 * protected lishnet the overlay subnet — its only network, which no host interface carries.
+	 */
+	private localCidrs(now?: number): string[] {
+		return this.overlay ? [this.overlay.bridge.subnet] : getLocalCidrs(now);
 	}
 
 	/**
@@ -909,6 +925,7 @@ export class Network {
 			bootstrapPeers,
 			myPeerID: privateKey.publicKey.toString(),
 			connectionLiveness: this.connectionLiveness,
+			...(this.overlay ? { overlay: this.overlay } : {}),
 		});
 		this.bootstrapPeerIDs = bootstrapPeerIDs;
 		// Aliased, not copied. The dial-gater bypass and the PX appSpecificScore close over
@@ -957,14 +974,17 @@ export class Network {
 
 		this.pubsub = this.node.services['pubsub'] as PubSub;
 
-		// Only the PX ingress filter is patched in. @libp2p/gossipsub's OutboundStream.push()
+		// The PX ingress filter and the outbound stream renewal are patched in. @libp2p/gossipsub's OutboundStream.push()
 		// is synchronous, so sendRpc's own try/catch already handles a write to a closed
 		// stream (and re-attaches the control and gossip it piggybacked); the old wrapper
 		// for the async push of @chainsafe/libp2p-gossipsub would now swallow that error.
 		applyGossipsubPatches(this.pubsub, { settings: this.settings, getConfiguredBootstrapPeerIDs: (): Set<string> => this.configuredBootstrapPeerIDs, pxIngressLogKeys: this.pxIngressLogKeys }, { pxIngressEnabled: allSettings.network.peerExchange.ingressFilterEnabled === true });
+		const runNode = this.node;
+		applyGossipsubOutboundRenewPatch(this.pubsub, (peerId: any) => runNode.getConnections(peerId));
 
 		// Register lish protocol handler
-		await this.node.handle(LISH_PROTOCOL, (data: any) => this.handleInboundLISHProtocol(data), { runOnLimitedConnection: true });
+		// libp2p 3 calls a handler with (stream, connection): the connection is the only reliable source of the sender.
+		await this.node.handle(LISH_PROTOCOL, (stream: any, connection: any) => this.handleInboundLISHProtocol(stream, connection), { runOnLimitedConnection: true });
 		console.log(`✓ Registered ${LISH_PROTOCOL} protocol handler`);
 
 		// DHT removed; only bootstrap + gossipsub for discovery
@@ -1019,7 +1039,7 @@ export class Network {
 	 * Track the complete application Promise returned to libp2p. Stopping the node
 	 * closes transports, but libp2p does not wait for this Promise itself.
 	 */
-	private handleInboundLISHProtocol(data: any): Promise<void> {
+	private handleInboundLISHProtocol(data: any, handlerConnection?: any): Promise<void> {
 		const stream = (data.stream ?? data) as Stream;
 		const runAbort = this.lishProtocolAbort;
 		const runNode = this.node;
@@ -1034,7 +1054,7 @@ export class Network {
 		handler = Promise.resolve()
 			.then(async () => {
 				try {
-					const connection = data.connection;
+					const connection = handlerConnection ?? data.connection;
 					let remotePeerID = connection?.remotePeer?.toString?.();
 					let isRelay = connection?.remoteAddr ? Circuit.matches(connection.remoteAddr) : false;
 					if (!remotePeerID) {
@@ -1044,7 +1064,8 @@ export class Network {
 							for (const peer of runNode.getPeers()) {
 								for (const conn of runNode.getConnections(peer)) {
 									try {
-										if (conn.streams.some((candidate: any) => candidate.id === stream.id)) {
+										// The stream itself, not its id: ids count per connection, so another peer's stream can share it.
+										if (conn.streams.some((candidate: any) => candidate === stream)) {
 											remotePeerID = peer.toString();
 											isRelay = Circuit.matches(conn.remoteAddr);
 										}
@@ -1063,7 +1084,8 @@ export class Network {
 						connType,
 						pid => this.sharesJoinedTopicWith(pid),
 						pid => this.canListSharesTo(pid),
-						runAbort.signal
+						runAbort.signal,
+						this.lishScope
 					);
 				} catch (err: any) {
 					trace(`[NET] LISH handler error: ${err?.message ?? err}`);
@@ -1629,7 +1651,7 @@ export class Network {
 		let skippedNoReachable = 0;
 		let skippedSuppressed = 0;
 		let skippedQuarantined = 0;
-		const localCidrs = getLocalCidrs(now);
+		const localCidrs = this.localCidrs(now);
 		for (const peer of allPeers) {
 			if (epoch !== this.runEpoch) return; // stop() hit — this run's state is gone
 			const pid = peer.id.toString();
@@ -1907,7 +1929,7 @@ export class Network {
 		}
 		let attempted = 0;
 		let configuredAttempts = 0;
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.localCidrs();
 		const ordered = orderBootstrapEntriesForRecovery(this.bootstrapByAddress.values(), this.recoveryCursors);
 		const isEligible = (entry: IBootstrapEntry): boolean => {
 			if (this.bootstrapByAddress.get(entry.key) !== entry) return false;
@@ -1998,7 +2020,7 @@ export class Network {
 	private async probeParkedConfiguredBootstraps(epoch: number = this.runEpoch): Promise<void> {
 		const node = this.node;
 		if (!node || epoch !== this.runEpoch) return;
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.localCidrs();
 		for (const entry of [...this.bootstrapByAddress.values()]) {
 			if (epoch !== this.runEpoch) return;
 			const { ma, key: canonical, peerID: pid } = entry;
@@ -2325,7 +2347,7 @@ export class Network {
 			return 'incomplete';
 		}
 		const myPeerID = this.node.peerId.toString();
-		const localCidrs = getLocalCidrs();
+		const localCidrs = this.localCidrs();
 		// Fire-and-forget callers (peer-announce intake, startup joins) run outside
 		// the status-tick epoch guard. Capture the epoch so a dial that settles after
 		// a stop()/restart cannot record outcomes on the cleared tracker or write

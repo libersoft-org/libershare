@@ -769,6 +769,7 @@ describe('a factory reset and an identity write against each other', () => {
 		const networks = {
 			getNetwork: () => network,
 			beginMaintenance: () => gate.beginMaintenance(),
+			clearOverlayData: async () => {},
 			prepareMaintenance: () => gate.prepareMaintenance(),
 			stopAllNetworks: async () => {
 				order.push('stop');
@@ -848,6 +849,11 @@ describe('buildFactoryResetHandler — failed restore through the real transfer 
 		const persisted: Array<{ lishID: string; enabled: boolean }> = [];
 		initDownloadState(new Set<string>(), (lishID, enabled) => persisted.push({ lishID, enabled }));
 		const transferNetworks = {
+			get: () => undefined,
+			networkFor(this: any) {
+				return this.getRunningNetwork();
+			},
+			protectedNodes: () => [],
 			getRunningNetwork: (): any => ({ onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true }),
 			getEnabled: (): any[] => [{ networkID: 'net-a' }],
 			isJoined: (id: string): boolean => id === 'net-a',

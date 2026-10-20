@@ -1,4 +1,5 @@
 import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type LISHOverlayHost, type OverlayAccessRequest, type OverlayCertificateBundle, type OverlayMember, type OverlayPendingRequest, type OverlayRole, type OverlayStatus } from './overlay.ts';
 import { toNetworkMutationResponse, type NetworkMutationResponse } from './network-mutation.ts';
 
 type EventCallback = (data: any) => void;
@@ -29,6 +30,7 @@ export class API {
 	readonly transfer: TransferAPI;
 	readonly search: SearchAPI;
 	readonly upload: UploadAPI;
+	readonly overlay: OverlayAPI;
 
 	constructor(client: IWsClient) {
 		this.client = client;
@@ -41,6 +43,7 @@ export class API {
 		this.transfer = new TransferAPI(client);
 		this.search = new SearchAPI(client);
 		this.upload = new UploadAPI(client);
+		this.overlay = new OverlayAPI(client);
 	}
 
 	// Raw call access. `timeoutMs` is forwarded to the client, which arms a timer only
@@ -64,6 +67,85 @@ export class API {
 
 	unsubscribe(...events: string[]): Promise<boolean> {
 		return this.client.call<boolean>('events.unsubscribe', { events });
+	}
+}
+
+/**
+ * Protected lishnets: founding one, asking for access, and the founder's approvals and revocations. An external
+ * service with the API token can drive the founder side the same way: listen to `overlay:request`, then call
+ * {@link OverlayAPI.issue} or {@link OverlayAPI.approve}.
+ */
+class OverlayAPI {
+	private client: IWsClient;
+	constructor(client: IWsClient) {
+		this.client = client;
+	}
+
+	create(p: { name: string; description?: string; subnet?: string; lighthouseAddr?: string; lanDirect?: boolean; enabled?: boolean }): Promise<LISHNetworkConfig> {
+		return this.client.call<LISHNetworkConfig>('overlay.create', p);
+	}
+
+	requestAccess(networkID: string, name: string, infraAddr?: string): Promise<OverlayAccessRequest> {
+		return this.client.call<OverlayAccessRequest>('overlay.requestAccess', { networkID, name, ...(infraAddr ? { infraAddr } : {}) });
+	}
+
+	importRequest(request: OverlayAccessRequest): Promise<OverlayPendingRequest> {
+		return this.client.call<OverlayPendingRequest>('overlay.importRequest', { request });
+	}
+
+	listRequests(networkID: string): Promise<OverlayPendingRequest[]> {
+		return this.client.call<OverlayPendingRequest[]>('overlay.listRequests', { networkID });
+	}
+
+	rejectRequest(networkID: string, requestID: string): Promise<boolean> {
+		return this.client.call<boolean>('overlay.rejectRequest', { networkID, requestID });
+	}
+
+	approve(networkID: string, requestID: string, options: { validUntil?: string; roles?: OverlayRole[] } = {}): Promise<OverlayCertificateBundle> {
+		return this.client.call<OverlayCertificateBundle>('overlay.approve', { networkID, requestID, ...options });
+	}
+
+	issue(request: OverlayAccessRequest, options: { validUntil?: string; roles?: OverlayRole[] } = {}): Promise<OverlayCertificateBundle> {
+		return this.client.call<OverlayCertificateBundle>('overlay.issue', { request, ...options });
+	}
+
+	listMembers(networkID: string): Promise<OverlayMember[]> {
+		return this.client.call<OverlayMember[]>('overlay.listMembers', { networkID });
+	}
+
+	revoke(networkID: string, fingerprint: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('overlay.revoke', { networkID, fingerprint });
+	}
+
+	setHosts(networkID: string, lighthouses: LISHOverlayHost[], relays: LISHOverlayHost[]): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('overlay.setHosts', { networkID, lighthouses, relays });
+	}
+
+	importCertificate(certificate: OverlayCertificateBundle): Promise<OverlayStatus> {
+		return this.client.call<OverlayStatus>('overlay.importCertificate', { certificate });
+	}
+
+	/** A backup of the CA key; `forDevice` hands the device restoring it addresses of its own, apart from plain backups'. */
+	exportCA(networkID: string, forDevice: boolean = false): Promise<{ networkID: string; caKey: string }> {
+		return this.client.call<{ networkID: string; caKey: string }>('overlay.exportCA', { networkID, forDevice });
+	}
+
+	importCA(networkID: string, caKey: string): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('overlay.importCA', { networkID, caKey });
+	}
+
+	status(networkID: string): Promise<OverlayStatus> {
+		return this.client.call<OverlayStatus>('overlay.status', { networkID });
+	}
+
+	/** Founder: an invite to pass on; the request that comes through it waits for approval like any other. */
+	createInvite(networkID: string, validDays?: number): Promise<{ invite: string }> {
+		return this.client.call<{ invite: string }>('overlay.createInvite', { networkID, ...(validDays !== undefined ? { validDays } : {}) });
+	}
+
+	/** Join through an invite: the request and the certificate then travel by themselves. */
+	useInvite(invite: string, name: string, infraAddr?: string): Promise<OverlayStatus> {
+		return this.client.call<OverlayStatus>('overlay.useInvite', { invite, name, ...(infraAddr ? { infraAddr } : {}) });
 	}
 }
 
@@ -470,7 +552,8 @@ class LISHsAPI {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
+	/** `scope`: protected lishnets to share it in only; absent or empty = the public lishnets. */
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm, scope?: string[]): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -484,23 +567,29 @@ class LISHsAPI {
 			minifyJSON,
 			compress,
 			compressionAlgorithm,
+			scope,
 		});
+	}
+
+	/** Share a LISH in these protected lishnets only, or (empty list) in the public lishnets. */
+	setScope(lishID: string, networkIDs: string[]): Promise<SuccessResponse> {
+		return this.client.call<SuccessResponse>('lishs.setScope', { lishID, networkIDs });
 	}
 
 	delete(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {
 		return this.client.call<boolean>('lishs.delete', { lishID, deleteLISH: deleteLISH, deleteData });
 	}
 
-	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 	}
 
-	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 	}
 
-	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, scope?: string[]): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading, ...(scope ? { scope } : {}) });
 	}
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
@@ -568,8 +657,9 @@ class SearchAPI {
 		this.client = client;
 	}
 
-	startSearch(query: string): Promise<{ searchID: string }> {
-		return this.client.call<{ searchID: string }>('search.startSearch', { query });
+	/** `networkIDs` limits the search to these lishnets; without it every joined lishnet is asked. */
+	startSearch(query: string, networkIDs?: string[]): Promise<{ searchID: string }> {
+		return this.client.call<{ searchID: string }>('search.startSearch', { query, ...(networkIDs ? { networkIDs } : {}) });
 	}
 
 	cancelSearch(searchID: string): Promise<{ ok: true }> {

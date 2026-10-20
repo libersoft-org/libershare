@@ -32,7 +32,17 @@ async function fixture() {
 	initDownloadState(new Set(), (key, enabled) => setDownloadEnabled(db, key, enabled));
 	initUploadState(new Set(), (key, enabled) => setUploadEnabled(db, key, enabled));
 	const network = { pauseLISHProtocolHandlersAndDrain: async () => {}, resumeLISHProtocolHandlers() {}, onPeerDisconnect: () => () => {}, broadcast: async () => {}, getTopicPeers: () => [], isRunning: () => true };
-	const networks = { getNetwork: () => network, getRunningNetwork: () => network, getEnabled: () => [{ networkID: 'network-a' }], isJoined: () => true };
+	const networks = {
+		getNetwork: () => network,
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
+		getRunningNetwork: () => network,
+		getEnabled: () => [{ networkID: 'network-a' }],
+		isJoined: () => true,
+	};
 	let recovery!: ErrorRecovery;
 	const start = ErrorRecovery.prototype.start;
 	const capture = spyOn(ErrorRecovery.prototype, 'start').mockImplementation(function (this: ErrorRecovery, ...args: Parameters<typeof start>) {

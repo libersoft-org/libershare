@@ -19,7 +19,7 @@ cd libershare
 **On macOS:**
 
 ```sh
-brew install git
+brew install git go
 curl -fsSL https://bun.sh/install | bash
 git clone https://github.com/libersoft-org/libershare.git
 cd libershare
@@ -27,12 +27,14 @@ cd libershare
 
 **On Windows:**
 
-Download and install [**Git**](https://git-scm.com/download/win) and [**Bun**](https://bun.sh/), then in a command line:
+Download and install [**Git**](https://git-scm.com/download/win), [**Bun**](https://bun.sh/) and [**Go**](https://go.dev/dl/), then in a command line:
 
 ```bat
 git clone https://github.com/libersoft-org/libershare.git
 cd libershare
 ```
+
+**Go** (1.21 or newer, from [go.dev/dl](https://go.dev/dl/) or the system package manager) builds the helper of protected networks (`overlay/`). It downloads the exact toolchain the helper needs by itself. On Linux, the `golang` package of Debian 12 is too old; use the download from go.dev there.
 
 ## 2. Build and use the app
 
@@ -185,6 +187,12 @@ The bundled backend cannot be administered by attaching a web browser or CLI to 
 ### b) Run backend and frontend only (not bundled together in a native app):
 
 #### Backend:
+
+Protected networks need the helper built once, and again after its sources change:
+
+```sh
+bun overlay/build.ts
+```
 
 **On Linux / macOS:**
 

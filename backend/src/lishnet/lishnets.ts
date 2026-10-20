@@ -1,14 +1,19 @@
 import { observePeerCleanupClaims, recordLeavingPeerCleanup, replayPeerCleanup } from './peer-cleanup.ts';
 import { type Database } from 'bun:sqlite';
 import { Mutex } from 'async-mutex';
-import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult, type PeerReleaseOutcome } from '../protocol/network.ts';
+import { Network, normalizeMultiaddrForCompare, type BootstrapDialResult, type PeerCountEntry, type PeerReleaseOutcome } from '../protocol/network.ts';
 import { Utils } from '../utils.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { type Settings } from '../settings.ts';
-import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type NetworkMutationOutcome, combineNetworkMutations, CodedError, ErrorCodes } from '@shared';
-import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets } from '../db/lishnets.ts';
+import { type ILISHNetwork, type LISHNetworkConfig, type LISHNetworkDefinition, type LISHOverlayDefinition, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type NetworkMutationOutcome, combineNetworkMutations, CodedError, ErrorCodes, validateOverlayDefinition } from '@shared';
+import { cleanBootstrapList, lishnetExists, getLISHnet, listLISHnets, listEnabledLISHnets, addLISHnet, updateLISHnet, deleteLISHnet, setLISHnetEnabled, addLISHnetIfNotExists, importLISHnets, upsertLISHnet, replaceLISHnets, setLISHnetOverlay } from '../db/lishnets.ts';
+import { OverlayNodes } from '../overlay/overlay-nodes.ts';
+import { OverlayAccess } from '../overlay/overlay-access.ts';
 import { confirmPeerCleanup, listPeerCleanup } from '../db/peer-cleanup.ts';
 import { type PeerId } from '@libp2p/interface';
+
+/** How often a founder checks that its own certificate is still usable (see `startOwnMembershipRenewal`). */
+const OWN_MEMBERSHIP_CHECK_MS = 3_600_000;
 
 /**
  * Outcome of {@link Networks.setEnabled}.
@@ -142,11 +147,18 @@ interface InstalledBootstrap {
 
 /**
  * Manages lishnets (logical network groups) on top of a single shared Network (libp2p) node.
- * Each lishnet is represented as a pubsub topic on the shared node.
+ * Each lishnet is represented as a pubsub topic on the shared node — except a protected lishnet
+ * (one with an `overlay`), which runs on its own node inside its own overlay; see {@link OverlayNodes}.
  */
 export class Networks {
 	private db: Database;
 	private network: Network;
+	/** The nodes of the joined protected lishnets. Membership is still tracked in {@link joinedNetworks}. */
+	private readonly overlayNodes: OverlayNodes;
+	/** Founder and member operations of protected lishnets. */
+	readonly overlay: OverlayAccess;
+	/** The public node's last peer counts, merged with the protected nodes' into every emission. */
+	private lastPublicCounts: PeerCountEntry[] = [];
 	private readonly flushPeerCleanupClaims: () => void;
 
 	// Track which lishnets are currently joined (subscribed)
@@ -262,14 +274,53 @@ export class Networks {
 	// Callback fired after a lishnet is (re-)joined in-process. Lets higher layers
 	// resume downloads that were suspended when this lishnet was previously left.
 	private _onNetworkJoined: ((networkID: string) => void) | null = null;
+	/** {@link startOwnMembershipRenewal}'s hourly check. */
+	private ownMembershipTimer: ReturnType<typeof setInterval> | null = null;
+	// Callback for protected-lishnet events (requests, members, state) the API broadcasts.
+	private _onOverlayEvent: ((event: string, data: unknown) => void) | null = null;
 
 	constructor(db: Database, dataDir: string, dataServer: DataServer, settings: Settings) {
 		this.db = db;
 		this.network = new Network(dataDir, dataServer, settings);
 		this.flushPeerCleanupClaims = observePeerCleanupClaims(db, this.network, () => this.getEnabled());
+		this.overlayNodes = new OverlayNodes({
+			dataDir,
+			dataServer,
+			settings,
+			getRow: id => this.get(id),
+			saveOverlay: (id, overlay) => setLISHnetOverlay(this.db, id, overlay),
+			onPeerCountChange: () => this.emitPeerCounts(),
+			onBootstrapStatusChange: (id, status) => this._onBootstrapStatusChange?.(id, status),
+			onStateChange: (id, state) => this._onOverlayEvent?.('overlay:state', { networkID: id, version: state.version }),
+			serveGuest: (id, socket, remoteIP) => this.overlay.serveGuest(id, socket, remoteIP),
+			onAccessMessage: (id, message, from) => this.overlay.onAccessMessage(id, message, from),
+			onRepublish: id => this.overlay.repeatAccess(id),
+			// Still joined, on a new node: the transfer layer moves the lishnet's downloads to it as on a rejoin.
+			onNodeReplaced: id => {
+				try {
+					this._onNetworkJoined?.(id);
+				} catch (err: any) {
+					console.error(`[Networks] onNetworkJoined observer for ${id} threw:`, err?.message ?? err);
+				}
+			},
+		});
+		this.overlay = new OverlayAccess({
+			nodes: this.overlayNodes,
+			getRow: id => this.get(id),
+			listOverlayIDs: () =>
+				this.list()
+					.filter(row => row.overlay)
+					.map(row => row.networkID),
+			addNetwork: async config => {
+				if (!(await this.addDetailed(config)).stored) throw new CodedError(ErrorCodes.NETWORK_INVALID, `lishnet ${config.networkID} already exists`);
+			},
+			refresh: id => this.refreshOverlay(id),
+			emit: (event, data) => this._onOverlayEvent?.(event, data),
+		});
 		// Forward peer count changes from the network node
 		this.network.onPeerCountChange = counts => {
-			if (this._onPeerCountChange) this._onPeerCountChange(counts);
+			this.lastPublicCounts = counts;
+			this.emitPeerCounts();
 		};
 		// Forward bootstrap status changes from the network node
 		this.network.onBootstrapStatusChange = (networkID, status) => {
@@ -313,8 +364,125 @@ export class Networks {
 		this._onNetworkJoined = cb;
 	}
 
+	/** Set a callback for protected-lishnet events: `overlay:request`, `overlay:members`, `overlay:state`, `overlay:status`. */
+	set onOverlayEvent(cb: ((event: string, data: unknown) => void) | null) {
+		this._onOverlayEvent = cb;
+	}
+
+	/**
+	 * One peer-count snapshot of every node. The frontend replaces its whole map with each emission, so the
+	 * public node's counts and the protected nodes' must always travel together.
+	 */
+	private emitPeerCounts(): void {
+		if (!this._onPeerCountChange) return;
+		const running = new Set(this.overlayNodes.runningIDs());
+		const overlayCounts: PeerCountEntry[] = [...running].map(id => {
+			const node = this.overlayNodes.network(id)!;
+			const health = node.getMeshHealth(id);
+			return { networkID: id, count: node.getTopicPeers(id).length, meshSize: health.meshSize, stableSinceMs: health.stableSinceMs, medianScore: health.medianScore };
+		});
+		this._onPeerCountChange([...this.lastPublicCounts.filter(c => !running.has(c.networkID)), ...overlayCounts]);
+	}
+
+	/**
+	 * Join a protected lishnet on its own node. False when it cannot run yet (no certificate) or failed to start;
+	 * a protected lishnet that cannot start must not take the public node or the other lishnets down with it.
+	 */
+	private async joinOverlay(row: LISHNetworkConfig): Promise<boolean> {
+		try {
+			const joined = await this.overlayNodes.join(row);
+			// No certificate yet: an invite this node holds goes on being delivered.
+			if (!joined) this.overlay.resumeInvite(row.networkID);
+			return joined;
+		} catch (err: any) {
+			console.error(`[Networks] protected lishnet ${row.networkID} could not start:`, err?.message ?? err);
+			return false;
+		}
+	}
+
+	/** Converge a protected lishnet after its certificate changed: join it when enabled, else reload a running node. */
+	private async refreshOverlay(id: string): Promise<void> {
+		await this.inMutation(async () => {
+			const job = await this.inCatalog(() => (lishnetExists(this.db, id) ? this.reconcileLater(id) : undefined));
+			if (job) await job;
+		});
+		if (this.overlayNodes.isRunning(id)) await this.overlayNodes.reconfigure(id);
+	}
+
+	/**
+	 * The node a lishnet lives on: its own node for a running protected lishnet, the public node otherwise. A
+	 * protected lishnet that is not running has no node — never the public one, which must not reach its peers — and
+	 * neither has one no longer here: a read begun in a protected lishnet deleted meanwhile must not go public.
+	 */
+	networkFor(id: string): Network {
+		const own = this.overlayNodes.network(id);
+		if (own) return own;
+		const row = this.get(id);
+		if (!row) throw new CodedError(ErrorCodes.NETWORK_NOT_FOUND, id);
+		if (row.overlay) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING, id);
+		return this.getRunningNetwork();
+	}
+
+	/** A deleted lishnet's overlay data, after its invite delivery (if any) stopped using it. */
+	private async removeOverlayData(networkID: string): Promise<void> {
+		await this.overlay.stopInvite(networkID);
+		await this.overlayNodes.removeData(networkID);
+	}
+
+	/** Delete the keys, certificates and node data of every protected lishnet (factory reset, nodes stopped). */
+	async clearOverlayData(): Promise<void> {
+		await this.overlay.stopInvites();
+		await this.overlayNodes.removeAllData();
+	}
+
+	/** The running nodes of the joined protected lishnets; the public node is {@link getNetwork}. */
+	protectedNodes(): Network[] {
+		return this.overlayNodes.runningIDs().map(id => this.overlayNodes.network(id)!);
+	}
+
+	/**
+	 * A protected lishnet keeps its CA: a definition with another CA under the same ID is a different network,
+	 * and accepting it would hand the lishnet to whoever made that CA. With the same CA the stored overlay stays:
+	 * its lighthouses and relays change only through the founder's signed state, never through an unsigned file —
+	 * a doctored copy could otherwise point members at a host that learns their addresses. A definition without an
+	 * overlay never turns a protected lishnet public.
+	 */
+	private static mergeOverlay(existing: LISHOverlayDefinition | undefined, incoming: LISHOverlayDefinition | undefined): LISHOverlayDefinition | undefined {
+		const checked = incoming === undefined ? undefined : validateOverlayDefinition(incoming);
+		if (!existing) return checked;
+		if (checked && checked.caCert.trim() !== existing.caCert.trim()) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'this lishnet already exists with another certificate authority');
+		return existing;
+	}
+
+	/** {@link mergeOverlay} applied to a config about to be written over the stored row. */
+	private withMergedOverlay<T extends LISHNetworkDefinition>(network: T): T {
+		const { overlay: _incoming, ...rest } = network;
+		const stored = this.get(network.networkID);
+		// A joined public lishnet keeps its public node, identity and connections; a definition cannot turn it into a
+		// protected one under the same ID (an older version that dropped the overlay field left exactly such a row).
+		if (stored && !stored.overlay && network.overlay !== undefined) throw new CodedError(ErrorCodes.NETWORK_INVALID, 'this lishnet already exists as a public one; delete it before importing it as a protected lishnet');
+		const overlay = Networks.mergeOverlay(stored?.overlay, network.overlay);
+		return (overlay ? { ...rest, overlay } : rest) as T;
+	}
+
 	init(): void {
 		console.log('✓ Networks initialized');
+	}
+
+	/**
+	 * A founder's own certificate is renewed by the founder itself, now and every hour: no screen offers it a request
+	 * to make, so one that ran out would leave the founder outside its own lishnet.
+	 */
+	private startOwnMembershipRenewal(): void {
+		if (this.ownMembershipTimer) return;
+		const renew = (): void => {
+			for (const row of this.list()) {
+				if (!row.overlay) continue;
+				void this.overlay.ensureOwnMembership(row.networkID).catch(err => console.error(`[Networks] renewing the founder's own membership of ${row.networkID} failed:`, err?.message ?? err));
+			}
+		};
+		renew();
+		this.ownMembershipTimer = setInterval(renew, OWN_MEMBERSHIP_CHECK_MS);
 	}
 
 	/**
@@ -382,7 +550,7 @@ export class Networks {
 				this.reconcileAdmissionClosed = false;
 				try {
 					for (const net of this.getEnabled()) {
-						await this.operationLock(net.networkID).runExclusive(() => {
+						await this.operationLock(net.networkID).runExclusive(async () => {
 							// Re-read under the lock as well: an earlier network's turn is another await.
 							const row = this.get(net.networkID);
 							if (row?.enabled !== true) return;
@@ -392,6 +560,13 @@ export class Networks {
 							// reporting a joined network whose node is not running and whose topic is not
 							// subscribed.
 							if (!this.canJoin()) return;
+							if (row.overlay) {
+								if (!(await this.joinOverlay(row))) return;
+								this.joinedNetworks.add(row.networkID);
+								joinedThisStart.push(row.networkID);
+								this.announcedJoined.set(row.networkID, true);
+								return;
+							}
 							if (!this.network.subscribeTopic(row.networkID)) throw new Error(`Could not subscribe to lishnet ${row.networkID}`);
 							this.joinedNetworks.add(row.networkID);
 							joinedThisStart.push(row.networkID);
@@ -446,7 +621,11 @@ export class Networks {
 			startupError = err;
 		}
 
-		if (startupError === undefined) return;
+		if (startupError === undefined) {
+			this.startOwnMembershipRenewal();
+			this.overlay.resumeInvites();
+			return;
+		}
 
 		// If this call brought the shared node up, a failed membership phase must take it
 		// back down. Keeping an otherwise healthy node with only the prefix of enabled
@@ -750,7 +929,11 @@ export class Networks {
 		const after = Networks.cleanBootstrapList(next?.bootstrapPeers ?? []);
 		// Only for a membership that stays: a leave resets the whole status anyway and a dial
 		// on the way out is pure waste, and a join has nothing installed yet to reconcile.
-		if (joined && wantJoined && (installed.join('\n') !== after.join('\n') || entry?.complete === false)) this.syncBootstrapRuntime(id, installed, after);
+		const protectedNet = next?.overlay !== undefined || this.overlayNodes.isRunning(id);
+		if (joined && wantJoined && protectedNet) await this.overlayNodes.reconfigure(id);
+		else if (joined && wantJoined && (installed.join('\n') !== after.join('\n') || entry?.complete === false)) this.syncBootstrapRuntime(id, installed, after);
+		// A lishnet still waiting for its certificate is not joined, yet its invite delivery talks to the founder.
+		if (!wantJoined && protectedNet) await this.overlay.stopInvite(id);
 		if (joined !== wantJoined) {
 			if (wantJoined) await this.joinNetwork(id);
 			else await this.leaveNetwork(id, installed);
@@ -758,7 +941,7 @@ export class Networks {
 		const settled = this.joinedNetworks.has(id);
 		// Joined also means the stored bootstrap list is the one installed on the node. Whether
 		// its peers answered is not part of it: an unreachable peer is not an unapplied setting.
-		const listInstalled = !settled || (this.appliedBootstrap.get(id)?.addresses ?? []).join('\n') === after.join('\n');
+		const listInstalled = !settled || protectedNet || (this.appliedBootstrap.get(id)?.addresses ?? []).join('\n') === after.join('\n');
 		const outcome: ReconcileOutcome = { transitioned: this.announce(id, settled), joined: settled, applied: settled === wantJoined && listInstalled, converged: next };
 		if (next) outcome.network = { networkID: next.networkID, name: next.name };
 		return outcome;
@@ -807,6 +990,12 @@ export class Networks {
 		// the next startup reads as "already joined" and skips.
 		if (!this.canJoin()) {
 			console.log(`Not joining lishnet ${id}: the node is not running`);
+			return;
+		}
+
+		const row = this.get(id);
+		if (row?.overlay) {
+			if (await this.joinOverlay(row)) this.joinedNetworks.add(id);
 			return;
 		}
 
@@ -891,6 +1080,17 @@ export class Networks {
 	 */
 	private async leaveNetwork(id: string, outgoingBootstrap: string[]): Promise<void> {
 		if (!this.joinedNetworks.has(id)) return;
+
+		// A protected lishnet's peers were never on the public node: stopping its own node is the whole leave.
+		if (this.overlayNodes.isRunning(id)) {
+			try {
+				await this.overlayNodes.leave(id);
+			} finally {
+				this.joinedNetworks.delete(id);
+				this.appliedBootstrap.delete(id);
+			}
+			return;
+		}
 
 		// The list this membership INSTALLED, not whatever the database holds now. Every
 		// caller on the disable path writes the row before the runtime catches up — an edit
@@ -1048,6 +1248,8 @@ export class Networks {
 		// until the next microtask, so `isRunning()` alone still reads true for a moment
 		// and a startup loop in that moment would subscribe onto a node about to die.
 		this.stopRequested = true;
+		if (this.ownMembershipTimer) clearInterval(this.ownMembershipTimer);
+		this.ownMembershipTimer = null;
 		// The door is closed from INSIDE the catalog, not here: a writer already queued on
 		// the catalog reaches its database write before this call reaches the catalog at
 		// all, and it has to get its reservation so the drain below covers it — see
@@ -1062,6 +1264,10 @@ export class Networks {
 			// what keeps waiting for them from presenting as a frozen shutdown.
 			this.network.cancelRunOperations();
 			await this.drainReconciles();
+			// A protected node that fails to stop must not keep the public node running: its helper still exits with
+			// this process, and the next start builds every protected node from scratch.
+			await this.overlay.stopInvites().catch(err => console.error('[Networks] stopping the invite deliveries failed:', err?.message ?? err));
+			await this.overlayNodes.stopAll().catch(err => console.error('[Networks] stopping the protected lishnets failed:', err?.message ?? err));
 			// Cleared only once the node is provably down. Discarding the membership first
 			// meant a stop that failed — leaving the node alive and the wrapper `failed` —
 			// still left this layer claiming it was in no lishnet and had announced nothing.
@@ -1160,14 +1366,14 @@ export class Networks {
 	 * still subscribed, and needs those peers precisely because it is leaving them.
 	 */
 	getTopicPeers(id: string): string[] {
-		return this.joinedNetworks.has(id) ? this.network.getTopicPeers(id) : [];
+		return this.joinedNetworks.has(id) ? (this.overlayNodes.network(id) ?? this.network).getTopicPeers(id) : [];
 	}
 
 	/**
 	 * As {@link getTopicPeers}, with connection type info, and empty on the same terms.
 	 */
 	getTopicPeersInfo(id: string): PeerConnectionInfo[] {
-		return this.joinedNetworks.has(id) ? this.network.getTopicPeersInfo(id) : [];
+		return this.joinedNetworks.has(id) ? (this.overlayNodes.network(id) ?? this.network).getTopicPeersInfo(id) : [];
 	}
 
 	/**
@@ -1176,7 +1382,7 @@ export class Networks {
 	 * the last graft/prune, median peer score).
 	 */
 	getMeshHealth(id: string): IMeshHealth {
-		return this.network.getMeshHealth(id);
+		return (this.overlayNodes.network(id) ?? this.network).getMeshHealth(id);
 	}
 
 	// Validate a raw network object into a LISHNetworkDefinition (without storing).
@@ -1191,6 +1397,7 @@ export class Networks {
 			// describes something other than what would be stored.
 			bootstrapPeers: Array.isArray(data.bootstrapPeers) ? cleanBootstrapList(data.bootstrapPeers) : [],
 			created: data.created || new Date().toISOString(),
+			...(data.overlay !== undefined ? { overlay: validateOverlayDefinition(data.overlay) } : {}),
 		};
 	}
 
@@ -1207,7 +1414,8 @@ export class Networks {
 				// Switching an existing network off leaves it: queue its peers with the write, as
 				// update and setEnabled do, or an interrupted leave strands them.
 				if (this.get(config.networkID)?.enabled && !config.enabled) this.recordLeavingPeers([config.networkID], this.enabledIDsWithout([config.networkID]), crypto.randomUUID());
-				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created);
+				const merged = this.withMergedOverlay(config);
+				upsertLISHnet(this.db, config.networkID, config.name, config.description, config.bootstrapPeers, config.enabled, config.created, merged.overlay);
 			})();
 			return this.reconcileLater(config.networkID);
 		});
@@ -1284,7 +1492,7 @@ export class Networks {
 	/** {@link add} with the outcome of this request — see {@link NetworkMutationOutcome}. */
 	async addDetailed(network: LISHNetworkConfig): Promise<NetworkMutationOutcome<boolean>> {
 		return await this.inMutation(async () => {
-			const staged = await this.inCatalog(() => (addLISHnet(this.db, network) ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined));
+			const staged = await this.inCatalog(() => (addLISHnet(this.db, this.withMergedOverlay(network)) ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined));
 			if (!staged) return Networks.notStored(false);
 			return Networks.outcomeOf(true, staged.row, await staged.job);
 		});
@@ -1310,7 +1518,7 @@ export class Networks {
 				const cleaned = Networks.cleanBootstrapList(network.bootstrapPeers ?? []);
 				const updated = this.db.transaction(() => {
 					if (this.get(network.networkID)?.enabled && !network.enabled) this.recordLeavingPeers([network.networkID], this.enabledIDsWithout([network.networkID]), crypto.randomUUID());
-					return updateLISHnet(this.db, { ...network, bootstrapPeers: cleaned });
+					return updateLISHnet(this.db, this.withMergedOverlay({ ...network, bootstrapPeers: cleaned }));
 				})();
 				return updated ? { row: this.get(network.networkID), job: this.reconcileLater(network.networkID) } : undefined;
 			});
@@ -1361,9 +1569,12 @@ export class Networks {
 			// disabled) lishnet's peers dialable again on the next mention of them. The catalog
 			// lock covers the check and the release together, so no add can slip between them.
 			// `replace()` has asked the same question since it learned this the hard way.
-			await this.inCatalog(() => {
-				if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+			const gone = await this.inCatalog(() => {
+				if (lishnetExists(this.db, id)) return false;
+				this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+				return true;
 			});
+			if (gone) await this.removeOverlayData(id);
 			return Networks.outcomeOf(true, undefined, outcome);
 		});
 	}
@@ -1380,7 +1591,7 @@ export class Networks {
 	 * its affected list from moved underneath it.
 	 */
 	async addIfNotExists(network: LISHNetworkDefinition): Promise<boolean> {
-		return await this.inMutation(() => this.inCatalog(() => addLISHnetIfNotExists(this.db, network)));
+		return await this.inMutation(() => this.inCatalog(() => addLISHnetIfNotExists(this.db, this.withMergedOverlay(network))));
 	}
 
 	/**
@@ -1390,7 +1601,14 @@ export class Networks {
 	 * {@link addIfNotExists} for why the write is still not the caller's to do unlocked.
 	 */
 	async importNetworks(networks: LISHNetworkDefinition[]): Promise<number> {
-		return await this.inMutation(() => this.inCatalog(() => importLISHnets(this.db, networks)));
+		return await this.inMutation(() =>
+			this.inCatalog(() =>
+				importLISHnets(
+					this.db,
+					networks.map(n => this.withMergedOverlay(n))
+				)
+			)
+		);
 	}
 
 	/**
@@ -1424,7 +1642,10 @@ export class Networks {
 				const leaving = [...rows.values()].filter(n => n.enabled && !enabledAfter.has(n.networkID)).map(n => n.networkID);
 				this.db.transaction(() => {
 					this.recordLeavingPeers(leaving, enabledAfter, crypto.randomUUID());
-					replaceLISHnets(this.db, networks);
+					replaceLISHnets(
+						this.db,
+						networks.map(n => this.withMergedOverlay(n))
+					);
 				})();
 				const kept = new Set(networks.map(n => n.networkID));
 				// A network this call drops is deleted every bit as much as one removed through
@@ -1448,9 +1669,12 @@ export class Networks {
 			// Asking under the lock and releasing after it was the same gap one step later: an
 			// add landing in the handoff made the answer stale before it was used.
 			if (removed.length > 0) {
-				await this.inCatalog(() => {
-					for (const id of removed) if (!lishnetExists(this.db, id)) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+				const gone = await this.inCatalog(() => {
+					const ids = removed.filter(id => !lishnetExists(this.db, id));
+					for (const id of ids) this.network.clearRedialSuppressionForNetwork(id, 'deleted');
+					return ids;
 				});
+				for (const id of gone) await this.removeOverlayData(id);
 			}
 			const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
 			if (failures.length > 0)
@@ -1469,12 +1693,12 @@ export class Networks {
 	 * last updated).
 	 */
 	getBootstrapStatus(id: string): BootstrapStatus | null {
-		return this.network.getBootstrapStatus(id);
+		return (this.overlayNodes.network(id) ?? this.network).getBootstrapStatus(id);
 	}
 
 	/** Return per-peer bootstrap status for every network that has any tracked dials. */
 	getAllBootstrapStatuses(): BootstrapStatus[] {
-		return this.network.getAllBootstrapStatuses();
+		return [this.network, ...this.protectedNodes()].flatMap(node => node.getAllBootstrapStatuses());
 	}
 
 	/**

@@ -9,6 +9,7 @@ import { CodedError, type ErrorCode, ErrorCodes, MAX_API_MESSAGE_SIZE, MAX_UPLOA
 import { unsubscribeAllPeers } from '../protocol/peer-tracker.ts';
 import { initSettingsHandlers } from './settings.ts';
 import { initLISHnetsHandlers } from './lishnets.ts';
+import { initOverlayHandlers } from './overlay.ts';
 import { initIdentityHandlers } from './identity.ts';
 import { initDatasetsHandlers } from './datasets.ts';
 import { initFsHandlers } from './fs.ts';
@@ -337,9 +338,10 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
-		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
+		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings, id => this.networks.get(id)?.overlay !== undefined);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation, this.peerReadAbort.signal);
 		const _identity = initIdentityHandlers(this.networks);
+		const _overlay = initOverlayHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
 		// After the transfer handlers: a finished verification resumes the LISH's download through them.
 		_lishs.resumePendingVerifications();
@@ -479,6 +481,23 @@ export class APIServer {
 			'lishnets.getBootstrapStatus': _lishnets.getBootstrapStatus,
 			'lishnets.getAllBootstrapStatuses': _lishnets.getAllBootstrapStatuses,
 			'lishnets.updateBootstrapPeers': _lishnets.updateBootstrapPeers,
+			// Protected lishnets
+			'overlay.create': _overlay.create,
+			'overlay.requestAccess': _overlay.requestAccess,
+			'overlay.importRequest': _overlay.importRequest,
+			'overlay.listRequests': _overlay.listRequests,
+			'overlay.rejectRequest': _overlay.rejectRequest,
+			'overlay.approve': _overlay.approve,
+			'overlay.issue': _overlay.issue,
+			'overlay.listMembers': _overlay.listMembers,
+			'overlay.revoke': _overlay.revoke,
+			'overlay.setHosts': _overlay.setHosts,
+			'overlay.importCertificate': _overlay.importCertificate,
+			'overlay.createInvite': _overlay.createInvite,
+			'overlay.useInvite': _overlay.useInvite,
+			'overlay.exportCA': _overlay.exportCA,
+			'overlay.importCA': _overlay.importCA,
+			'overlay.status': _overlay.status,
 			// Browse network — LISH search
 			'search.startSearch': _search.startSearch,
 			'search.cancelSearch': _search.cancelSearch,
@@ -493,6 +512,12 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
+			'lishs.setScope': async (p: { lishID: string; networkIDs: string[] }) => {
+				const result = _lishs.setScope(p);
+				// A running download moves to the node of its new scope instead of asking the old lishnets on.
+				await _transfer.rehomeDownload(p.lishID);
+				return result;
+			},
 			'lishs.parseFromFile': _lishs.parseFromFile,
 			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
 			'lishs.parseFromJSON': _lishs.parseFromJSON,
@@ -593,6 +618,7 @@ export class APIServer {
 		this.networks.onPeerCountChange = counts => {
 			for (const client of this.clients) this.emit(client, 'peers:count', counts);
 		};
+		this.networks.onOverlayEvent = (event, data) => this.broadcast(event, data);
 		this.networks.onBootstrapStatusChange = (networkID, status) => {
 			this.broadcast('lishnets:bootstrapStatus', { networkID, status });
 		};

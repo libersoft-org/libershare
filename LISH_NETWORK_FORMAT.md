@@ -1,7 +1,7 @@
 # LISH network structure format specification
 
 **Created**: 29 October 2025
-**Last update**: 29 October 2025
+**Last update**: 16 October 2026
 
 ## Overview
 
@@ -15,6 +15,7 @@ LISH network structure format describes a single LISH file sharing network. This
 - Support for multiple bootstrap peers
 - Creation timestamp
 - Support for IPv4, IPv6, and DNS-based multiaddrs
+- Optional overlay definition for protected networks
 
 ## Representation
 
@@ -36,8 +37,33 @@ interface ILISHNetwork {
 	description?: string; // Free-form text description such as purpose, rules, etc. (optional)
 	bootstrapPeers: string[]; // Array of bootstrap peer multiaddrs for network discovery (required)
 	created?: string; // ISO 8601 timestamp in UTC when network was created (optional)
+	overlay?: ILISHOverlay; // Present for a protected network (optional)
 }
 ```
+
+## Protected networks
+
+A network with an `overlay` runs inside its own [Nebula](https://github.com/slackhq/nebula) overlay instead of on the public node. Members reach each other only under overlay addresses; their public addresses are known only to the network's own lighthouses and relays. Joining needs a certificate signed by the network's certificate authority (CA), whose key stays with the founder. The overlay object is public: it holds no key and no secret.
+
+```typescript
+interface ILISHOverlay {
+	type: 'nebula'; // Overlay technology (required)
+	caCert: string; // PEM certificate of the network's CA (required)
+	subnet: string; // IPv4 subnet of overlay addresses, aligned, /8 to /30, e.g. "100.64.0.0/16" (required)
+	lighthouses: IOverlayHost[]; // Hosts members find each other through (required, may be empty while the founder sets them up)
+	relays: IOverlayHost[]; // Hosts that carry traffic between members (required, may be empty likewise)
+	lanDirect?: boolean; // Members behind the same public address connect directly (default false)
+	version?: number; // Version of the signed network state the hosts come from (default 0)
+}
+
+interface IOverlayHost {
+	vpnIP: string; // Overlay address inside subnet (required)
+	addr: string; // Public UDP endpoint, host:port (required)
+	peerID?: string; // libp2p peer ID of the host's node in this network, which makes it a bootstrap peer (optional)
+}
+```
+
+The bootstrap peers of a protected network are overlay addresses (`/ip4/<overlay address>/tcp/9090/p2p/<peer ID>`). Lighthouses and relays can change after the definition was shared: the founder publishes a newer state signed by the CA key (see LISH_NETWORK_PROTOCOL.md), and members update their copy from it.
 
 ## Bootstrap peers
 
@@ -77,5 +103,7 @@ Bootstrap peers are initial connection points for discovering other peers in the
 
 - At least one bootstrap peer must be provided
 - All timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-20T14:30:00.000Z")
+- A protected network keeps its CA: importing a definition with the same `networkID` and a different `caCert` is refused
+- Once stored, a protected network's lighthouses and relays change only through the founder's signed state; importing its definition again does not replace them
 
 

@@ -58,6 +58,11 @@ describe('error recovery and a switch-off during the attempt', () => {
 	unfinishedServer.allChunkCount = 1;
 	const networks = {
 		getNetwork: () => ({ pauseLISHProtocolHandlersAndDrain: async () => {} }),
+		get: () => undefined,
+		networkFor(this: any) {
+			return this.getRunningNetwork();
+		},
+		protectedNodes: () => [],
 		getRunningNetwork: (): any => new MockNetwork(),
 		getEnabled: (): any[] => [{ networkID: 'net-a' }],
 		isJoined: (): boolean => true,

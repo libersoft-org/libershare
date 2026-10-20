@@ -47,6 +47,7 @@ ${PRODUCT_NAME} - peer-to-peer file sharing application
 %files
 /usr/bin/${PRODUCT_NAME_LOWER}
 /usr/bin/lish-backend
+/usr/bin/lish-overlay
 /usr/libexec/libershare/lish-network-helper
 /usr/share/applications/${PRODUCT_NAME_LOWER}.desktop
 /usr/share/applications/${PRODUCT_NAME_LOWER}-debug.desktop
@@ -62,7 +63,7 @@ SPEC_EOF
 		"$WORK/SPECS/${PRODUCT_NAME_LOWER}.spec"
 	RPM_BUILT=$(find "$WORK/RPMS" -name "*.rpm" | head -1)
 	# Proof rather than trust: compare what the package carries with what was built.
-	for _rpm_file in /usr/bin/lish-backend /usr/libexec/libershare/lish-network-helper; do
+	for _rpm_file in /usr/bin/lish-backend /usr/bin/lish-overlay /usr/libexec/libershare/lish-network-helper; do
 		_rpm_packed=$(rpm -qp --dump "$RPM_BUILT" | awk -v p="$_rpm_file" '$1 == p { print $4 }')
 		_rpm_staged=$(sha256sum "$PKG_STAGING$_rpm_file" | cut -d' ' -f1)
 		if [ "$_rpm_packed" != "$_rpm_staged" ]; then
@@ -147,13 +148,15 @@ APPRUN_EOF
 _stage_zip_linux() {
 	cp "$BUILD_RELEASE_DIR/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend" "$ZIP_STAGING/lish-backend"
+	cp "$ROOT_DIR/backend/build/lish-overlay" "$ZIP_STAGING/lish-overlay"
 	_copy_debug_script
-	chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend"
+	chmod +x "$ZIP_STAGING/$PRODUCT_NAME_LOWER" "$ZIP_STAGING/lish-backend" "$ZIP_STAGING/lish-overlay"
 }
 
 _stage_zip_windows() {
 	cp "$BUILD_RELEASE_DIR/${PRODUCT_NAME}.exe" "$ZIP_STAGING/"
 	cp "$ROOT_DIR/backend/build/lish-backend.exe" "$ZIP_STAGING/lish-backend.exe"
+	cp "$ROOT_DIR/backend/build/lish-overlay.exe" "$ZIP_STAGING/lish-overlay.exe"
 	# No network helper here on purpose: it may only elevate from an administrator-
 	# owned directory (Program Files), and a portable ZIP runs from wherever it was
 	# extracted. Host network settings are read-only in this bundle.
@@ -194,6 +197,9 @@ build_linux_packages() {
 	chmod +x "$PKG_STAGING/usr/bin/$PRODUCT_NAME_LOWER"
 	cp "$ROOT_DIR/backend/build/lish-backend" "$PKG_STAGING/usr/bin/"
 	chmod +x "$PKG_STAGING/usr/bin/lish-backend"
+	# The protected-lishnet helper is looked up next to the backend.
+	cp "$ROOT_DIR/backend/build/lish-overlay" "$PKG_STAGING/usr/bin/"
+	chmod +x "$PKG_STAGING/usr/bin/lish-overlay"
 	cp "$ROOT_DIR/backend/build/lish-network-helper" "$PKG_STAGING/usr/libexec/libershare/"
 	chmod 0755 "$PKG_STAGING/usr/libexec/libershare/lish-network-helper"
 	cp "$SCRIPT_DIR/polkit/org.libersoft.libershare.network.policy" "$PKG_STAGING/usr/share/polkit-1/actions/"

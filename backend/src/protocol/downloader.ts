@@ -7,7 +7,7 @@ import { lishTopic } from './constants.ts';
 import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { Circuit } from '@multiformats/multiaddr-matcher';
-import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler } from './lish-protocol.ts';
+import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler, setLISHScope } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { withLISHClient } from './lish-client-session.ts';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
@@ -148,6 +148,11 @@ export class Downloader {
 	 */
 	getOriginalNetworkIDs(): string[] {
 		return [...this.originalNetworkIDs];
+	}
+
+	/** The node this download takes its peers from. */
+	getNetwork(): Network {
+		return this.network;
 	}
 
 	/**
@@ -395,9 +400,13 @@ export class Downloader {
 	 */
 	private registerAnnouncementHandler(): void {
 		this.haveAnnouncementDisposer?.();
-		this.haveAnnouncementDisposer = registerHaveAnnouncementHandler(this.lishID, ann => {
-			this.onHaveAnnouncement(ann).catch(e => trace(`[DL] onHaveAnnouncement error: ${e?.message ?? e}`));
-		});
+		this.haveAnnouncementDisposer = registerHaveAnnouncementHandler(
+			this.lishID,
+			ann => {
+				this.onHaveAnnouncement(ann).catch(e => trace(`[DL] onHaveAnnouncement error: ${e?.message ?? e}`));
+			},
+			this.network.lishScope ?? null
+		);
 	}
 
 	/**
@@ -433,6 +442,14 @@ export class Downloader {
 		this.networkIDs = ids;
 		this.originalNetworkIDs = originalNetworkIDs ? [...originalNetworkIDs] : [...ids];
 		this.fileAllocator = new FileAllocator(this.datasetRoot, () => this.dataServer.getDatasetLinkBindings(this.lishID));
+	}
+
+	/** Store a manifest a peer sent. A LISH first seen through a protected lishnet is shared back into it only. */
+	private addManifest(lish: IStoredLISH): void {
+		const isNew = !this.dataServer.get(this.lishID);
+		this.dataServer.add(lish);
+		const scope = this.network.lishScope;
+		if (isNew && scope) setLISHScope(this.lishID, [scope]);
 	}
 
 	async init(lishPath: string): Promise<void> {
@@ -601,11 +618,11 @@ export class Downloader {
 						// local state: the download directory, and any post-download move target
 						// the LISH was created with — the incoming manifest never carries it.
 						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
-						this.dataServer.add(this.lish);
+						this.addManifest(this.lish);
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
-						console.log(`[DL] Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
+						console.log(`[DL] Got manifest:${manifest.files.length} files, ${this.missingChunks.length} chunks`);
 						this.transitionTo('preparing', 'doWork() got manifest');
 						break;
 					}
@@ -824,7 +841,7 @@ export class Downloader {
 						// local state: the download directory, and any post-download move target
 						// the LISH was created with — the incoming manifest never carries it.
 						this.lish = { ...manifest, directory: this.downloadDir, ...(this.lish?.finalDirectory ? { finalDirectory: this.lish.finalDirectory } : {}) };
-						this.dataServer.add(this.lish);
+						this.addManifest(this.lish);
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;

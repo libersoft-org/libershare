@@ -22,6 +22,7 @@ function makeNetworks(overrides: Record<string, () => any> = {}): FactoryResetOr
 		stopAllNetworks: overrides['stopAllNetworks'] ?? (() => Promise.resolve()),
 		recordPeersForCatalogReset: overrides['recordPeersForCatalogReset'] ?? (() => {}),
 		startEnabledNetworks: overrides['startEnabledNetworks'] ?? (() => Promise.resolve()),
+		clearOverlayData: overrides['clearOverlayData'] ?? (() => Promise.resolve()),
 		getNetwork: () => network,
 	} as any;
 }
@@ -35,6 +36,8 @@ function makeDataServer(overrides: Record<string, () => any> = {}): FactoryReset
 		getUploadEnabledLishs: overrides['getUploadEnabledLishs'] ?? (() => new Set<string>()),
 		setDownloadEnabled: () => {},
 		setUploadEnabled: () => {},
+		getLISHScopes: () => new Map<string, string[]>(),
+		setLISHScope: () => {},
 	} as any;
 }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, untrack, onMount } from 'svelte';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { activateArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_POSITIONS } from '../../scripts/navigationLayout.ts';
@@ -8,7 +8,9 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename, compressionExtension, stripCompressionExtension, type CompressionAlgorithm } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, privateOnly } from '../../scripts/settings.ts';
+	import { getUsableNetworks } from '../../scripts/lishNetwork.ts';
+	import { type LISHNetworkConfig } from '@shared';
 
 	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
 	function shareBaseName(path: string): string {
@@ -181,6 +183,28 @@
 		if (untrack(() => initialDataPath) && name) handleNameChange(name);
 	});
 
+	// Where the LISH is shared: '' = the public lishnets, else one protected lishnet only.
+	let protectedNets = $state<LISHNetworkConfig[]>([]);
+	let scope = $state('');
+	// Unknown lishnets are no answer to where the LISH goes: taken as none, it was created public.
+	let networksError = $state('');
+	// Nor are lishnets still loading: the scope chosen so far is only the default.
+	let networksLoaded = $state(false);
+	onMount(() => {
+		getUsableNetworks()
+			.then(nets => {
+				protectedNets = nets.filter(n => n.overlay);
+				// With no public lishnet in use, sharing publicly is never what the user means.
+				if (!nets.some(n => !n.overlay && n.enabled) && protectedNets[0]) scope = protectedNets[0].networkID;
+				networksLoaded = true;
+			})
+			.catch(e => (networksError = translateError(e)));
+	});
+	// The setting may arrive after the lishnets: hiding the public choice must not leave it chosen.
+	$effect(() => {
+		if ($privateOnly && scope === '' && protectedNets[0]) scope = protectedNets[0].networkID;
+	});
+
 	let description = $state('');
 	let chunkSize = $state('1M'); // Default 1MB
 	let algorithm = $state<HashAlgorithm>(DEFAULT_ALGO);
@@ -193,7 +217,7 @@
 		// keep a suffix that contradicts the selected algorithm.
 		if (saveToFile) updateLISHFileExtension();
 		const validationError = validateLISHCreateForm({ dataPath, saveToFile, lishFile: saveToFile ? lishFile || undefined : undefined, chunkSize, threads });
-		errorMessage = validationError ? getLISHCreateErrorMessage(validationError, $t) : '';
+		errorMessage = networksError || (validationError ? getLISHCreateErrorMessage(validationError, $t) : '') || ($privateOnly && !scope && ($autoStartSharing || $autoStartDownloading) ? $t('settings.lishNetwork.protected.errorPrivateOnly') : '');
 		if (!errorMessage) {
 			// Check if data path exists and is not an empty directory
 			try {
@@ -226,6 +250,7 @@
 			// Apply global auto-start settings — controlled in Settings → Download.
 			if ($autoStartSharing) params['addToSharing'] = true;
 			if ($autoStartDownloading) params['addToDownloading'] = true;
+			if (scope) params['scope'] = [scope];
 			// Only pass non-default advanced options
 			const parsedChunkSize = parseChunkSize(chunkSize);
 			if (parsedChunkSize !== null && parsedChunkSize !== 1024 * 1024) params['chunkSize'] = parsedChunkSize;
@@ -408,10 +433,23 @@
 				<!-- Threads -->
 				<Input bind:value={threads} label={$t('lish.create.threads')} type="number" min={0} position={[0, 11]} />
 			{/if}
+			{#if protectedNets.length > 0}
+				<div>
+					<div class="label">{$t('lish.create.shareIn')}:</div>
+					<div class="algo-selector">
+						{#if !$privateOnly}
+							<Button label={$t('lish.create.sharePublic')} position={[0, 12]} active={scope === ''} onConfirm={() => (scope = '')} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{/if}
+						{#each protectedNets as net, i}
+							<Button icon="/img/lock.svg" label={net.name} position={[i + 1, 12]} active={scope === net.networkID} onConfirm={() => (scope = net.networkID)} padding="1vh 2vh" fontSize="2vh" borderRadius="1vh" />
+						{/each}
+					</div>
+				</div>
+			{/if}
 			<Alert type="error" message={errorMessage} />
 		</div>
-		<ButtonBar justify="center" basePosition={[0, 12]}>
-			<Button icon="/img/plus.svg" label={$t('common.createLISH')} onConfirm={handleCreate} />
+		<ButtonBar justify="center" basePosition={[0, 13]}>
+			<Button icon="/img/plus.svg" label={$t('common.createLISH')} disabled={!networksLoaded && !networksError} onConfirm={handleCreate} />
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={goBack} />
 		</ButtonBar>
 	</div>

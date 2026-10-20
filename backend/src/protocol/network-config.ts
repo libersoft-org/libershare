@@ -25,10 +25,11 @@ import { type PrivateKey } from '@libp2p/interface';
 import { type SettingsData } from '../settings.ts';
 import { trace } from '../logger.ts';
 import { parseAcceptPXThreshold } from './constants.ts';
-import { effectiveNetworkConfig } from './network-settings.ts';
+import { effectiveNetworkConfig, type EffectiveNetworkConfig } from './network-settings.ts';
 import { getLocalCidrs, shouldDenyDial, extractFirstIPv4 } from './address-filter.ts';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { extractDestinationPeerID, destinationPeerIDOf } from './multiaddr-utils.ts';
+import { overlayTarget, overlayTransport, type OverlayBridge } from './overlay-transport.ts';
 const { multiaddr: Multiaddr } = await import('@multiformats/multiaddr');
 
 /** Keep recovery metadata only as long as libp2p can keep the peer itself. */
@@ -61,6 +62,20 @@ function buildDirectPeersFromBootstrap(uniquePeers: string[]): DirectPeer[] {
 	}
 	return direct;
 }
+/**
+ * A protected lishnet's node lives entirely inside that network's overlay: one transport (the bridge to its
+ * `lish-overlay` helper), one listen address (its overlay address) and nothing that could learn or publish an
+ * address outside the overlay.
+ */
+export interface OverlayNodeOptions {
+	/** The node's own overlay address. */
+	vpnIP: string;
+	/** TCP port inside the overlay. */
+	port: number;
+	bridge: OverlayBridge;
+	/** Whether a connection with this peer ID through the tunnel of this overlay address may stand. */
+	authorize(peerID: string, overlayIP: string): Promise<boolean>;
+}
 export interface BuildConfigParams {
 	privateKey: PrivateKey;
 	datastore: any;
@@ -69,6 +84,8 @@ export interface BuildConfigParams {
 	myPeerID: string;
 	/** Closes connections that went silent; given every connection the upgrader reports. */
 	connectionLiveness?: ConnectionLiveness;
+	/** Build the node of a protected lishnet instead of the public one. */
+	overlay?: OverlayNodeOptions;
 }
 export interface BuildConfigResult {
 	config: any;
@@ -88,27 +105,22 @@ export interface BuildConfigResult {
 	bootstrapMultiaddrs: any[];
 }
 
-export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult {
-	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerID: myPeerID } = params;
-	const bootstrapPeerIDs = new Set<string>();
-	const configuredBootstrapPeerIDs = new Set<string>();
-	const bootstrapMultiaddrs: any[] = [];
-	// Unique bootstrap peers computed up-front so gossipsub config below can
-	// pre-populate directPeers from them.
-	// Self is decided by the DESTINATION identity, not by "the string mentions us". A
-	// relayed entry `/…/p2p/<us>/p2p-circuit/p2p/<remote>` names us as the RELAY hop while
-	// targeting somebody else, and the substring test threw it away as our own address.
-	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => destinationPeerIDOf(p) !== myPeerID);
-	// Every value the node is built from comes from this one projection, which is also what a
-	// settings change is compared by to decide whether the node has to restart.
-	const effective = effectiveNetworkConfig(allSettings.network);
-	const pxEnabled = effective.peerExchange.enabled;
-	const acceptPXThreshold = effective.peerExchange.acceptPXThreshold;
-	const parsedThreshold = parseAcceptPXThreshold(allSettings.network?.peerExchange?.acceptPXThreshold);
-	if (parsedThreshold.unsafe) console.warn(`[NET] PX acceptPXThreshold=${String(parsedThreshold.raw)} is unsafe; using ${acceptPXThreshold}`);
-	const trustedPXPeerIDs = new Set(effective.peerExchange.trustedPeerIds);
-	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
-	else console.debug('[NET] PX disabled by local policy');
+interface Addressing {
+	transports: any[];
+	port: number;
+	listenAddresses: string[];
+	appendAnnounceAddresses: string[];
+}
+
+/** The overlay node listens on its overlay address only and announces nothing else. */
+function overlayAddressing(overlay: OverlayNodeOptions): Addressing {
+	const listen = `/ip4/${overlay.vpnIP}/tcp/${overlay.port}`;
+	console.log(`✓ Overlay node on ${listen}: no other transport, no address discovery, no relay, no NAT traversal`);
+	return { transports: [overlayTransport(overlay.bridge)], port: overlay.port, listenAddresses: [listen], appendAnnounceAddresses: [] };
+}
+
+/** Transports, listen and announce addresses of the public node: TCP on every interface, relayed paths, interface addresses announced. */
+function publicAddressing(effective: EffectiveNetworkConfig): Addressing {
 	// Build transports array
 	const transports: any[] = [tcp()];
 	// discoverRelays actively negotiates a reservation with the first N
@@ -175,12 +187,44 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			console.log(`✓ Announce address (configured): ${addr}`);
 		}
 	}
+	return { transports, port, listenAddresses, appendAnnounceAddresses };
+}
+
+export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult {
+	const { privateKey, datastore, allSettings, bootstrapPeers, myPeerID: myPeerID } = params;
+	const bootstrapPeerIDs = new Set<string>();
+	const configuredBootstrapPeerIDs = new Set<string>();
+	const bootstrapMultiaddrs: any[] = [];
+	// Unique bootstrap peers computed up-front so gossipsub config below can
+	// pre-populate directPeers from them.
+	// Self is decided by the DESTINATION identity, not by "the string mentions us". A
+	// relayed entry `/…/p2p/<us>/p2p-circuit/p2p/<remote>` names us as the RELAY hop while
+	// targeting somebody else, and the substring test threw it away as our own address.
+	const uniqueBootstrapPeers = [...new Set(bootstrapPeers)].filter(p => destinationPeerIDOf(p) !== myPeerID);
+	// Every value the node is built from comes from this one projection, which is also what a
+	// settings change is compared by to decide whether the node has to restart.
+	const effective = effectiveNetworkConfig(allSettings.network);
+	const overlay = params.overlay;
+	// Peer exchange hands out addresses learned from other peers; inside an overlay every peer is found through the topic.
+	const pxEnabled = !overlay && effective.peerExchange.enabled;
+	const acceptPXThreshold = effective.peerExchange.acceptPXThreshold;
+	const parsedThreshold = parseAcceptPXThreshold(allSettings.network?.peerExchange?.acceptPXThreshold);
+	if (parsedThreshold.unsafe) console.warn(`[NET] PX acceptPXThreshold=${String(parsedThreshold.raw)} is unsafe; using ${acceptPXThreshold}`);
+	const trustedPXPeerIDs = new Set(effective.peerExchange.trustedPeerIds);
+	if (pxEnabled) console.log(`[NET] PX enabled by local policy (trustedPeers=${trustedPXPeerIDs.size}, acceptPXThreshold=${acceptPXThreshold})`);
+	else console.debug('[NET] PX disabled by local policy');
+	// Protected lishnets only: the public node keeps its identity and lifecycle but touches no network.
+	const sealed = !overlay && effective.privateOnly;
+	if (sealed) console.log('✓ Protected lishnets only: the public node listens on nothing and dials nothing');
+	const { transports, port, listenAddresses, appendAnnounceAddresses } = overlay ? overlayAddressing(overlay) : sealed ? { transports: [tcp()], port: 0, listenAddresses: [], appendAnnounceAddresses: [] } : publicAddressing(effective);
 	const config: any = {
 		privateKey,
 		datastore,
 		addresses: {
 			listen: listenAddresses,
 			appendAnnounce: appendAnnounceAddresses.length > 0 ? appendAnnounceAddresses : undefined,
+			// Belt and braces for the overlay node: whatever reaches the address manager, only overlay addresses leave it.
+			...(overlay ? { announceFilter: (mas: any[]) => mas.filter(ma => overlayTarget(ma, overlay.bridge.subnet) !== null) } : {}),
 		},
 		// simple-metrics drives two consumers:
 		//   1. backend/src/monitoring/memory-trace.ts via onLibp2pMetrics — correlates
@@ -189,7 +233,8 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		//      instance for the relay widget; only the interval matters for that path.
 		// 5 s sample interval is sufficient for both: the leak monitor is anyway
 		// downsampled, and the relay widget refreshes far less often than 1 Hz.
-		metrics: withConnectionLiveness(simpleMetrics({ intervalMs: 5000, onMetrics: onLibp2pMetrics }), params.connectionLiveness),
+		// The memory trace keeps one libp2p snapshot; only the public node feeds it, so protected nodes cannot overwrite it.
+		metrics: withConnectionLiveness(simpleMetrics({ intervalMs: 5000, onMetrics: overlay ? () => {} : onLibp2pMetrics }), params.connectionLiveness),
 		transports,
 		connectionEncrypters: [noise({ crypto: noiseCrypto })],
 		streamMuxers: [yamux()],
@@ -221,6 +266,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// restart without saturating dial CPU; libp2p default of 5 is too low
 			// for fleets >30 peers.
 			maxParallelReconnects: 15,
+			// A protected lishnet's node resolves no names: a /dnsaddr a peer announced was looked up in public DNS
+			// before the dial filter refused it.
+			...(overlay || sealed ? { resolvers: {} } : {}),
 		},
 		// Deny dial attempts to multiaddrs that cannot possibly succeed from this
 		// node's own interfaces. Peers advertise every known multiaddr (via
@@ -236,6 +284,9 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 		// VPN up/down is picked up within 10 s via the CIDR cache TTL.
 		connectionGater: {
 			denyDialMultiaddr: async (ma: any): Promise<boolean> => {
+				// The overlay node dials overlay addresses only, trusted peer or not.
+				if (overlay) return overlayTarget(ma, overlay.bridge.subnet) === null;
+				if (sealed) return true;
 				// Bypass gater for trusted peers (configured bootstrap ∪ configured trustedPeerIds).
 				// Multi-subnet fleets (e.g. 192.168.10.x + 192.168.20.x) would otherwise have
 				// trusted peers blocked when their advertised addr lives on a LAN segment
@@ -262,6 +313,15 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 				}
 				return deny;
 			},
+			// The overlay node lets a connection stand only for the member its tunnel's certificate names, and not for a
+			// revoked one: the Nebula tunnel says who is on the other end, the libp2p handshake only what it claims.
+			...(overlay
+				? {
+						denyInboundEncryptedConnection: async (peerId: any, maConn: any): Promise<boolean> => !(await overlay.authorize(peerId.toString(), overlayTarget(maConn.remoteAddr, overlay.bridge.subnet)?.ip ?? '')),
+						denyOutboundEncryptedConnection: async (peerId: any, maConn: any): Promise<boolean> => !(await overlay.authorize(peerId.toString(), overlayTarget(maConn.remoteAddr, overlay.bridge.subnet)?.ip ?? '')),
+					}
+				: {}),
+			...(sealed ? { denyInboundConnection: async (): Promise<boolean> => true } : {}),
 		},
 		// No connectionProtector - swarm key removed. Open network, isolation via topics.
 		peerStore: {
@@ -410,36 +470,14 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 			// maintenance. clientMode option deprecated by removing service.
 		},
 	};
-	// Add relay server service if enabled
-	if (effective.relayReservations !== null) {
-		const maxReservationsRaw = effective.relayReservations;
-		const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
-		config.services.relay = circuitRelayServer({
-			reservations: {
-				maxReservations,
-				defaultDataLimit: BigInt(1024 * 1024 * 1024), // 1GB (default: 128KB — kills file transfers)
-				defaultDurationLimit: 30 * 60 * 1000, // 30 min (default: 2 min)
-			},
-		});
-		console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw}, dataLimit: 1GB, duration: 30min)`);
-	}
-	// AutoNAT v2 adds amplification-attack protection (maxDialDataBytes)
-	// and supersedes v1, which upstream deprecated.
-	config.services.autonat = autoNATv2();
-	config.services.dcutr = dcutr();
-	console.log('✓ AutoNAT v2 + DCUtR enabled');
-	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
-	// maps it back to this host, easing inbound reachability behind a NAT.
-	// The switch follows the stored setting; new installations enable port forwarding.
-	if (effective.upnp) {
-		config.services.upnpNAT = uPnPNAT();
-		console.log('✓ UPnP-NAT port forwarding enabled');
-	}
+	// Relay server, AutoNAT, DCUtR and UPnP all exist to learn, verify or open a PUBLIC address — none of which an
+	// overlay node may have.
+	if (!overlay && !sealed) addPublicServices(config, effective);
 	// Build peerDiscovery array: bootstrap (if peers provided) + mDNS (if enabled).
 	const peerDiscovery: any[] = [];
 
 	// uniqueBootstrapPeers computed at top of function (used above for directPeers seed).
-	if (uniqueBootstrapPeers.length > 0) {
+	if (uniqueBootstrapPeers.length > 0 && !sealed) {
 		console.log('Configuring bootstrap peers:');
 		const validBootstrapPeers: string[] = [];
 		for (const peer of uniqueBootstrapPeers) {
@@ -475,7 +513,7 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	// via mDNS — bootstrap + gossipsub mesh handles WAN.
 	// Default ON since cost is negligible (~1 packet / interval) and gain
 	// (zero-config LAN peer discovery) is high.
-	if (effective.mdnsInterval !== null) {
+	if (effective.mdnsInterval !== null && !overlay && !sealed) {
 		const mdnsInterval = effective.mdnsInterval;
 		peerDiscovery.push(
 			mdns({
@@ -490,4 +528,33 @@ export function buildLibp2pConfig(params: BuildConfigParams): BuildConfigResult 
 	}
 
 	return { config, port, bootstrapPeerIDs: bootstrapPeerIDs, configuredBootstrapPeerIDs, bootstrapMultiaddrs };
+}
+
+/** Services of the public node only: circuit relay server, AutoNAT v2, DCUtR and UPnP port forwarding. */
+function addPublicServices(config: any, effective: EffectiveNetworkConfig): void {
+	// Add relay server service if enabled
+	if (effective.relayReservations !== null) {
+		const maxReservationsRaw = effective.relayReservations;
+		const maxReservations = maxReservationsRaw === 0 ? Infinity : maxReservationsRaw;
+		config.services.relay = circuitRelayServer({
+			reservations: {
+				maxReservations,
+				defaultDataLimit: BigInt(1024 * 1024 * 1024), // 1GB (default: 128KB — kills file transfers)
+				defaultDurationLimit: 30 * 60 * 1000, // 30 min (default: 2 min)
+			},
+		});
+		console.log(`✓ Circuit relay server enabled (maxReservations: ${maxReservationsRaw === 0 ? 'unlimited' : maxReservationsRaw}, dataLimit: 1GB, duration: 30min)`);
+	}
+	// AutoNAT v2 adds amplification-attack protection (maxDialDataBytes)
+	// and supersedes v1, which upstream deprecated.
+	config.services.autonat = autoNATv2();
+	config.services.dcutr = dcutr();
+	console.log('✓ AutoNAT v2 + DCUtR enabled');
+	// UPnP-NAT asks the local router (via IGD) to open the incoming port and
+	// maps it back to this host, easing inbound reachability behind a NAT.
+	// The switch follows the stored setting; new installations enable port forwarding.
+	if (effective.upnp) {
+		config.services.upnpNAT = uPnPNAT();
+		console.log('✓ UPnP-NAT port forwarding enabled');
+	}
 }
