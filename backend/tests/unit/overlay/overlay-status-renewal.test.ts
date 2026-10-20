@@ -248,6 +248,26 @@ describe('compacted revocations', () => {
 		expect(isRevoked(known, { name: peer, fingerprint: 'c'.repeat(64), notBefore: renewed[0] }, now + 8 * DAY)).toBe(false);
 	});
 
+	// Device A gave a member one day and then 63 times 100 days, device B unaware of them 7 days: merging the two oldest
+	// lent A's first 100-day certificate the one-day end, B's decision no longer reached it, and it outlasted B's 7 days.
+	it('never let a certificate outlast a decision when there are too many to keep', () => {
+		const now = Date.parse('2026-06-01T00:00:00Z');
+		const peer = '1'.repeat(46);
+		const fp = (i: number): string => i.toString(16).padStart(64, '0');
+		const limits: OverlayLimit[] = [[at(now - 100 * 60_000), at(now + DAY), 'aaaaaaaa', {}, fp(0)]];
+		for (let i = 1; i <= 63; i++) limits.push([at(now - (100 - i) * 60_000), at(now + 100 * DAY), 'aaaaaaaa', {}, fp(i)]);
+		limits.push([at(now - 10_000), at(now + 7 * DAY), 'bbbbbbbb', {}, fp(64)]);
+		const full = { fingerprints: [], peers: {}, limits: { [peer]: limits } };
+		const compact = compactRevocations(full, now);
+		expect(compact.limits![peer]!.length).toBeLessThanOrEqual(MAX_LIMITS_PER_MEMBER);
+		for (const l of limits) {
+			const cert = { name: peer, fingerprint: l[4]!, notBefore: l[0] };
+			for (let day = 0; day <= 101; day++) if (isRevoked(full, cert, now + day * DAY)) expect(isRevoked(compact, cert, now + day * DAY)).toBe(true);
+		}
+		// The newest of A still lasts to B's end, as before.
+		expect(isRevoked(compact, { name: peer, fingerprint: fp(63), notBefore: limits[63]![0] }, now + 6 * DAY)).toBe(false);
+	});
+
 	// Each approval added a limit and states took 64 per member: the 65th approval made a state no node accepted.
 	it('stay within the limits a state may carry per member, ending no certificate later', () => {
 		const now = Date.parse('2026-06-01T00:00:00Z');
