@@ -401,7 +401,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * broadcasts, applies sharing/downloading flags, and starts verification.
 	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
 	 */
-	async function addLISH(lish: IStoredLISH, opts: { root: DatasetRoot; finalRoot?: DatasetRoot; enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; scope?: string[] | undefined }): Promise<void> {
+	async function addLISH(lish: IStoredLISH, opts: { root: DatasetRoot; finalRoot?: DatasetRoot; enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; scope?: string[] | undefined; keptScope?: string[] | undefined }): Promise<void> {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
 		const dataset = await openDataset(opts.root);
@@ -410,8 +410,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		} finally {
 			await dataset.close();
 		}
+		// Without an explicit scope a re-added LISH keeps the one it has as it is added: one set meanwhile wins over the
+		// one it had when the import started (`keptScope`), which counts only for a LISH deleted meanwhile.
+		const known = !!dataServer.get(lish.id);
+		const scope = (): string[] => opts.scope ?? (known ? getLISHScope(lish.id) : (opts.keptScope ?? []));
 		// Again at the end of a long creation or import: the setting may have been switched on meanwhile.
-		refusePublicWhenPrivateOnly(opts.scope ?? getLISHScope(lish.id));
+		refusePublicWhenPrivateOnly(scope());
 		dataServer.addDataset(lish, opts.root, opts.finalRoot);
 		moveRecoveryTokens.delete(lish.id);
 		stopRecoveryForLISH(lish.id);
@@ -420,9 +424,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		removeUploadState(lish.id);
 		await forceDisableDownload(lish.id);
 		// Before sharing starts: a LISH meant for a protected lishnet must never be served publicly, not even briefly.
-		// Without an explicit scope a re-added LISH keeps the one it had.
-		if (opts.scope) setLISHScope(lish.id, opts.scope);
-		else if (getLISHScope(lish.id).length > 0) setLISHScope(lish.id, getLISHScope(lish.id));
+		const chosen = scope();
+		if (opts.scope || chosen.length > 0) setLISHScope(lish.id, chosen);
 		console.log(`✓ LISH added:${lish.id}${lish.finalDirectory ? ` (temp: ${lish.directory} → final: ${lish.finalDirectory})` : ''}`);
 		broadcast('lishs:add', dataServer.getDetail(lish.id));
 		// Switched on while the download was being stopped: stored, but neither shared nor downloaded.
@@ -484,7 +487,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (existing) {
 			await stopDatasetWork(lish.id);
 		}
-		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, scope: kept });
+		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, scope, keptScope: kept });
 		return { lishID: lish.id, directory };
 	}
 

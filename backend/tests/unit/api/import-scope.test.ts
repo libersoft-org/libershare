@@ -106,6 +106,27 @@ test('a LISH added again keeps the scope it had when the addition began', async 
 	}
 });
 
+/** Moved to a protected lishnet while it was added again: the scope it had at the start of the addition was written back, and it was public again. */
+test('a LISH added again keeps a scope set while it was being added', async () => {
+	await handlers.importFromJSON({ json: manifest('race-moved'), downloadPath: downloadDir, enableSharing: true });
+	const realGet = dataServer.get.bind(dataServer);
+	let moved = false;
+	const get = spyOn(dataServer, 'get').mockImplementation(id => {
+		if (id === 'race-moved' && !moved) {
+			moved = true;
+			handlers.setScope({ lishID: id, networkIDs: ['net-p'] });
+		}
+		return realGet(id);
+	});
+	try {
+		await handlers.importFromJSON({ json: manifest('race-moved'), downloadPath: downloadDir, enableSharing: true, overwrite: true });
+		expect(moved).toBe(true);
+		expect(getLISHScope('race-moved')).toEqual(['net-p']);
+	} finally {
+		get.mockRestore();
+	}
+});
+
 /** Switched on while a long import ran: the check at its start had passed, and the LISH was stored public and shared. */
 test('a LISH is not stored public when protected lishnets only is switched on during its import', async () => {
 	let sealed = false;
