@@ -349,7 +349,8 @@ describe('protected lishnet on loopback', () => {
 			90_000
 		);
 		const nodeDir = join(bob.dir, 'lishnet-nodes', network.networkID);
-		expect(existsSync(join(nodeDir, 'guest.key'))).toBe(false);
+		// The guest helper stops and its files go after the certificate is stored, so the status can show the member first.
+		await until('the guest key is gone', async () => !existsSync(join(nodeDir, 'guest.key')), 30_000);
 		const bobPeer = await until('bob node', async () => (await bob.api.lishnets.infoAll()).find(n => n.networkID === network.networkID && n.peerID)?.peerID);
 		await until('alice sees bob', async () => (await alice.api.lishnets.getPeers(network.networkID)).some(p => p.peerID === bobPeer), 90_000);
 		expect(status.certificate?.revoked).toBe(false);
