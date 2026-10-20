@@ -204,7 +204,12 @@ export function compactRevocations(r: OverlayRevocations, now: number = Date.now
 
 /** The earliest end of a limit still ahead of `now`: when a certificate in use may next become revoked. */
 export function nextLimitEnd(r: OverlayRevocations, now: number = Date.now()): number | null {
-	const ends = Object.values(r.limits ?? {}).flatMap(list => list.filter(l => !isMarker(l)).map(l => Date.parse(l[1])).filter(t => t > now));
+	const ends = Object.values(r.limits ?? {}).flatMap(list =>
+		list
+			.filter(l => !isMarker(l))
+			.map(l => Date.parse(l[1]))
+			.filter(t => t > now)
+	);
 	return ends.length > 0 ? Math.min(...ends) : null;
 }
 
