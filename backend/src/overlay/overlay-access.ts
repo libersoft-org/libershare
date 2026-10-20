@@ -523,7 +523,7 @@ export class OverlayAccess {
 			data.device ??= randomBytes(4).toString('hex');
 			const seen: Record<string, string> = {};
 			for (const l of limits) if (l[2] !== undefined && l[2] !== data.device && (!seen[l[2]] || Date.parse(l[0]) > Date.parse(seen[l[2]]!))) seen[l[2]] = l[0];
-			data.limits = { ...data.limits, [request.peerID]: [...(data.limits?.[request.peerID] ?? []), [cert.notBefore, cert.notAfter, data.device, seen]] };
+			data.limits = { ...data.limits, [request.peerID]: [...(data.limits?.[request.peerID] ?? []), [cert.notBefore, cert.notAfter, data.device, seen, cert.fingerprint]] };
 			const member: OverlayMember = { name: request.name, peerID: request.peerID, vpnIP, roles, notAfter: cert.notAfter, fingerprint: cert.fingerprint, issued: new Date().toISOString(), revoked: false };
 			data.members.push(member);
 			data.requests = data.requests.filter(r => r.id !== requestID);

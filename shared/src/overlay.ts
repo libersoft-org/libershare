@@ -72,13 +72,15 @@ export interface OverlayState {
 /**
  * One approval's limit on a member's other certificates: `[before, until]`, the start and end of the certificate it
  * issued, and on newer ones the device holding the CA key that issued it and what that device knew: per other device,
- * the start of that device's newest approval of the member ({@link limitCaps}).
+ * the start of that device's newest approval of the member ({@link limitCaps}); on the newest also the certificate's
+ * fingerprint: two devices may issue one member certificates starting in the same second.
  */
-export type OverlayLimit = [string, string] | [string, string, string, Record<string, string>];
+export type OverlayLimit = [string, string] | [string, string, string, Record<string, string>] | [string, string, string, Record<string, string>, string];
 
 /** A signed state carries at most this many limits per member; {@link compactRevocations} keeps to it. */
 export const MAX_LIMITS_PER_MEMBER = 64;
 const DEVICE_ID = /^[0-9a-f]{8}$/;
+const FINGERPRINT = /^[0-9a-f]{64}$/;
 const MAX_DEVICES = 64;
 
 /** Whether an untrusted value is an {@link OverlayLimit}. */
@@ -87,7 +89,7 @@ export function isOverlayLimit(value: unknown): value is OverlayLimit {
 	if (!Array.isArray(value) || !time(value[0]) || !time(value[1])) return false;
 	if (value.length === 2) return true;
 	const seen = value[3];
-	return value.length === 4 && typeof value[2] === 'string' && DEVICE_ID.test(value[2]) && typeof seen === 'object' && seen !== null && !Array.isArray(seen) && Object.keys(seen).length <= MAX_DEVICES && Object.entries(seen).every(([device, at]) => DEVICE_ID.test(device) && time(at));
+	return (value.length === 4 || (value.length === 5 && typeof value[4] === 'string' && FINGERPRINT.test(value[4]))) && typeof value[2] === 'string' && DEVICE_ID.test(value[2]) && typeof seen === 'object' && seen !== null && !Array.isArray(seen) && Object.keys(seen).length <= MAX_DEVICES && Object.entries(seen).every(([device, at]) => DEVICE_ID.test(device) && time(at));
 }
 
 /** How long before a member's certificate ends it may ask for a renewal (the request is the one it makes to join). */
@@ -195,7 +197,8 @@ export function isRevoked(revocations: OverlayRevocations, cert: { name: string;
 	const at = revocations.peers[cert.name];
 	if (at !== undefined && from < Date.parse(at)) return true;
 	const list = revocations.limits?.[cert.name] ?? [];
-	const own = list.find(l => Date.parse(l[0]) === from);
+	// Limits signed before they carried a fingerprint are found by their start.
+	const own = list.find(l => l[4] === cert.fingerprint) ?? list.find(l => l[4] === undefined && Date.parse(l[0]) === from);
 	return list.some(l => l !== own && now >= Date.parse(l[1]) && (own ? limitCaps(l, own) : from < Date.parse(l[0])));
 }
 

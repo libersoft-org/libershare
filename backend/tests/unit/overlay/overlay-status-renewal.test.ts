@@ -61,7 +61,7 @@ describe('changing how long a member stays', () => {
 			const data = await f.store.readFounder();
 			expect(data.revokedPeers).toBeUndefined();
 			expect(data.members[0]!.revoked).toBe(false);
-			expect(data.limits?.[f.peerID]).toEqual([[f.issued[0]!.notBefore, f.issued[0]!.notAfter, data.device!, {}]]);
+			expect(data.limits?.[f.peerID]).toEqual([[f.issued[0]!.notBefore, f.issued[0]!.notAfter, data.device!, {}, '0'.repeat(64)]]);
 			expect(f.published[f.published.length - 1]?.limits).toEqual(data.limits);
 			const revocations = { fingerprints: [], peers: {}, limits: data.limits! };
 			const older = { name: f.peerID, fingerprint: 'a'.repeat(64), notBefore: at(Date.now() - 30 * DAY) };
@@ -153,6 +153,22 @@ describe('changing how long a member stays', () => {
 		} finally {
 			await f.done();
 		}
+	});
+});
+
+/** Two devices unaware of each other approved one member in the same second: the longer certificate took the shorter approval for its own, and outlasted it. */
+describe('certificates of two devices starting in the same second', () => {
+	it('end with the shorter of the two approvals', () => {
+		const now = Date.parse('2026-06-01T00:00:00Z');
+		const peer = '1'.repeat(46);
+		const start = at(now);
+		const short: OverlayLimit = [start, at(now + 7 * DAY), 'aaaaaaaa', {}, 'a'.repeat(64)];
+		const long: OverlayLimit = [start, at(now + 100 * DAY), 'bbbbbbbb', {}, 'b'.repeat(64)];
+		const revocations = { fingerprints: [], peers: {}, limits: { [peer]: [short, long] } };
+		const cert = { name: peer, fingerprint: 'b'.repeat(64), notBefore: start };
+		expect(isRevoked(revocations, cert, now + 6 * DAY)).toBe(false);
+		expect(isRevoked(revocations, cert, now + 8 * DAY)).toBe(true);
+		expect(isRevoked(revocations, { ...cert, fingerprint: 'a'.repeat(64) }, now + 6 * DAY)).toBe(false);
 	});
 });
 
