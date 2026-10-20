@@ -326,7 +326,8 @@
 		"selectLocalFile": "Vybrat lokální soubor",
 		"uploadRequired": "Vyberte soubor k nahrání",
 		"importing": "Importuji ...",
-		"uploading": "Nahrávám soubor ..."
+		"uploading": "Nahrávám soubor ...",
+		"privateOnlyURL": "Je zapnutý režim „Jen chráněné sítě“, ale import stáhne tuto adresu přímo z tohoto počítače. Server na adrese uvidí vaši internetovou adresu."
 	},
 	"settings": {
 		"title": "Nastavení",

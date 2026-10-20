@@ -391,7 +391,7 @@ Each shared LISH has a scope: the public networks (the default), or a list of pr
 - An invite is a secret until it expires: whoever holds it can hand in a request (the founder still decides). It cannot be withdrawn before it expires; rejecting its request ends it.
 - A guest can complete a Nebula handshake with a member (through a relay) and so learn that member's overlay address and certificate name (its peer ID in the lishnet), though the member's firewall then drops all its traffic.
 - Lighthouses and relays given by host name are resolved through the system's DNS; give them as IP addresses to avoid any lookup.
-- `network.privateOnly` seals LiberShare's public node. It does not stop an import from a URL the user enters, which fetches that URL.
+- `network.privateOnly` seals LiberShare's public node. It does not stop an import from a URL the user enters, which fetches that URL; the import screen warns about it. The internet connectivity check also still runs.
 - Transfers are encrypted (Nebula and libp2p Noise); files, the database and an exported CA key backup are stored unencrypted.
 
 ## Transfer flow

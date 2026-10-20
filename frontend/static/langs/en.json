@@ -326,7 +326,8 @@
 		"selectLocalFile": "Select local file",
 		"uploadRequired": "Please select a file to upload",
 		"importing": "Importing ...",
-		"uploading": "Uploading file ..."
+		"uploading": "Uploading file ...",
+		"privateOnlyURL": "Protected lishnets only is on, but the import fetches this address directly from this computer. The server at the address sees your internet address."
 	},
 	"settings": {
 		"title": "Settings",
