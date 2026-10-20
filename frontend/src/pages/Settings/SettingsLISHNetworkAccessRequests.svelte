@@ -83,9 +83,12 @@
 
 	async function openRequest(request: OverlayPendingRequest): Promise<void> {
 		// A member renewing keeps the roles it holds unless they are switched off: an approval without them takes them away.
+		// The signed state's hosts tell what it holds now; an older certificate may carry a role taken away since.
 		let held: OverlayRole[] = [];
 		try {
-			held = (await api.overlay.listMembers(network.networkID)).filter(m => m.peerID === request.peerID && !m.revoked).flatMap(m => m.roles);
+			const overlay = (await api.lishnets.get(network.networkID))?.overlay;
+			if (overlay?.lighthouses.some(h => h.peerID === request.peerID)) held.push('lighthouse');
+			if (overlay?.relays.some(h => h.peerID === request.peerID)) held.push('relay');
 		} catch (e) {
 			addNotification(translateError(e), 'error');
 			return;
@@ -94,8 +97,9 @@
 		issued = null;
 		days = DEFAULT_DAYS;
 		heldRoles = held;
-		lighthouse = held.includes('lighthouse');
-		relay = held.includes('relay');
+		// Roles need the member's public address: a request without one cannot keep them (the switches are hidden then).
+		lighthouse = !!request.infraAddr && held.includes('lighthouse');
+		relay = !!request.infraAddr && held.includes('relay');
 		decidePage.enter(request.name, () => void closeRequest());
 	}
 
