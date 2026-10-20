@@ -446,7 +446,7 @@
 			"mdnsEnabled": "Discover peers on local network (mDNS)",
 			"mdnsInterval": "Local network discovery interval (s)",
 			"upnpEnabled": "Automatic router port forwarding (UPnP)",
-			"privateOnly": "Protected lishnets only (no public network, no internet checks)"
+			"privateOnly": "Protected lishnets only (no public network)"
 		},
 		"lishNetwork": {
 			"title": "LISH Network",

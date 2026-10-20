@@ -446,7 +446,7 @@
 			"mdnsEnabled": "Vyhledávat účastníky v místní síti (mDNS)",
 			"mdnsInterval": "Interval vyhledávání v místní síti (s)",
 			"upnpEnabled": "Automatické přesměrování portu na routeru (UPnP)",
-			"privateOnly": "Jen chráněné sítě (bez veřejné sítě a kontrol internetu)"
+			"privateOnly": "Jen chráněné sítě (bez veřejné sítě)"
 		},
 		"lishNetwork": {
 			"title": "Síť LISH",

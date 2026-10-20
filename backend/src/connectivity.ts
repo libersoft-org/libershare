@@ -20,10 +20,8 @@ const TARGETS: ConnectivityTarget[] = [
 	},
 ];
 
-/** Null when the check was switched off part-way: no further server is asked, and nothing is concluded. */
-export async function checkOnline(enabled: () => boolean): Promise<boolean | null> {
+async function checkOnline(): Promise<boolean> {
 	for (const target of TARGETS) {
-		if (!enabled()) return null;
 		try {
 			const response = await fetch(target.url, {
 				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -37,8 +35,7 @@ export async function checkOnline(enabled: () => boolean): Promise<boolean | nul
 	return false;
 }
 
-/** `enabled` is read before every check: with protected lishnets only, nothing may reach Google or Microsoft. */
-export function startConnectivityCheck(broadcast: BroadcastFn, enabled: () => boolean = () => true): () => void {
+export function startConnectivityCheck(broadcast: BroadcastFn): () => void {
 	let online = true; // assume online at start
 	let consecutiveFailures = 0;
 	let running = false;
@@ -46,11 +43,10 @@ export function startConnectivityCheck(broadcast: BroadcastFn, enabled: () => bo
 	let initialTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	const check = async (): Promise<void> => {
-		if (running || !enabled()) return;
+		if (running) return;
 		running = true;
 		try {
-			const result = await checkOnline(enabled);
-			if (result === null) return;
+			const result = await checkOnline();
 			if (result) {
 				consecutiveFailures = 0;
 				if (!online) {

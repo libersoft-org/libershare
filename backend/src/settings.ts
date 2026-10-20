@@ -94,7 +94,7 @@ export interface SettingsData {
 		upnpEnabled: boolean;
 		/**
 		 * Protected lishnets only: the public node listens on nothing, dials nothing and resolves no
-		 * names, and the internet connectivity check (requests to Google and Microsoft) stays off.
+		 * names. The internet connectivity check still runs.
 		 */
 		privateOnly: boolean;
 		searchTimeout: number; // Browse network → LISH search timeout in milliseconds. Search session ends after this.
