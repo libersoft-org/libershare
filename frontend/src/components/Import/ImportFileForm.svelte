@@ -201,6 +201,7 @@
 		align-items: center;
 		height: 100%;
 		padding: 2vh;
+		box-sizing: border-box;
 		gap: 2vh;
 	}
 

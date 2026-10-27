@@ -32,7 +32,7 @@
 	let connectedAgo = $derived(peer.connectedAt ? Math.max(0, Math.round((now - peer.connectedAt) / 1000)) : 0);
 
 	function handleCopy(): void {
-		copyToClipboard(peerID, $t('downloads.peerDetail.peerIDCopied'));
+		copyToClipboard(peerID, $t('common.peerIDCopied'));
 	}
 
 	createNavArea(() => ({
@@ -179,7 +179,7 @@
 			</div>
 		</div>
 		<ButtonBar justify="center" gap="2vh" basePosition={[0, 0]}>
-			<Button icon="/img/copy.svg" label={$t('downloads.peerDetail.copyID')} onConfirm={handleCopy} />
+			<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} onConfirm={handleCopy} />
 			<Button icon="/img/back.svg" label={$t('downloads.peerDetail.close')} onConfirm={onBack} />
 		</ButtonBar>
 	</div>

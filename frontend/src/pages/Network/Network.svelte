@@ -152,7 +152,7 @@
 	//   y=2 — search input + buttons
 	//   y=3+i — LISH rows
 	// Peers tab:
-	//   y=2 — NodeInfoRow toggle (when present)
+	//   y=2 — NodeInfoRow address toggle and copy button (when present)
 	//   y=3 .. 2+N — NodeInfoRow address rows (when expanded; N = address count)
 	//   y=peersBaseY — filters
 	//   y=peersBaseY+1+i — peer rows
