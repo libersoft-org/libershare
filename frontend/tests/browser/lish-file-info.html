@@ -98,6 +98,30 @@
 				assert(root.querySelectorAll('.row').length === 3, 'Back did not return to the table');
 				assert(calls.back === 0, 'Back from the item left the whole page');
 			});
+			await test('the file list of a .lishs item pages with PageDown and End', async () => {
+				const files = Array.from({ length: 25 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
+				const many = { detail: { ...detail('c0000000-0000-4000-8000-000000000003', 'Many files', 25), totalSize: 250, fileCount: 25, files } };
+				await open([many, broken], 'lish-info-paging');
+				emit('down');
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				assert(root.textContent.includes('Many files'), 'The item did not open');
+				const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
+				emit('down');
+				await settle();
+				assert(selectedName() === 'f01.bin', `Down did not reach the first file: ${selectedName()}`);
+				emit('pageDown');
+				await settle();
+				assert(selectedName() !== 'f01.bin' && selectedName()?.startsWith('f'), `PageDown did not move through the files: ${selectedName()}`);
+				emit('end');
+				await settle();
+				assert(selectedName() === 'f25.bin', `End did not reach the last file: ${selectedName()}`);
+				emit('home');
+				await settle();
+				assert(selectedName() === 'f01.bin', `Home did not return to the first file: ${selectedName()}`);
+			});
 			await test('an empty .lishs says so and offers no import', async () => {
 				await open([], 'lish-info-empty');
 				assert(root.textContent.includes(tr('lish.fileEmpty')), 'Empty-file message is missing');
@@ -116,7 +140,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 6 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

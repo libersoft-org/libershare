@@ -19,7 +19,8 @@
 	}
 	let { areaID, position = LAYOUT.content, item, error, onBack }: Props = $props();
 
-	createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	// y=0 — Back; y=1+ — the file tree, a list open at the bottom like on the main info page.
+	createNavArea(() => ({ areaID, position, onBack, activate: true, listRange: (): [number, number] => [1, Number.MAX_SAFE_INTEGER] }));
 </script>
 
 <style>
