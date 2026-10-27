@@ -120,6 +120,13 @@ describe('lishs.inspectFile', () => {
 		}
 	});
 
+	it('shows a manifest whose entry metadata has the wrong type, with those fields flagged', async () => {
+		const odd = { ...valid, files: [{ path: 'a.bin', size: 10, checksums: ['a1'], created: { toString: 0, valueOf: 0 }, permissions: '0644' }] };
+		const [inspected] = await handlers.inspectFile({ filePath: write('odd-meta.lish', JSON.stringify(odd)) });
+		expect(inspected!.error).toBeUndefined();
+		expect(inspected!.detail!.files).toEqual([{ path: 'a.bin', size: 10, permissions: '0644', invalidFields: ['created'] }]);
+	});
+
 	it('reports a single .lish without an ID as its own refusal', async () => {
 		expect(await handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).toEqual([{ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined }]);
 	});

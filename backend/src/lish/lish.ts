@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
+import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -492,13 +492,7 @@ export function parseLISHFromJSON(json: string): ILISH[] {
  * Summary of a structurally valid manifest for display: files without their checksums, totals.
  */
 export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
-	const files = (manifest.files ?? []).map(f => {
-		const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
-		if (f.permissions !== undefined) entry.permissions = f.permissions;
-		if (f.modified !== undefined) entry.modified = f.modified;
-		if (f.created !== undefined) entry.created = f.created;
-		return entry;
-	});
+	const files = (manifest.files ?? []).map(f => ({ path: f.path, size: f.size, ...entryMetadata(f, ['permissions', 'modified', 'created']) }));
 	return {
 		id: manifest.id,
 		name: manifest.name,
@@ -512,9 +506,31 @@ export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
 		fileCount: files.length,
 		directoryCount: (manifest.directories ?? []).length,
 		files,
-		directories: manifest.directories ?? [],
-		links: manifest.links ?? [],
+		directories: (manifest.directories ?? []).map(d => ({ path: d.path, ...entryMetadata(d, ['permissions', 'modified', 'created']) })),
+		links: (manifest.links ?? []).map(l => ({ path: l.path, target: l.target, ...entryMetadata(l, ['hardlink', 'modified', 'created']) })),
 	};
+}
+
+/** What an optional entry field has to hold to be shown: any text, an ISO 8601 date, or a flag. */
+const ENTRY_METADATA = { permissions: 'text', modified: 'date', created: 'date', hardlink: 'flag' } as const;
+
+/**
+ * The optional metadata `fields` of a manifest entry that hold a value of the right kind. The
+ * structure check leaves these fields alone, so whatever else a file puts there is named in
+ * `invalidFields` instead of reaching a date formatter.
+ */
+function entryMetadata<T extends object, K extends keyof typeof ENTRY_METADATA & keyof T>(entry: T, fields: K[]): Partial<Pick<T, K>> & IInvalidEntryFields {
+	const shown: Record<string, unknown> = {};
+	const invalid: string[] = [];
+	for (const field of fields) {
+		const value: unknown = entry[field];
+		if (value === undefined) continue;
+		const kind = ENTRY_METADATA[field];
+		if (kind === 'flag' ? typeof value === 'boolean' : typeof value === 'string' && (kind === 'text' || !Number.isNaN(Date.parse(value)))) shown[field] = value;
+		else invalid.push(field);
+	}
+	if (invalid.length > 0) shown['invalidFields'] = invalid;
+	return shown as Partial<Pick<T, K>> & IInvalidEntryFields;
 }
 
 export interface VerifyFileProgress {

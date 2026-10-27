@@ -34,6 +34,20 @@ describe('summarizeManifest', () => {
 		expect(JSON.stringify(detail)).not.toContain('checksums');
 	});
 
+	it('passes on only metadata of the right kind and names the rest', () => {
+		// Written by anyone: the structure check leaves these fields alone, the display must not trust them.
+		const bad = { toString: 0, valueOf: 0 } as unknown as string;
+		const detail = summarizeManifest({
+			...manifest(),
+			files: [{ path: 'a.bin', size: 10, checksums: ['aa'], created: bad, modified: 'not a date', permissions: '0640' }],
+			directories: [{ path: 'dir', permissions: 755 as unknown as string, created: '2020-01-02T03:04:05.000Z', extra: 'dropped' } as never],
+			links: [{ path: 'dir/link', target: 'a.bin', hardlink: 'yes' as unknown as boolean, modified: null as unknown as string }],
+		});
+		expect(detail.files).toEqual([{ path: 'a.bin', size: 10, permissions: '0640', invalidFields: ['modified', 'created'] }]);
+		expect(detail.directories).toEqual([{ path: 'dir', created: '2020-01-02T03:04:05.000Z', invalidFields: ['permissions'] }]);
+		expect(detail.links).toEqual([{ path: 'dir/link', target: 'a.bin', invalidFields: ['hardlink', 'modified'] }]);
+	});
+
 	it('summarizes a manifest without files as empty', () => {
 		const { files: _files, directories: _directories, links: _links, ...bare } = manifest();
 		const detail = summarizeManifest(bare);

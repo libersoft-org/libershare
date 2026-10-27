@@ -181,9 +181,15 @@ export interface IPeerLishDetail {
 	totalChunks: number;
 	fileCount: number;
 	directoryCount: number;
-	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string }>;
-	directories: import('./lish.ts').IDirectoryEntry[];
-	links: import('./lish.ts').ILinkEntry[];
+	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string } & IInvalidEntryFields>;
+	directories: Array<import('./lish.ts').IDirectoryEntry & IInvalidEntryFields>;
+	links: Array<import('./lish.ts').ILinkEntry & IInvalidEntryFields>;
+}
+
+/** Marks the metadata of a summarized manifest entry that was left out because its value was invalid. */
+export interface IInvalidEntryFields {
+	/** Names of the left-out fields, e.g. `created` holding an object instead of a date. */
+	invalidFields?: string[] | undefined;
 }
 
 /** One manifest from a .lish / .lishs file, with the outcome of checking it. */
