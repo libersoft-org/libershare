@@ -75,12 +75,17 @@
 	function openItem(index: number): void {
 		const detail = items[index]?.detail;
 		selected = index;
-		itemSubPage.enter(detail?.name || detail?.id.slice(0, 16) || '#' + (index + 1));
+		itemSubPage.enter(detail?.name || detail?.id.slice(0, 16) || '#' + (index + 1), closeItem);
 	}
 
 	async function closeItem(): Promise<void> {
+		const index = selected;
 		selected = null;
 		await itemSubPage.exit();
+		// The table was gone while the item was open, so the selection fell back to the buttons.
+		if (index === null) return;
+		navHandle.controller.select([0, 1 + index]);
+		navHandle.controller.scrollToSelected();
 	}
 
 	// y=0 — Back, Import; y=1+i — one row per manifest of a .lishs, or the file tree of a single one.
