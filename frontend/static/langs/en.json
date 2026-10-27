@@ -329,7 +329,8 @@
 		"entryTarget": "Target",
 		"entryPermissions": "Permissions",
 		"entryChecksums": "Chunk checksums",
-		"entryChecksumsLoading": "Loading checksums …"
+		"entryChecksumsLoading": "Loading checksums …",
+		"entryInvalidValue": "Invalid value"
 	},
 	"import": {
 		"uploadFromLocal": "Upload from local computer",

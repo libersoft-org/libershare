@@ -27,7 +27,7 @@
 		size: number;
 		path: string;
 		/** What the manifest says about the entry; absent for a folder only implied by the paths in it. */
-		entry?: { permissions?: string | undefined; modified?: string | undefined; created?: string | undefined; target?: string; hardlink?: boolean | undefined } | undefined;
+		entry?: { permissions?: string | undefined; modified?: string | undefined; created?: string | undefined; target?: string; hardlink?: boolean | undefined; invalidFields?: string[] | undefined } | undefined;
 	}
 	interface FlatRow {
 		node: TreeNode;
@@ -114,10 +114,26 @@
 		return list.map((checksum, i) => `${i + 1}\t${checksum}`).join('\n');
 	}
 
-	function typeLabel(node: TreeNode): string {
+	/** Undefined for a link whose `hardlink` flag was invalid. */
+	function typeLabel(node: TreeNode): string | undefined {
 		if (node.type === 'dir') return $t('lish.entryDirectory');
 		if (node.type === 'file') return $t('lish.entryFile');
-		return node.entry?.hardlink ? $t('lish.entryHardLink') : $t('lish.entrySymbolicLink');
+		if (isInvalid(node, 'hardlink')) return undefined;
+		return node.entry?.hardlink === true ? $t('lish.entryHardLink') : $t('lish.entrySymbolicLink');
+	}
+
+	function isInvalid(node: TreeNode, field: string): boolean {
+		return node.entry?.invalidFields?.includes(field) ?? false;
+	}
+
+	/**
+	 * A manifest field as text, or undefined when it does not hold what the field should. The values
+	 * come from a file anyone can write, so nothing else reaches the date formatter.
+	 */
+	function fieldText(value: unknown, kind: 'text' | 'date'): string | undefined {
+		if (typeof value !== 'string') return undefined;
+		if (kind === 'text') return value;
+		return Number.isNaN(Date.parse(value)) ? undefined : formatDateTime(value);
 	}
 
 	function typeIcon(type: TreeNode['type']): string {
@@ -242,6 +258,10 @@
 		font-family: var(--font-mono);
 	}
 
+	.invalid {
+		color: var(--color-error);
+	}
+
 	.checksums {
 		max-height: 30vh;
 		overflow-y: auto;
@@ -262,22 +282,23 @@
 	}
 </style>
 
+{#snippet metaRow(label: string, value: unknown, invalid: boolean, kind: 'text' | 'date')}
+	{#if (value !== undefined && value !== '') || invalid}
+		{@const text = fieldText(value, kind)}
+		<div class="entry-row"><span class="label">{label}:</span> <span class="value" class:mono={kind === 'text'} class:invalid={text === undefined}>{text ?? $t('lish.entryInvalidValue')}</span></div>
+	{/if}
+{/snippet}
+
 {#snippet entryDetails(node: TreeNode)}
 	<div class="entry-details">
-		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value">{typeLabel(node)}</span></div>
+		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
 		<div class="entry-row"><span class="label">{$t('lish.entryPath')}:</span> <span class="value mono">{node.path}</span></div>
 		{#if node.entry?.target !== undefined}
 			<div class="entry-row"><span class="label">{$t('lish.entryTarget')}:</span> <span class="value mono">{node.entry.target}</span></div>
 		{/if}
-		{#if node.entry?.permissions}
-			<div class="entry-row"><span class="label">{$t('lish.entryPermissions')}:</span> <span class="value mono">{node.entry.permissions}</span></div>
-		{/if}
-		{#if node.entry?.created}
-			<div class="entry-row"><span class="label">{$t('network.created')}:</span> <span class="value">{formatDateTime(node.entry.created)}</span></div>
-		{/if}
-		{#if node.entry?.modified}
-			<div class="entry-row"><span class="label">{$t('localStorage.modified')}:</span> <span class="value">{formatDateTime(node.entry.modified)}</span></div>
-		{/if}
+		{@render metaRow($t('lish.entryPermissions'), node.entry?.permissions, isInvalid(node, 'permissions'), 'text')}
+		{@render metaRow($t('network.created'), node.entry?.created, isInvalid(node, 'created'), 'date')}
+		{@render metaRow($t('localStorage.modified'), node.entry?.modified, isInvalid(node, 'modified'), 'date')}
 		{#if node.type === 'file'}
 			<div class="entry-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{node.size === 0 ? 0 : Math.ceil(node.size / detail.chunkSize)}</span></div>
 			{#if checksums?.key === nodeKey(node)}
@@ -303,7 +324,7 @@
 		{#if detail.description}
 			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
 		{/if}
-		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value">{formatDateTime(detail.created)}</span></div>
+		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value" class:invalid={fieldText(detail.created, 'date') === undefined}>{fieldText(detail.created, 'date') ?? $t('lish.entryInvalidValue')}</span></div>
 		<div class="info-row"><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
 		<div class="info-row"><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
 		<div class="info-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{detail.totalChunks}</span></div>

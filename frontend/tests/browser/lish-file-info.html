@@ -158,6 +158,29 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('invalid metadata shows a marker instead of breaking the details', async () => {
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = async () => ['aa11', 'bb22', 'cc33'];
+				try {
+					// `created` as the file wrote it (a summary from an older node passes it on unchecked), `modified` as the backend flags it.
+					const odd = { detail: { ...detail('c0000000-0000-4000-8000-000000000006', 'Odd', 3), created: 'not a date', files: [{ path: 'a.bin', size: 2500, created: { toString: 0, valueOf: 0 }, permissions: '0640', invalidFields: ['modified'] }] } };
+					await open([odd], 'lish-info-odd');
+					const marker = tr('lish.entryInvalidValue');
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					const shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes('0640'), `The details did not render: ${shown}`);
+					const marked = [...root.querySelectorAll('.entry-details .invalid')].map(value => value.parentElement.textContent);
+					assert(marked.length === 2 && marked.some(row => row.includes(tr('network.created')) && row.includes(marker)) && marked.some(row => row.includes(tr('localStorage.modified')) && row.includes(marker)), `Invalid fields are not marked: ${JSON.stringify(marked)}`);
+					const created = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('network.created')));
+					assert(created?.querySelector('.invalid')?.textContent === marker, `An unreadable LISH date is not marked: ${created?.textContent}`);
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('the file list of a .lishs item pages with PageDown and End', async () => {
 				const files = Array.from({ length: 25 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
 				const many = { detail: { ...detail('c0000000-0000-4000-8000-000000000003', 'Many files', 25), totalSize: 250, fileCount: 25, files } };
@@ -256,7 +279,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 9 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 10 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

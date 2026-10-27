@@ -329,7 +329,8 @@
 		"entryTarget": "Cíl",
 		"entryPermissions": "Oprávnění",
 		"entryChecksums": "Kontrolní součty částí",
-		"entryChecksumsLoading": "Načítám kontrolní součty …"
+		"entryChecksumsLoading": "Načítám kontrolní součty …",
+		"entryInvalidValue": "Neplatná hodnota"
 	},
 	"import": {
 		"uploadFromLocal": "Nahrát z lokálního počítače",
