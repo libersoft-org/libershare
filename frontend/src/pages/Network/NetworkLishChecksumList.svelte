@@ -18,10 +18,19 @@
 
 	function onNavigate(action: NavAction): boolean {
 		if (!el || checksums.length === 0) return false;
+		// A long checksum (e.g. SHA-512) can be wider than the box; left/right reveal its end.
+		if (action === 'left' || action === 'right') {
+			const left = el.scrollLeft;
+			const maxLeft = el.scrollWidth - el.clientWidth;
+			if (action === 'left' ? left <= 0 : left >= maxLeft - 1) return false;
+			const step = Math.max(1, Math.floor(el.clientWidth / 4));
+			el.scrollLeft = Math.max(0, Math.min(maxLeft, left + (action === 'left' ? -step : step)));
+			return true;
+		}
 		const line = el.scrollHeight / checksums.length;
 		const page = Math.max(1, Math.floor(el.clientHeight / line) - 1);
-		const lines: Record<NavAction, number> = { up: -1, down: 1, pageUp: -page, pageDown: page, home: -Infinity, end: Infinity, left: 0, right: 0 };
-		const by = lines[action];
+		const lines: Partial<Record<NavAction, number>> = { up: -1, down: 1, pageUp: -page, pageDown: page, home: -Infinity, end: Infinity };
+		const by = lines[action] ?? 0;
 		const top = el.scrollTop;
 		const max = el.scrollHeight - el.clientHeight;
 		if (by === 0 || (by < 0 ? top <= 0 : top >= max - 1)) return false;
