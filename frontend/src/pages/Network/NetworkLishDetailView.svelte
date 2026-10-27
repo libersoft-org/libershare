@@ -277,7 +277,7 @@
 	{/if}
 {/snippet}
 
-{#snippet entryDetails(node: TreeNode)}
+{#snippet entryDetails(node: TreeNode, rowY: number)}
 	<div class="entry-details">
 		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
 		<div class="entry-row"><span class="label">{$t('lish.entryPath')}:</span> <span class="value mono">{node.path}</span></div>
@@ -292,7 +292,8 @@
 			{#if checksums?.key === nodeKey(node)}
 				<div class="entry-row"><span class="label">{$t('lish.entryChecksums')}:</span></div>
 				{#if checksums.list}
-					<ChecksumList checksums={checksums.list} />
+					<!-- Between this row and the next one, so the arrows pass through it in reading order. -->
+					<ChecksumList checksums={checksums.list} y={rowY + 0.5} />
 				{:else if checksums.error}
 					<div class="entry-row"><span class="value">{checksums.error}</span></div>
 				{:else}
@@ -326,7 +327,7 @@
 			<Table columns="1fr auto" columnsMobile="1fr auto">
 				{#each fileRows as row, i (row.node.path + ':' + i)}
 					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => void toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
-						{@render entryDetails(row.node)}
+						{@render entryDetails(row.node, fileRowsBaseY + i)}
 					</PeerDetailLishFileRow>
 				{/each}
 			</Table>

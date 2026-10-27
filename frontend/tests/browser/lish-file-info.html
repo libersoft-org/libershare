@@ -213,6 +213,56 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('a long checksum list scrolls to its last checksum by keyboard and hands on at its end', async () => {
+				const list = Array.from({ length: 500 }, (_, i) => `c${String(i + 1).padStart(3, '0')}`);
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = async () => list;
+				try {
+					const files = [
+						{ path: 'a.bin', size: 500 * 1024 },
+						{ path: 'b.bin', size: 10 },
+					];
+					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000007', 'Long', 501), totalSize: 500 * 1024 + 10, fileCount: 2, files } }], 'lish-info-long');
+					const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					const box = root.querySelector('.checksums');
+					assert(box && box.scrollHeight > box.clientHeight * 2, 'The checksum list does not need scrolling');
+					const atBottom = () => box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
+					emit('down');
+					await settle();
+					await wait(1000);
+					assert(box.classList.contains('selected') && box.scrollTop === 0, `Down from the file did not select its checksums (selected row: ${selectedName()})`);
+					emit('pageDown');
+					await settle();
+					assert(box.scrollTop > 0 && box.classList.contains('selected'), 'PageDown did not scroll the checksums');
+					emit('end');
+					await settle();
+					assert(atBottom() && box.classList.contains('selected'), 'End did not reach the last checksum');
+					const last = box.getBoundingClientRect();
+					assert(last.bottom <= innerHeight + 1 && last.top >= -1, 'The list with the last checksum is not in view');
+					emit('home');
+					await settle();
+					assert(box.scrollTop === 0 && box.classList.contains('selected'), 'Home did not return to the first checksum');
+					let reachedBottom = false;
+					for (let i = 0; i < 600 && box.classList.contains('selected'); i++) {
+						emit('down');
+						await tick();
+						reachedBottom ||= atBottom();
+					}
+					assert(reachedBottom, 'Down never reached the last checksum');
+					await settle();
+					assert(selectedName() === 'b.bin', `Down at the last checksum did not move on to the next file: ${selectedName()}`);
+					emit('up');
+					await settle();
+					assert(box.classList.contains('selected') && atBottom(), 'Up from the next file did not return to the checksums');
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('the file list of a .lishs item pages with PageDown and End', async () => {
 				const files = Array.from({ length: 25 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
 				const many = { detail: { ...detail('c0000000-0000-4000-8000-000000000003', 'Many files', 25), totalSize: 250, fileCount: 25, files } };
@@ -311,7 +361,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 11 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 12 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
