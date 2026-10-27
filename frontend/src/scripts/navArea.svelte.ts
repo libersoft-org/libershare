@@ -90,6 +90,8 @@ export interface NavAreaController {
 	isPressed(pos: NavPos): boolean;
 	/** Programmatically set the selected position */
 	select(pos: NavPos): void;
+	/** Bring the selected item back into view, e.g. after content above it grew. */
+	scrollToSelected(): void;
 	/** Get the active area ID for this controller */
 	readonly areaID: string;
 }
@@ -356,6 +358,9 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		},
 		select(pos: NavPos): void {
 			selectedPos = pos;
+		},
+		scrollToSelected(): void {
+			currentItem()?.el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 		},
 		isPressed(pos: NavPos): boolean {
 			return isAreaActive && pressed && selectedPos !== null && pos[0] === selectedPos[0] && pos[1] === selectedPos[1];

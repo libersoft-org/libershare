@@ -3,6 +3,12 @@
 	<meta charset="utf-8" />
 	<link rel="icon" href="data:," />
 	<title>LISH file info browser regressions</title>
+	<!-- As on the app's content scroller: no scroll anchoring, so a row growing above the view pushes the rest down. -->
+	<style>
+		html {
+			overflow-anchor: none;
+		}
+	</style>
 	<pre id="results">Running...</pre>
 	<div id="page"></div>
 	<script type="module">
@@ -290,7 +296,8 @@
 			await test('checksums that arrive late do not scroll away from the row the user moved to', async () => {
 				let release;
 				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = () => new Promise(resolve => (release = () => resolve(['aa11', 'bb22'])));
+				// Long enough that the answer grows the first row by the full height of the checksum list.
+				api.lishs.inspectFileChecksums = () => new Promise(resolve => (release = () => resolve(Array.from({ length: 200 }, (_, i) => `c${i}`))));
 				try {
 					const files = Array.from({ length: 80 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
 					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000005', 'Late', 80), totalSize: 800, fileCount: 80, files } }], 'lish-info-late');

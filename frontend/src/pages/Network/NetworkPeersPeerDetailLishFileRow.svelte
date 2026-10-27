@@ -26,11 +26,12 @@
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
 	let el = $state<HTMLElement | undefined>();
 	// Opened details (and checksums arriving later) grow the row past the spot the selection scrolled to.
-	// Only while it is selected: a late answer must not pull the view back from where the user went since.
+	// What has to stay in view is whatever is selected now: a late answer for a row the user has left
+	// must not take the view away from where they went, nor push it down out of sight.
 	$effect(() => {
-		if (!expanded || !el || !isSelected) return;
+		if (!expanded || !el) return;
 		const row = el;
-		const observer = new ResizeObserver(() => row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+		const observer = new ResizeObserver(() => (navArea ? navArea.scrollToSelected() : row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })));
 		observer.observe(row);
 		return () => observer.disconnect();
 	});
