@@ -110,7 +110,18 @@
 					return ['aa11', 'bb22', 'cc33'];
 				};
 				try {
-					const full = { detail: { ...detail('c0000000-0000-4000-8000-000000000004', 'Full', 3), directoryCount: 1, files: [{ path: 'a.bin', size: 2500, permissions: '0640', created: '2020-01-02T03:04:05.000Z', modified: '2021-06-07T08:09:10.000Z' }], directories: [{ path: 'docs', permissions: '0750' }], links: [{ path: 'hard', target: 'a.bin', hardlink: true }, { path: 'soft', target: 'a.bin' }] } };
+					const full = {
+						detail: {
+							...detail('c0000000-0000-4000-8000-000000000004', 'Full', 3),
+							directoryCount: 1,
+							files: [{ path: 'a.bin', size: 2500, permissions: '0640', created: '2020-01-02T03:04:05.000Z', modified: '2021-06-07T08:09:10.000Z' }],
+							directories: [{ path: 'docs', permissions: '0750' }],
+							links: [
+								{ path: 'hard', target: 'a.bin', hardlink: true },
+								{ path: 'soft', target: 'a.bin' },
+							],
+						},
+					};
 					await open([full], 'lish-info-details');
 					assert(!root.querySelector('.entry-details') && checksumCalls.length === 0, 'Details or checksums are shown before they are asked for');
 					const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
