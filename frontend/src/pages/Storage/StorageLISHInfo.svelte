@@ -158,7 +158,7 @@
 					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} />
 				{/if}
 			{:else}
-				<Table columns="auto 1fr 14vh 10vh 16vh">
+				<Table columns="auto 1fr 14vh 10vh 16vh" columnsMobile="1fr 14vh 10vh 16vh">
 					<TableHeader>
 						<TableCell desktopOnly>#</TableCell>
 						<TableCell>{$t('common.name')}</TableCell>

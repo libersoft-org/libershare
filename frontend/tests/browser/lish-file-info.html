@@ -85,6 +85,9 @@
 				const rows = root.querySelectorAll('.row');
 				assert(rows.length === 3, `Expected three rows, got ${rows.length}`);
 				assert(rows[2].textContent.includes(tr('lish.fileInvalid')) && rows[0].textContent.includes(tr('lish.fileValid')), 'Row status is missing');
+				// At any window width the visible cells of a row stay side by side, not stacked into one column.
+				const tops = [...rows[0].querySelectorAll('.cell')].filter(cell => cell.offsetParent).map(cell => cell.getBoundingClientRect().top);
+				assert(tops.length >= 4 && tops.every(top => Math.abs(top - tops[0]) < 5), `Row cells are stacked: ${tops.join(', ')}`);
 				assert(!button(tr('common.import')), 'Import is offered for a file with a refused manifest');
 				emit('down');
 				emit('down');
