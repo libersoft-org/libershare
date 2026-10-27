@@ -30,6 +30,7 @@
 		flex-direction: column;
 		align-items: center;
 		padding: 2vh;
+		box-sizing: border-box;
 		gap: 2vh;
 		overflow-y: auto;
 	}
