@@ -177,11 +177,37 @@ export interface IPeerLishDetail {
 	chunkSize: number;
 	checksumAlgo: import('./lish.ts').HashAlgorithm;
 	totalSize: number;
+	/** Number of chunks the manifest declares, summed over all files. */
+	totalChunks: number;
 	fileCount: number;
 	directoryCount: number;
-	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string }>;
-	directories: import('./lish.ts').IDirectoryEntry[];
-	links: import('./lish.ts').ILinkEntry[];
+	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string } & IInvalidEntryFields>;
+	directories: Array<import('./lish.ts').IDirectoryEntry & IInvalidEntryFields>;
+	links: Array<import('./lish.ts').ILinkEntry & IInvalidEntryFields>;
+}
+
+/** Marks the metadata of a summarized manifest entry that was left out because its value was invalid. */
+export interface IInvalidEntryFields {
+	/** Names of the left-out fields, e.g. `created` holding an object instead of a date. */
+	invalidFields?: string[] | undefined;
+}
+
+/** What a .lish / .lishs file holds, see `lishs.inspectFile`. */
+export interface ILISHFileInspectionResult {
+	/** Names the file content read; parts asked for later must come from the same content. */
+	version: string;
+	/** Each manifest of the file, in file order. */
+	items: ILISHFileInspection[];
+}
+
+/** One manifest from a .lish / .lishs file, with the outcome of checking it. */
+export interface ILISHFileInspection {
+	/** Summary of the manifest; absent when its structure is invalid. */
+	detail?: IPeerLishDetail | undefined;
+	/** Error code when the manifest was refused. */
+	error?: string | undefined;
+	/** Detail of the refusal, e.g. which file has a wrong checksum count. */
+	errorDetail?: string | undefined;
 }
 
 // LISH Network definition (pure network parameters)

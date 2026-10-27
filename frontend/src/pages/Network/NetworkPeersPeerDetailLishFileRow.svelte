@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { type Snippet, getContext } from 'svelte';
 	import type { NavAreaController, NavPos } from '../../scripts/navArea.svelte.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
@@ -11,14 +11,30 @@
 		size: number;
 		depth: number;
 		rowY: number;
+		onConfirm?: (() => void) | undefined;
+		/** Show {@link children} across the whole row below its cells. */
+		expanded?: boolean | undefined;
+		/** Details of the entry. */
+		children?: Snippet | undefined;
 	}
-	let { name, type, size, depth, rowY }: Props = $props();
+	let { name, type, size, depth, rowY, onConfirm, expanded = false, children }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let position = $derived<NavPos>([0, rowY]);
 	let isSelected = $derived(navArea ? navArea.isSelected(position) : false);
 	let typeIcon = $derived(type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg');
 	let iconColor = $derived(isSelected ? '--primary-background' : '--secondary-foreground');
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
+	let el = $state<HTMLElement | undefined>();
+	// Opened details (and checksums arriving later) grow the row past the spot the selection scrolled to.
+	// What has to stay in view is whatever is selected now: a late answer for a row the user has left
+	// must not take the view away from where they went, nor push it down out of sight.
+	$effect(() => {
+		if (!expanded || !el) return;
+		const row = el;
+		const observer = new ResizeObserver(() => (navArea ? navArea.scrollToSelected() : row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })));
+		observer.observe(row);
+		return () => observer.disconnect();
+	});
 </script>
 
 <style>
@@ -36,9 +52,14 @@
 		display: inline-block;
 		flex-shrink: 0;
 	}
+
+	.details {
+		grid-column: 1 / -1;
+		min-width: 0;
+	}
 </style>
 
-<TableRow {position}>
+<TableRow bind:el {position} {onConfirm}>
 	<TableCell>
 		<span class="name">
 			<span class="indent" style="width: {depth * 2.5}vh"></span>
@@ -47,4 +68,7 @@
 		</span>
 	</TableCell>
 	<TableCell align="right" width="12vh">{sizeDisplay}</TableCell>
+	{#if expanded && children}
+		<div class="details">{@render children()}</div>
+	{/if}
 </TableRow>

@@ -21,6 +21,8 @@ const errorCodes = [
 	'LISH_CHUNK_SIZE_TOO_LARGE',
 	'LISH_INVALID_MANIFEST',
 	'LISH_UNSAFE_PATH',
+	// The .lish file shown in a preview was rewritten before a part of it was read on request.
+	'LISH_FILE_CHANGED',
 	'LISH_UNSUPPORTED_CHECKSUM',
 	'LISH_UNEXPECTED_ARRAY',
 	'LISH_CREATE_CANCELLED',

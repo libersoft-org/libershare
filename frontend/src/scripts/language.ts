@@ -115,6 +115,7 @@ const errorCodeKeys: Record<string, string> = {
 	LISH_CHUNK_SIZE_TOO_LARGE: 'lish.errorChunkSizeTooLarge',
 	LISH_INVALID_MANIFEST: 'lish.errorInvalidManifest',
 	LISH_UNSAFE_PATH: 'lish.errorUnsafePath',
+	LISH_FILE_CHANGED: 'lish.errorFileChanged',
 	LISH_UNSUPPORTED_CHECKSUM: 'lish.errorUnsupportedChecksum',
 	LISH_UNEXPECTED_ARRAY: 'lish.errorUnexpectedArray',
 	PATH_ACCESS_DENIED: 'lish.errorPathAccessDenied',

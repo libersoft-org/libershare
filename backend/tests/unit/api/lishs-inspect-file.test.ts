@@ -1,0 +1,172 @@
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { readdirSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openDatabase } from '../../../src/db/database.ts';
+import { DataServer } from '../../../src/lish/data-server.ts';
+import { Settings } from '../../../src/settings.ts';
+import { initLISHsHandlers } from '../../../src/api/lishs.ts';
+import { ErrorCodes, MAX_API_MESSAGE_SIZE, type ILISH } from '@shared';
+
+/**
+ * Opening a .lish file in the file browser shows what it holds before anything is imported.
+ * The check must be the one an import would do, per manifest, and must leave no trace.
+ */
+describe('lishs.inspectFile', () => {
+	let dataDir: string;
+	let filesDir: string;
+	let db: ReturnType<typeof openDatabase>;
+	let dataServer: DataServer;
+	let handlers: ReturnType<typeof initLISHsHandlers>;
+
+	const valid: ILISH = {
+		id: 'b0000000-0000-4000-8000-000000000001',
+		name: 'Valid',
+		created: '2026-01-01T00:00:00.000Z',
+		chunkSize: 1024,
+		checksumAlgo: 'sha256',
+		files: [
+			{ path: 'a.bin', size: 2500, checksums: ['a1', 'a2', 'a3'] },
+			{ path: 'b.bin', size: 10, checksums: ['b1'] },
+		],
+	};
+	// One checksum short of ceil(2500 / 1024).
+	const wrongCount: ILISH = { ...valid, id: 'b0000000-0000-4000-8000-000000000002', name: 'Wrong count', files: [{ path: 'short.bin', size: 2500, checksums: ['c1', 'c2'] }] };
+	// Over the default network.maxChunkSize of 100 MiB.
+	const hugeChunks: ILISH = { ...valid, id: 'b0000000-0000-4000-8000-000000000003', name: 'Huge chunks', chunkSize: 200 * 1024 * 1024, files: [{ path: 'h.bin', size: 10, checksums: ['d1'] }] };
+
+	beforeAll(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), 'lish-inspect-data-'));
+		filesDir = await mkdtemp(join(tmpdir(), 'lish-inspect-files-'));
+		db = openDatabase(dataDir);
+		dataServer = new DataServer(db);
+		handlers = initLISHsHandlers(
+			dataServer,
+			() => {},
+			() => {},
+			await Settings.create(dataDir)
+		);
+	});
+
+	afterAll(async () => {
+		db.close();
+		for (const dir of [dataDir, filesDir]) await rm(dir, { recursive: true, force: true });
+	});
+
+	function write(name: string, content: string | Uint8Array): string {
+		const path = join(filesDir, name);
+		writeFileSync(path, content);
+		return path;
+	}
+
+	it('summarizes a single .lish without its checksums', async () => {
+		const result = (await handlers.inspectFile({ filePath: write('one.lish', JSON.stringify(valid)) })).items;
+		expect(result).toHaveLength(1);
+		expect(result[0]!.error).toBeUndefined();
+		expect(result[0]!.detail).toMatchObject({ id: valid.id, name: 'Valid', totalSize: 2510, totalChunks: 4, fileCount: 2 });
+		expect(JSON.stringify(result)).not.toContain('checksums');
+	});
+
+	it('reports each manifest of a .lishs on its own, refusing what an import would refuse', async () => {
+		const [ok, short, huge] = (await handlers.inspectFile({ filePath: write('many.lishs', JSON.stringify([valid, wrongCount, hugeChunks])) })).items;
+		expect(ok!.detail!.totalChunks).toBe(4);
+		expect(ok!.error).toBeUndefined();
+		expect(short!.error).toBe(ErrorCodes.LISH_INVALID_MANIFEST);
+		expect(short!.errorDetail).toContain('short.bin');
+		expect(short!.errorDetail).toContain('expected 3 checksums');
+		expect(short!.detail).toBeUndefined();
+		expect(huge!.error).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+		expect(huge!.detail).toBeUndefined();
+	});
+
+	it('reads a compressed .lishs the same way', async () => {
+		const plain = (await handlers.inspectFile({ filePath: write('plain.lishs', JSON.stringify([valid, wrongCount])) })).items;
+		const gzipped = (await handlers.inspectFile({ filePath: write('packed.lishs.gz', Bun.gzipSync(JSON.stringify([valid, wrongCount]))) })).items;
+		expect(gzipped).toEqual(plain);
+		expect(gzipped[1]!.error).toBe(ErrorCodes.LISH_INVALID_MANIFEST);
+	});
+
+	it('shows an empty .lishs as empty', async () => {
+		expect((await handlers.inspectFile({ filePath: write('empty.lishs', '[]') })).items).toEqual([]);
+	});
+
+	it('fails the whole file when it is not JSON at all', async () => {
+		await expect(handlers.inspectFile({ filePath: write('broken.lish', '{ not json') })).rejects.toMatchObject({ code: ErrorCodes.INVALID_JSON });
+	});
+
+	it('keeps the valid manifests of a .lishs when another one fails the import checks', async () => {
+		const noID = { ...valid, id: '' };
+		const { created: _created, ...noCreated } = valid;
+		const badAlgo = { ...valid, checksumAlgo: 'md5' };
+		const [ok, missingID, missingCreated, unsupported, notObject] = (await handlers.inspectFile({ filePath: write('mixed.lishs', JSON.stringify([valid, noID, noCreated, badAlgo, 42])) })).items;
+		expect(ok!.detail).toMatchObject({ id: valid.id, totalChunks: 4 });
+		expect(missingID).toEqual({ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined });
+		expect(missingCreated!.error).toBe(ErrorCodes.LISH_MISSING_CREATED);
+		expect(unsupported!.error).toBe(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM);
+		expect(notObject!.error).toBe(ErrorCodes.LISH_INVALID_FORMAT);
+	});
+
+	it('refuses a path the import would refuse, as the import does', async () => {
+		const unsafe: ILISH = { ...valid, files: [{ path: 'C:/a.bin', size: 10, checksums: ['e1'] }] };
+		const [inspected] = (await handlers.inspectFile({ filePath: write('unsafe.lish', JSON.stringify(unsafe)) })).items;
+		expect(inspected!.error).toBe(ErrorCodes.LISH_UNSAFE_PATH);
+		expect(inspected!.detail).toBeUndefined();
+		const downloadPath = await mkdtemp(join(tmpdir(), 'lish-inspect-dest-'));
+		try {
+			await expect(handlers.importFromFile({ filePath: join(filesDir, 'unsafe.lish'), downloadPath })).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
+		} finally {
+			await rm(downloadPath, { recursive: true, force: true });
+		}
+	});
+
+	it('shows a manifest whose entry metadata has the wrong type, with those fields flagged', async () => {
+		const odd = { ...valid, files: [{ path: 'a.bin', size: 10, checksums: ['a1'], created: { toString: 0, valueOf: 0 }, permissions: '0644' }] };
+		const [inspected] = (await handlers.inspectFile({ filePath: write('odd-meta.lish', JSON.stringify(odd)) })).items;
+		expect(inspected!.error).toBeUndefined();
+		expect(inspected!.detail!.files).toEqual([{ path: 'a.bin', size: 10, permissions: '0644', invalidFields: ['created'] }]);
+	});
+
+	it('reports a single .lish without an ID as its own refusal', async () => {
+		expect((await handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).items).toEqual([{ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined }]);
+	});
+
+	it('refuses a compressed file that expands past the API message limit', async () => {
+		const bomb = Bun.gzipSync(new Uint8Array(MAX_API_MESSAGE_SIZE + 1).fill(0x20));
+		await expect(handlers.inspectFile({ filePath: write('bomb.lish.gz', bomb) })).rejects.toMatchObject({ code: ErrorCodes.DECOMPRESSED_TOO_LARGE });
+	});
+
+	it('gives the checksums of one file on request', async () => {
+		const filePath = write('checksums.lishs', JSON.stringify([wrongCount, valid]));
+		const { version } = await handlers.inspectFile({ filePath });
+		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'a.bin' })).toEqual(['a1', 'a2', 'a3']);
+		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'b.bin' })).toEqual(['b1']);
+		await expect(handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'missing.bin' })).rejects.toMatchObject({ code: ErrorCodes.FS_NOT_FOUND });
+		await expect(handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'short.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+		await expect(handlers.inspectFileChecksums({ filePath, version, index: 2, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_FORMAT });
+	});
+
+	it('refuses the checksums once the file was rewritten after its preview', async () => {
+		const first: ILISH = { ...valid, id: 'b0000000-0000-4000-8000-000000000004', name: 'First', files: [{ path: 'x.bin', size: 10, checksums: ['f1'] }] };
+		const second: ILISH = { ...valid, id: 'b0000000-0000-4000-8000-000000000005', name: 'Second', files: [{ path: 'x.bin', size: 2000, checksums: ['s1', 's2'] }] };
+		const filePath = write('swapped.lishs', JSON.stringify([first, second]));
+		const { version, items } = await handlers.inspectFile({ filePath });
+		expect(items[0]!.detail!.name).toBe('First');
+		expect(await handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'x.bin' })).toEqual(['f1']);
+		// Same name, same index, same inner path: only the version tells the second manifest apart.
+		write('swapped.lishs', JSON.stringify([second, first]));
+		await expect(handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'x.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_FILE_CHANGED });
+		const reloaded = await handlers.inspectFile({ filePath });
+		expect(reloaded.version).not.toBe(version);
+		expect(await handlers.inspectFileChecksums({ filePath, version: reloaded.version, index: 0, path: 'x.bin' })).toEqual(['s1', 's2']);
+	});
+
+	it('imports nothing and writes nothing', async () => {
+		const before = readdirSync(filesDir).sort();
+		const dataBefore = readdirSync(dataDir).sort();
+		await handlers.inspectFile({ filePath: write('again.lishs', JSON.stringify([valid, hugeChunks])) });
+		expect(dataServer.list()).toHaveLength(0);
+		expect(readdirSync(filesDir).sort()).toEqual([...before, 'again.lishs'].sort());
+		expect(readdirSync(dataDir).sort()).toEqual(dataBefore);
+	});
+});
