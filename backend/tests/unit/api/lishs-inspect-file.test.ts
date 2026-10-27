@@ -129,6 +129,15 @@ describe('lishs.inspectFile', () => {
 		await expect(handlers.inspectFile({ filePath: write('bomb.lish.gz', bomb) })).rejects.toMatchObject({ code: ErrorCodes.DECOMPRESSED_TOO_LARGE });
 	});
 
+	it('gives the checksums of one file on request', async () => {
+		const filePath = write('checksums.lishs', JSON.stringify([wrongCount, valid]));
+		expect(await handlers.inspectFileChecksums({ filePath, index: 1, path: 'a.bin' })).toEqual(['a1', 'a2', 'a3']);
+		expect(await handlers.inspectFileChecksums({ filePath, index: 1, path: 'b.bin' })).toEqual(['b1']);
+		await expect(handlers.inspectFileChecksums({ filePath, index: 1, path: 'missing.bin' })).rejects.toMatchObject({ code: ErrorCodes.FS_NOT_FOUND });
+		await expect(handlers.inspectFileChecksums({ filePath, index: 0, path: 'short.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+		await expect(handlers.inspectFileChecksums({ filePath, index: 2, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_FORMAT });
+	});
+
 	it('imports nothing and writes nothing', async () => {
 		const before = readdirSync(filesDir).sort();
 		const dataBefore = readdirSync(dataDir).sort();

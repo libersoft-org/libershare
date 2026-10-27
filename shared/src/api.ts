@@ -512,6 +512,11 @@ class LISHsAPI {
 		return this.client.call<ILISHFileInspection[]>('lishs.inspectFile', { filePath });
 	}
 
+	/** Chunk checksums of the file `path` in the `index`-th manifest of a .lish / .lishs file. */
+	inspectFileChecksums(filePath: string, index: number, path: string): Promise<string[]> {
+		return this.client.call<string[]>('lishs.inspectFileChecksums', { filePath, index, path });
+	}
+
 	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */
 	parseFromUpload(uploadID: string): Promise<ILISH[]> {
 		return this.client.call<ILISH[]>('lishs.parseFromUpload', { uploadID });
