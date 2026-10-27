@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<link rel="icon" href="data:," />
+	<title>LISH file info browser regressions</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import StorageLISHInfo from '/src/pages/Storage/StorageLISHInfo.svelte';
+		import { api } from '/src/scripts/api.ts';
+		import { translations, t, translateError } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		const root = document.querySelector('#page');
+		const results = [];
+		const originalInspect = api.lishs.inspectFile;
+		let inspection;
+		api.lishs.inspectFile = async () => {
+			if (inspection instanceof Error) throw inspection;
+			return structuredClone(inspection);
+		};
+		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [] });
+		const valid = { detail: detail('c0000000-0000-4000-8000-000000000001', 'First LISH', 3) };
+		const second = { detail: detail('c0000000-0000-4000-8000-000000000002', 'Second LISH', 7) };
+		const broken = { error: 'LISH_INVALID_MANIFEST', errorDetail: '"short.bin": expected 3 checksums for size 2500 / chunkSize 1024, got 2' };
+		let component;
+		let calls;
+		async function settle() {
+			for (let i = 0; i < 3; i++) {
+				await tick();
+				await new Promise(resolve => setTimeout(resolve, 0));
+			}
+		}
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		function button(label) {
+			return [...root.querySelectorAll('.button')].find(item => item.textContent.trim() === label);
+		}
+		async function open(items, areaID) {
+			if (component) await unmount(component);
+			inspection = items;
+			calls = { back: 0, import: 0 };
+			component = mount(StorageLISHInfo, { target: root, props: { areaID, filePath: '/files/example.lishs', onBack: () => calls.back++, onImport: () => calls.import++ } });
+			await settle();
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.lish?.fileInfo)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			const tr = get(t);
+			await test('a valid .lish shows its summary with the chunk count and offers the import', async () => {
+				await open([valid], 'lish-info-single');
+				assert(root.textContent.includes('First LISH') && root.textContent.includes(valid.detail.id), 'Name or ID is missing');
+				const chunks = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('downloads.chunks')));
+				assert(chunks?.textContent.includes('3'), 'Chunk count row is missing or wrong');
+				button(tr('common.import')).click();
+				button(tr('common.back')).click();
+				assert(calls.import === 1 && calls.back === 1, 'Import or Back did not reach the page owner');
+			});
+			await test('an invalid manifest shows the reason and no import', async () => {
+				await open([broken], 'lish-info-broken');
+				const alert = root.textContent;
+				assert(alert.includes(tr('lish.errorInvalidManifest').replace('{detail}', broken.errorDetail)), 'Translated refusal with its detail is missing');
+				assert(!button(tr('common.import')), 'Import is offered for a refused manifest');
+			});
+			await test('a .lishs lists its manifests and opens one from the keyboard', async () => {
+				await open([valid, second, broken], 'lish-info-many');
+				const rows = root.querySelectorAll('.row');
+				assert(rows.length === 3, `Expected three rows, got ${rows.length}`);
+				assert(rows[2].textContent.includes(tr('lish.fileInvalid')) && rows[0].textContent.includes(tr('lish.fileValid')), 'Row status is missing');
+				assert(!button(tr('common.import')), 'Import is offered for a file with a refused manifest');
+				emit('down');
+				emit('down');
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				assert(root.textContent.includes('Second LISH') && root.textContent.includes(second.detail.id), 'Second manifest did not open');
+				assert(!root.textContent.includes('First LISH'), 'The table is still shown under the detail');
+				button(tr('common.back')).click();
+				await settle();
+				assert(root.querySelectorAll('.row').length === 3, 'Back did not return to the table');
+				assert(calls.back === 0, 'Back from the item left the whole page');
+			});
+			await test('an empty .lishs says so and offers no import', async () => {
+				await open([], 'lish-info-empty');
+				assert(root.textContent.includes(tr('lish.fileEmpty')), 'Empty-file message is missing');
+				assert(!button(tr('common.import')), 'Import is offered for an empty file');
+			});
+			await test('an unreadable file shows the error and no import', async () => {
+				const failure = Object.assign(new Error('INVALID_JSON'), { code: 'INVALID_JSON', detail: '/files/example.lishs: bad' });
+				await open(failure, 'lish-info-unreadable');
+				assert(root.textContent.includes(translateError(failure)), 'Error is not shown');
+				assert(!button(tr('common.import')), 'Import is offered for an unreadable file');
+			});
+		} catch (error) {
+			results.push({ name: 'fixture setup', passed: false, error: error.message });
+		} finally {
+			if (component) await unmount(component);
+			api.lishs.inspectFile = originalInspect;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			window.lishFileInfoTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
