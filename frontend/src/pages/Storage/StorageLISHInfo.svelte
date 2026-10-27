@@ -30,6 +30,8 @@
 	}
 	let { areaID, position = LAYOUT.content, filePath, onBack, onImport }: Props = $props();
 	let items = $state<ILISHFileInspection[]>([]);
+	// Of the content `items` came from; the checksums read later must come from the same.
+	let version = '';
 	let loading = $state(true);
 	let error = $state('');
 	// Manifest of a .lishs opened from the table.
@@ -45,7 +47,7 @@
 		loading = true;
 		error = '';
 		try {
-			items = await api.lishs.inspectFile(filePath);
+			({ items, version } = await api.lishs.inspectFile(filePath));
 		} catch (e: any) {
 			error = translateError(e);
 			items = [];
@@ -134,7 +136,7 @@
 </style>
 
 {#if itemSubPage.active && selected !== null && items[selected]}
-	<StorageLISHInfoItem {areaID} {position} item={items[selected]!} error={items[selected]!.error ? itemError(items[selected]!) : ''} loadChecksums={path => api.lishs.inspectFileChecksums(filePath, selected!, path)} onBack={() => void closeItem()} />
+	<StorageLISHInfoItem {areaID} {position} item={items[selected]!} error={items[selected]!.error ? itemError(items[selected]!) : ''} loadChecksums={path => api.lishs.inspectFileChecksums(filePath, version, selected!, path)} onBack={() => void closeItem()} />
 {:else}
 	<div class="lish-info">
 		<div class="container">
@@ -155,7 +157,7 @@
 					<Alert type="error" message={itemError(items[0]!)} />
 				{/if}
 				{#if items[0]!.detail}
-					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} loadChecksums={(path: string) => api.lishs.inspectFileChecksums(filePath, 0, path)} />
+					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} loadChecksums={(path: string) => api.lishs.inspectFileChecksums(filePath, version, 0, path)} />
 				{/if}
 			{:else}
 				<Table columns="auto 1fr 14vh 10vh 16vh" columnsMobile="1fr 14vh 10vh 16vh">

@@ -19,7 +19,7 @@
 		let inspection;
 		api.lishs.inspectFile = async () => {
 			if (inspection instanceof Error) throw inspection;
-			return structuredClone(inspection);
+			return { version: 'v1', items: structuredClone(inspection) };
 		};
 		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [] });
 		const valid = { detail: detail('c0000000-0000-4000-8000-000000000001', 'First LISH', 3) };
@@ -106,8 +106,8 @@
 			await test('an entry shows its permissions, times, link type and checksums on request', async () => {
 				const checksumCalls = [];
 				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async (filePath, index, path) => {
-					checksumCalls.push([filePath, index, path]);
+				api.lishs.inspectFileChecksums = async (filePath, version, index, path) => {
+					checksumCalls.push([filePath, version, index, path]);
 					return ['aa11', 'bb22', 'cc33'];
 				};
 				try {
@@ -142,7 +142,7 @@
 					await confirmRow('a.bin');
 					shown = root.querySelector('.entry-details')?.textContent ?? '';
 					assert(shown.includes('0640') && shown.includes(new Date('2020-01-02T03:04:05.000Z').toLocaleString()) && shown.includes(new Date('2021-06-07T08:09:10.000Z').toLocaleString()), `File permissions or times are missing: ${shown}`);
-					assert(checksumCalls.length === 1 && checksumCalls[0][1] === 0 && checksumCalls[0][2] === 'a.bin', `Checksums were not read for the file: ${JSON.stringify(checksumCalls)}`);
+					assert(checksumCalls.length === 1 && checksumCalls[0][1] === 'v1' && checksumCalls[0][2] === 0 && checksumCalls[0][3] === 'a.bin', `Checksums were not read for the file: ${JSON.stringify(checksumCalls)}`);
 					assert(root.querySelector('.checksums')?.textContent === '1\taa11\n2\tbb22\n3\tcc33', 'Checksums are not listed');
 					await confirmRow('hard');
 					shown = root.querySelector('.entry-details')?.textContent ?? '';
