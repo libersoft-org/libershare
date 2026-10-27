@@ -33,6 +33,7 @@
 				await new Promise(resolve => setTimeout(resolve, 0));
 			}
 		}
+		const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 		function assert(value, message) {
 			if (!value) throw new Error(message);
 		}
@@ -181,6 +182,33 @@
 				await settle();
 				assert(selectedName() === 'f01.bin', `Home did not return to the first file: ${selectedName()}`);
 			});
+			await test('checksums that arrive late do not scroll away from the row the user moved to', async () => {
+				let release;
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = () => new Promise(resolve => (release = () => resolve(['aa11', 'bb22'])));
+				try {
+					const files = Array.from({ length: 80 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
+					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000005', 'Late', 80), totalSize: 800, fileCount: 80, files } }], 'lish-info-late');
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					assert(release, 'The checksums of the first file were not asked for');
+					emit('end');
+					await settle();
+					await wait(1500);
+					const last = root.querySelector('.row.selected');
+					assert(last?.textContent.includes('f80.bin'), 'End did not reach the last file');
+					release();
+					await settle();
+					await wait(1500);
+					const box = last.getBoundingClientRect();
+					assert(box.bottom > 0 && box.top < innerHeight, `The selected row left the view: top ${box.top}, bottom ${box.bottom}, window ${innerHeight}`);
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('Back from a Linux file with a backslash in its name reopens its folder', async () => {
 				if (component) await unmount(component);
 				component = undefined;
@@ -228,7 +256,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 9 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

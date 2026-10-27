@@ -26,8 +26,9 @@
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
 	let el = $state<HTMLElement | undefined>();
 	// Opened details (and checksums arriving later) grow the row past the spot the selection scrolled to.
+	// Only while it is selected: a late answer must not pull the view back from where the user went since.
 	$effect(() => {
-		if (!expanded || !el) return;
+		if (!expanded || !el || !isSelected) return;
 		const row = el;
 		const observer = new ResizeObserver(() => row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
 		observer.observe(row);
