@@ -10,7 +10,7 @@ import { getEnabledUploads, removeUploadState, enableUpload, disableUpload } fro
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH, forceDisableDownload } from './transfer.ts';
 import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
-import { openDataset, createDataset, type DatasetRoot } from '../lish/safe-dataset-files.ts';
+import { openDataset, createDataset, validateDatasetNamespace, type DatasetRoot } from '../lish/safe-dataset-files.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
 const assert = Utils.assertParams;
@@ -493,6 +493,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			try {
 				const lish = validateImportedLISH(data);
 				validateLISHStructure(lish, maxChunkSize);
+				// The import refuses these paths when it prepares the dataset; the check itself touches no disk.
+				validateDatasetNamespace(lish);
 				return { detail: summarizeManifest(lish) };
 			} catch (error) {
 				if (error instanceof CodedError) return { error: error.code, errorDetail: error.detail };

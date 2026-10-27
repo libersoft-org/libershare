@@ -107,6 +107,19 @@ describe('lishs.inspectFile', () => {
 		expect(notObject!.error).toBe(ErrorCodes.LISH_INVALID_FORMAT);
 	});
 
+	it('refuses a path the import would refuse, as the import does', async () => {
+		const unsafe: ILISH = { ...valid, files: [{ path: 'C:/a.bin', size: 10, checksums: ['e1'] }] };
+		const [inspected] = await handlers.inspectFile({ filePath: write('unsafe.lish', JSON.stringify(unsafe)) });
+		expect(inspected!.error).toBe(ErrorCodes.LISH_UNSAFE_PATH);
+		expect(inspected!.detail).toBeUndefined();
+		const downloadPath = await mkdtemp(join(tmpdir(), 'lish-inspect-dest-'));
+		try {
+			await expect(handlers.importFromFile({ filePath: join(filesDir, 'unsafe.lish'), downloadPath })).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
+		} finally {
+			await rm(downloadPath, { recursive: true, force: true });
+		}
+	});
+
 	it('reports a single .lish without an ID as its own refusal', async () => {
 		expect(await handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).toEqual([{ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined }]);
 	});
