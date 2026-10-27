@@ -177,6 +177,8 @@ export interface IPeerLishDetail {
 	chunkSize: number;
 	checksumAlgo: import('./lish.ts').HashAlgorithm;
 	totalSize: number;
+	/** Number of chunks the manifest declares, summed over all files. */
+	totalChunks: number;
 	fileCount: number;
 	directoryCount: number;
 	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string }>;

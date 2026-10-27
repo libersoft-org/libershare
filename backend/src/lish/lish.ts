@@ -501,6 +501,8 @@ export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
 		chunkSize: manifest.chunkSize,
 		checksumAlgo: manifest.checksumAlgo,
 		totalSize: files.reduce((sum, f) => sum + f.size, 0),
+		// The checksum count is what the manifest claims; validateLISHStructure ties it to ceil(size / chunkSize).
+		totalChunks: (manifest.files ?? []).reduce((sum, f) => sum + f.checksums.length, 0),
 		fileCount: files.length,
 		directoryCount: (manifest.directories ?? []).length,
 		files,

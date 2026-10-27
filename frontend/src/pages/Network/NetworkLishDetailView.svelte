@@ -195,6 +195,7 @@
 		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value">{formatDateTime(detail.created)}</span></div>
 		<div class="info-row"><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
 		<div class="info-row"><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
+		<div class="info-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{detail.totalChunks}</span></div>
 		<div class="info-row"><span class="label">{$t('network.checksumAlgo')}:</span> <span class="value">{detail.checksumAlgo}</span></div>
 		<div class="info-row"><span class="label">{$t('common.files')}:</span> <span class="value">{detail.fileCount}</span></div>
 		<div class="info-row"><span class="label">{$t('network.directories')}:</span> <span class="value">{detail.directoryCount}</span></div>
