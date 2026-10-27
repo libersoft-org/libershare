@@ -287,12 +287,14 @@
 					await settle();
 					assert(box.classList.contains('selected') && box.scrollLeft === 0, 'Down from the file did not select its checksums');
 					const atRight = () => box.scrollLeft + box.clientWidth >= box.scrollWidth - 1;
-					for (let i = 0; i < 20 && !atRight(); i++) {
+					// Each step moves a quarter of the visible width; allow every step the overflow needs, plus a margin.
+					const steps = Math.ceil((box.scrollWidth - box.clientWidth) / Math.max(1, Math.floor(box.clientWidth / 4))) + 5;
+					for (let i = 0; i < steps && !atRight(); i++) {
 						emit('right');
 						await tick();
 					}
 					assert(atRight() && box.classList.contains('selected'), 'Right did not reveal the end of the long checksums');
-					for (let i = 0; i < 20 && box.scrollLeft > 0; i++) {
+					for (let i = 0; i < steps && box.scrollLeft > 0; i++) {
 						emit('left');
 						await tick();
 					}
