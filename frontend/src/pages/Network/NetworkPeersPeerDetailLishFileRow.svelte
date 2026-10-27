@@ -12,16 +12,27 @@
 		depth: number;
 		rowY: number;
 		onConfirm?: (() => void) | undefined;
-		/** Expanded details, shown across the whole row below its cells. */
+		/** Show {@link children} across the whole row below its cells. */
+		expanded?: boolean | undefined;
+		/** Details of the entry. */
 		children?: Snippet | undefined;
 	}
-	let { name, type, size, depth, rowY, onConfirm, children }: Props = $props();
+	let { name, type, size, depth, rowY, onConfirm, expanded = false, children }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let position = $derived<NavPos>([0, rowY]);
 	let isSelected = $derived(navArea ? navArea.isSelected(position) : false);
 	let typeIcon = $derived(type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg');
 	let iconColor = $derived(isSelected ? '--primary-background' : '--secondary-foreground');
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
+	let el = $state<HTMLElement | undefined>();
+	// Opened details (and checksums arriving later) grow the row past the spot the selection scrolled to.
+	$effect(() => {
+		if (!expanded || !el) return;
+		const row = el;
+		const observer = new ResizeObserver(() => row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+		observer.observe(row);
+		return () => observer.disconnect();
+	});
 </script>
 
 <style>
@@ -46,7 +57,7 @@
 	}
 </style>
 
-<TableRow {position} {onConfirm}>
+<TableRow bind:el {position} {onConfirm}>
 	<TableCell>
 		<span class="name">
 			<span class="indent" style="width: {depth * 2.5}vh"></span>
@@ -55,7 +66,7 @@
 		</span>
 	</TableCell>
 	<TableCell align="right" width="12vh">{sizeDisplay}</TableCell>
-	{#if children}
+	{#if expanded && children}
 		<div class="details">{@render children()}</div>
 	{/if}
 </TableRow>

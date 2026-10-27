@@ -123,7 +123,8 @@
 						},
 					};
 					await open([full], 'lish-info-details');
-					assert(!root.querySelector('.entry-details') && checksumCalls.length === 0, 'Details or checksums are shown before they are asked for');
+					// No empty details box either: as a grid item it would add a row gap to every collapsed row.
+					assert(!root.querySelector('.details') && checksumCalls.length === 0, 'Details or checksums are shown before they are asked for');
 					const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
 					const confirmRow = async name => {
 						while (root.querySelector('.row.selected') !== rowNamed(name)) {

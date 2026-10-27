@@ -316,10 +316,8 @@
 			<div class="hint">{$t('lish.entryDetailsHint')}</div>
 			<Table columns="1fr auto" columnsMobile="1fr auto">
 				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => void toggleDetails(row.node)}>
-						{#if expanded === nodeKey(row.node)}
-							{@render entryDetails(row.node)}
-						{/if}
+					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => void toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
+						{@render entryDetails(row.node)}
 					</PeerDetailLishFileRow>
 				{/each}
 			</Table>
