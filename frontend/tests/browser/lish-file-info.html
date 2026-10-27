@@ -9,6 +9,7 @@
 		import { mount, unmount, tick } from 'svelte';
 		import { get } from 'svelte/store';
 		import StorageLISHInfo from '/src/pages/Storage/StorageLISHInfo.svelte';
+		import Storage from '/src/pages/Storage/Storage.svelte';
 		import { api } from '/src/scripts/api.ts';
 		import { translations, t, translateError } from '/src/scripts/language.ts';
 		import { emit } from '/src/scripts/areas.ts';
@@ -122,6 +123,35 @@
 				await settle();
 				assert(selectedName() === 'f01.bin', `Home did not return to the first file: ${selectedName()}`);
 			});
+			await test('Back from a Linux file with a backslash in its name reopens its folder', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				inspection = [valid];
+				const listed = [];
+				const fs = { info: api.fs.info, list: api.fs.list };
+				api.fs.info = async () => ({ platform: 'linux', separator: '/', home: '/home/user', roots: ['/'], localFilesystem: true });
+				api.fs.list = async path => {
+					listed.push(path);
+					return { path, entries: [{ name: 'a\\b.lish', path: path + '/a\\b.lish', type: 'file', size: 10 }] };
+				};
+				const storage = mount(Storage, { target: root, props: { areaID: 'lish-info-storage', initialPath: '/x', initialFile: 'a\\b.lish' } });
+				try {
+					await settle();
+					assert(listed.at(-1) === '/x', `The browser did not open /x: ${listed.at(-1)}`);
+					for (let i = 0; i < 2 && !root.textContent.includes('First LISH'); i++) {
+						emit('confirmDown');
+						emit('confirmUp');
+						await settle();
+					}
+					assert(root.textContent.includes('First LISH'), 'The file did not open on its info page');
+					button(tr('common.back')).click();
+					await settle();
+					assert(listed.at(-1) === '/x', `Back reopened ${listed.at(-1)} instead of /x`);
+				} finally {
+					await unmount(storage);
+					Object.assign(api.fs, fs);
+				}
+			});
 			await test('an empty .lishs says so and offers no import', async () => {
 				await open([], 'lish-info-empty');
 				assert(root.textContent.includes(tr('lish.fileEmpty')), 'Empty-file message is missing');
@@ -140,7 +170,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 6 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 7 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

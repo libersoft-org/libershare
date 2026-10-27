@@ -58,18 +58,10 @@
 	// The browser is rebuilt on return, so it reopens the folder of the file opened last, with that file selected.
 	let openedFrom = $state<{ dir: string; file: string } | null>(null);
 
-	/** Folder and name of a path; a root folder keeps its separator so it stays a valid path. */
-	function splitPath(path: string): { dir: string; file: string } | null {
-		const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-		if (cut < 0) return null;
-		const root = cut === 0 || path[cut - 1] === ':';
-		return { dir: path.slice(0, root ? cut + 1 : cut), file: path.slice(cut + 1) };
-	}
-
 	const specialFileTypes = SPECIAL_FILE_TYPES.map(t => ({
 		extensions: t.extensions as unknown as string[],
-		onOpen: (path: string): void => {
-			openedFrom = splitPath(path);
+		onOpen: (path: string, dir: string, file: string): void => {
+			openedFrom = { dir, file };
 			if (t.mode === 'lish') {
 				lishInfoPath = path;
 				pushBreadcrumb(tt('lish.fileInfo'));
