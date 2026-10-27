@@ -462,14 +462,20 @@ export function validateImportedLISH(data: unknown): ILISH {
 }
 
 /**
+ * Read a .lish/.lishs (or compressed) file as its manifests, not validated yet:
+ * the items of a .lishs array, or the one object of a .lish.
+ */
+export async function readLISHFile(filePath: string): Promise<unknown[]> {
+	const data = Utils.safeJSONParse(await Utils.readFileCompressed(filePath), filePath);
+	return Array.isArray(data) ? data : [data];
+}
+
+/**
  * Read a .lish/.lishs (or compressed) file and return the parsed ILISH(s).
  * Handles both single objects and arrays.
  */
 export async function importLISHFromFile(filePath: string): Promise<ILISH[]> {
-	const content = await Utils.readFileCompressed(filePath);
-	const data = Utils.safeJSONParse(content, filePath);
-	if (Array.isArray(data)) return data.map(item => validateImportedLISH(item));
-	return [validateImportedLISH(data)];
+	return (await readLISHFile(filePath)).map(item => validateImportedLISH(item));
 }
 
 /**

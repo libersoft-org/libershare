@@ -1,7 +1,7 @@
 import { type DataServer } from '../lish/data-server.ts';
 import { type ILISH, type IStoredLISH, type ILISHFileInspection, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification, summarizeManifest } from '../lish/lish.ts';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
@@ -489,14 +489,15 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function inspectFile(p: { filePath: string }): Promise<ILISHFileInspection[]> {
 		assert(p, ['filePath']);
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
-		return (await importLISHFromFile(Utils.expandHome(p.filePath))).map((lish): ILISHFileInspection => {
+		return (await readLISHFile(Utils.expandHome(p.filePath))).map((data): ILISHFileInspection => {
 			try {
+				const lish = validateImportedLISH(data);
 				validateLISHStructure(lish, maxChunkSize);
+				return { detail: summarizeManifest(lish) };
 			} catch (error) {
 				if (error instanceof CodedError) return { error: error.code, errorDetail: error.detail };
 				throw error;
 			}
-			return { detail: summarizeManifest(lish) };
 		});
 	}
 

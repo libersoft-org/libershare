@@ -91,9 +91,24 @@ describe('lishs.inspectFile', () => {
 		expect(await handlers.inspectFile({ filePath: write('empty.lishs', '[]') })).toEqual([]);
 	});
 
-	it('fails the whole file when it is not a LISH at all', async () => {
+	it('fails the whole file when it is not JSON at all', async () => {
 		await expect(handlers.inspectFile({ filePath: write('broken.lish', '{ not json') })).rejects.toMatchObject({ code: ErrorCodes.INVALID_JSON });
-		await expect(handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).rejects.toMatchObject({ code: ErrorCodes.LISH_MISSING_ID });
+	});
+
+	it('keeps the valid manifests of a .lishs when another one fails the import checks', async () => {
+		const noID = { ...valid, id: '' };
+		const { created: _created, ...noCreated } = valid;
+		const badAlgo = { ...valid, checksumAlgo: 'md5' };
+		const [ok, missingID, missingCreated, unsupported, notObject] = await handlers.inspectFile({ filePath: write('mixed.lishs', JSON.stringify([valid, noID, noCreated, badAlgo, 42])) });
+		expect(ok!.detail).toMatchObject({ id: valid.id, totalChunks: 4 });
+		expect(missingID).toEqual({ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined });
+		expect(missingCreated!.error).toBe(ErrorCodes.LISH_MISSING_CREATED);
+		expect(unsupported!.error).toBe(ErrorCodes.LISH_UNSUPPORTED_CHECKSUM);
+		expect(notObject!.error).toBe(ErrorCodes.LISH_INVALID_FORMAT);
+	});
+
+	it('reports a single .lish without an ID as its own refusal', async () => {
+		expect(await handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).toEqual([{ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined }]);
 	});
 
 	it('refuses a compressed file that expands past the API message limit', async () => {
