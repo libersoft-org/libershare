@@ -54,6 +54,8 @@
 		"openDirectory": "Otevřít adresář",
 		"copyLishID": "Kopírovat LISH ID",
 		"lishIDCopied": "LISH ID zkopírováno do schránky",
+		"copyPeerID": "Kopírovat ID účastníka",
+		"peerIDCopied": "ID účastníka zkopírováno do schránky",
 		"errorFileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
 		"errorFileNameIsDirectory": "Název \"{name}\" již existuje jakožto adresář, proto není možné soubor uložit.",
 		"errorFilePathRequired": "Cesta k souboru je povinná",
@@ -181,9 +183,7 @@
 			"secondsAgo": "před {seconds}s",
 			"stale": "Tento účastník je momentálně neaktivní.",
 			"disconnected": "Tento účastník se odpojil.",
-			"copyID": "Kopírovat ID účastníka",
-			"close": "Zavřít",
-			"peerIDCopied": "ID účastníka zkopírováno do schránky"
+			"close": "Zavřít"
 		},
 		"uploaded": "Odesláno",
 		"downloaded": "Staženo",

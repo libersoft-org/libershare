@@ -54,6 +54,8 @@
 		"openDirectory": "Open directory",
 		"copyLishID": "Copy LISH ID",
 		"lishIDCopied": "LISH ID copied to clipboard",
+		"copyPeerID": "Copy peer ID",
+		"peerIDCopied": "Peer ID copied to clipboard",
 		"errorFileExistsOverwrite": "File \"{name}\" already exists. Do you want to overwrite it?",
 		"errorFileNameIsDirectory": "The name \"{name}\" already exists as a directory, so the file cannot be saved.",
 		"errorFilePathRequired": "File path is required",
@@ -181,9 +183,7 @@
 			"secondsAgo": "{seconds}s ago",
 			"stale": "This peer is currently inactive.",
 			"disconnected": "This peer has disconnected.",
-			"copyID": "Copy peer ID",
-			"close": "Close",
-			"peerIDCopied": "Peer ID copied to clipboard"
+			"close": "Close"
 		},
 		"uploaded": "Uploaded",
 		"downloaded": "Downloaded",
