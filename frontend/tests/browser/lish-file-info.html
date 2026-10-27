@@ -269,6 +269,21 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('in a narrow window neither info page scrolls sideways', async () => {
+				assert(innerWidth < 1199, `The window is ${innerWidth} px wide, too wide for the narrow layout`);
+				await open([valid], 'lish-info-narrow');
+				const page = root.querySelector('.lish-info');
+				assert(page.scrollWidth === page.clientWidth, `The info page overflows: ${page.scrollWidth} > ${page.clientWidth}`);
+				await open([valid, second], 'lish-info-narrow-item');
+				emit('down');
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				const item = root.querySelector('.lish-info-item');
+				assert(item, 'The item did not open');
+				assert(item.scrollWidth === item.clientWidth, `The item page overflows: ${item.scrollWidth} > ${item.clientWidth}`);
+			});
 			await test('the file list of a .lishs item pages with PageDown and End', async () => {
 				const files = Array.from({ length: 25 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
 				const many = { detail: { ...detail('c0000000-0000-4000-8000-000000000003', 'Many files', 25), totalSize: 250, fileCount: 25, files } };
@@ -368,7 +383,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 12 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 13 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
