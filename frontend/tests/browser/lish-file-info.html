@@ -269,6 +269,38 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('right and left reveal the end of a checksum wider than the list', async () => {
+				// Far wider than any test window, so the overflow does not depend on the window size.
+				const list = Array.from({ length: 5 }, (_, i) => String(i).repeat(600));
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = async () => list;
+				try {
+					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000008', 'Wide', 5), files: [{ path: 'a.bin', size: 5 * 1024 }] } }], 'lish-info-wide');
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					const box = root.querySelector('.checksums');
+					assert(box && box.scrollWidth > box.clientWidth, 'The checksums fit the list, nothing to scroll sideways');
+					emit('down');
+					await settle();
+					assert(box.classList.contains('selected') && box.scrollLeft === 0, 'Down from the file did not select its checksums');
+					const atRight = () => box.scrollLeft + box.clientWidth >= box.scrollWidth - 1;
+					for (let i = 0; i < 20 && !atRight(); i++) {
+						emit('right');
+						await tick();
+					}
+					assert(atRight() && box.classList.contains('selected'), 'Right did not reveal the end of the long checksums');
+					for (let i = 0; i < 20 && box.scrollLeft > 0; i++) {
+						emit('left');
+						await tick();
+					}
+					assert(box.scrollLeft === 0 && box.classList.contains('selected'), 'Left did not return to the start of the checksums');
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('in a narrow window neither info page scrolls sideways', async () => {
 				assert(innerWidth < 1199, `The window is ${innerWidth} px wide, too wide for the narrow layout`);
 				await open([valid], 'lish-info-narrow');
@@ -404,7 +436,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
