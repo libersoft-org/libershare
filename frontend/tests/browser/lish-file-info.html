@@ -181,6 +181,38 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('a file rewritten since the preview says so and refreshes instead of showing other checksums', async () => {
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = async () => {
+					throw Object.assign(new Error('LISH_FILE_CHANGED'), { code: 'LISH_FILE_CHANGED', detail: '/files/example.lishs' });
+				};
+				try {
+					await open([valid, second], 'lish-info-changed');
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					assert(!root.querySelector('.checksums'), 'Checksums are shown for a rewritten file');
+					const message = tr('lish.errorFileChanged');
+					assert(root.querySelector('.alert')?.textContent.includes(message) || root.textContent.includes(message), 'The page does not say the file changed');
+					const refresh = button(tr('common.refresh'));
+					assert(refresh, 'No refresh is offered');
+					inspection = [second, valid];
+					refresh.click();
+					await settle();
+					const rows = root.querySelectorAll('.row');
+					assert(rows.length === 2 && rows[0].textContent.includes('Second LISH'), 'Refresh did not show the file as it is now');
+					assert(!root.textContent.includes(message) && !button(tr('common.refresh')), 'The change notice stays after the refresh');
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('the file list of a .lishs item pages with PageDown and End', async () => {
 				const files = Array.from({ length: 25 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
 				const many = { detail: { ...detail('c0000000-0000-4000-8000-000000000003', 'Many files', 25), totalSize: 250, fileCount: 25, files } };
@@ -279,7 +311,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 10 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 11 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

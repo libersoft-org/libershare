@@ -17,9 +17,13 @@
 		error: string;
 		/** Reads the chunk checksums of one file of {@link item}. */
 		loadChecksums: (path: string) => Promise<string[]>;
+		/** The file was rewritten since it was read, so {@link item} is out of date. */
+		changed?: boolean | undefined;
+		/** Read the file again. */
+		onReload?: (() => void) | undefined;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, item, error, loadChecksums, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, item, error, loadChecksums, changed = false, onReload, onBack }: Props = $props();
 
 	// y=0 — Back; y=1+ — the file tree, a list open at the bottom like on the main info page.
 	createNavArea(() => ({ areaID, position, onBack, activate: true, listRange: (): [number, number] => [1, Number.MAX_SAFE_INTEGER] }));
@@ -65,7 +69,13 @@
 	<div class="container">
 		<ButtonBar basePosition={[0, 0]}>
 			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
+			{#if changed}
+				<Button icon="/img/restart.svg" label={$t('common.refresh')} onConfirm={onReload} width="auto" />
+			{/if}
 		</ButtonBar>
+		{#if changed}
+			<Alert type="warning" message={$t('lish.errorFileChanged')} />
+		{/if}
 		{#if error}
 			<Alert type="error" message={error} />
 		{/if}

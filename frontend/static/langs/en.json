@@ -305,6 +305,7 @@
 		"errorChunkSizeTooLarge": "LISH rejected: chunk size exceeds the configured limit ({detail})",
 		"errorInvalidManifest": "Invalid LISH manifest: {detail}",
 		"errorUnsafePath": "The target file cannot be safely modified: {detail}",
+		"errorFileChanged": "The file has changed since it was opened. Refresh to see what it holds now.",
 		"errorUnsupportedChecksum": "Invalid LISH: unsupported checksum algorithm: {detail}",
 		"errorUnexpectedArray": "Expected a single LISH object, got an array",
 		"errorPathAccessDenied": "Cannot access path: {detail}",

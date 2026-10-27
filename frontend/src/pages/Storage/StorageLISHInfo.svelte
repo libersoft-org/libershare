@@ -6,7 +6,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { formatSize } from '../../scripts/utils.ts';
-	import { type ILISHFileInspection } from '@shared';
+	import { ErrorCodes, type ILISHFileInspection } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -32,6 +32,8 @@
 	let items = $state<ILISHFileInspection[]>([]);
 	// Of the content `items` came from; the checksums read later must come from the same.
 	let version = '';
+	// A part read later found the file rewritten: what is on screen is the old content.
+	let changed = $state(false);
 	let loading = $state(true);
 	let error = $state('');
 	// Manifest of a .lishs opened from the table.
@@ -46,6 +48,7 @@
 	async function load(): Promise<void> {
 		loading = true;
 		error = '';
+		changed = false;
 		try {
 			({ items, version } = await api.lishs.inspectFile(filePath));
 		} catch (e: any) {
@@ -53,6 +56,20 @@
 			items = [];
 		}
 		loading = false;
+	}
+
+	async function loadChecksums(index: number, path: string): Promise<string[]> {
+		try {
+			return await api.lishs.inspectFileChecksums(filePath, version, index, path);
+		} catch (e: any) {
+			if (e?.code === ErrorCodes.LISH_FILE_CHANGED) changed = true;
+			throw e;
+		}
+	}
+
+	async function reload(): Promise<void> {
+		if (selected !== null) await closeItem();
+		await load();
 	}
 
 	function openItem(index: number): void {
@@ -136,7 +153,7 @@
 </style>
 
 {#if itemSubPage.active && selected !== null && items[selected]}
-	<StorageLISHInfoItem {areaID} {position} item={items[selected]!} error={items[selected]!.error ? itemError(items[selected]!) : ''} loadChecksums={path => api.lishs.inspectFileChecksums(filePath, version, selected!, path)} onBack={() => void closeItem()} />
+	<StorageLISHInfoItem {areaID} {position} item={items[selected]!} error={items[selected]!.error ? itemError(items[selected]!) : ''} loadChecksums={path => loadChecksums(selected!, path)} {changed} onReload={() => void reload()} onBack={() => void closeItem()} />
 {:else}
 	<div class="lish-info">
 		<div class="container">
@@ -145,7 +162,13 @@
 				{#if importable}
 					<Button icon="/img/download.svg" label={$t('common.import')} onConfirm={onImport} width="auto" />
 				{/if}
+				{#if changed}
+					<Button icon="/img/restart.svg" label={$t('common.refresh')} onConfirm={() => void reload()} width="auto" />
+				{/if}
 			</ButtonBar>
+			{#if changed}
+				<Alert type="warning" message={$t('lish.errorFileChanged')} />
+			{/if}
 			{#if loading}
 				<Spinner size="8vh" />
 			{:else if error}
@@ -157,7 +180,7 @@
 					<Alert type="error" message={itemError(items[0]!)} />
 				{/if}
 				{#if items[0]!.detail}
-					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} loadChecksums={(path: string) => api.lishs.inspectFileChecksums(filePath, version, 0, path)} />
+					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} loadChecksums={(path: string) => loadChecksums(0, path)} />
 				{/if}
 			{:else}
 				<Table columns="auto 1fr 14vh 10vh 16vh" columnsMobile="1fr 14vh 10vh 16vh">
