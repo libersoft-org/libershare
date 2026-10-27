@@ -6,6 +6,9 @@ import { get } from 'svelte/store';
 // Types for declarative navigation items
 export type NavPos = [x: number, y: number];
 
+/** A move the selection can make within an area. */
+export type NavAction = Direction | 'pageUp' | 'pageDown' | 'home' | 'end';
+
 export interface NavItem {
 	pos: NavPos;
 	el?: HTMLElement | undefined;
@@ -13,6 +16,11 @@ export interface NavItem {
 	onPress?: (() => void) | undefined;
 	onRelease?: (() => void) | undefined;
 	onActivate?: (() => void) | undefined;
+	/**
+	 * Offered every move while the item is selected, before the area moves the selection. Returns
+	 * true when the item used the move itself, e.g. to scroll a long list it shows as one element.
+	 */
+	onNavigate?: ((action: NavAction) => boolean) | undefined;
 	/**
 	 * When false, MouseManager delegation skips this item. The component then
 	 * owns its own onclick/onmouseenter logic (e.g. ButtonsGroup index pick,
@@ -255,11 +263,15 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		return trap; // trap: block navigation from leaving
 	}
 
+	function takenByItem(action: NavAction): boolean {
+		return currentItem()?.onNavigate?.(action) === true;
+	}
+
 	// Area handlers for useArea
 	const areaHandlers = {
-		up: (): boolean => navigate('up'),
+		up: (): boolean => takenByItem('up') || navigate('up'),
 		down(): boolean {
-			if (navigate('down')) return true;
+			if (takenByItem('down') || navigate('down')) return true;
 			if (onDown) {
 				const target = onDown();
 				if (target) {
@@ -269,8 +281,8 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			}
 			return trap;
 		},
-		left: (): boolean => navigate('left'),
-		right: (): boolean => navigate('right'),
+		left: (): boolean => takenByItem('left') || navigate('left'),
+		right: (): boolean => takenByItem('right') || navigate('right'),
 		confirmDown(): void {
 			pressed = true;
 			currentItem()?.onPress?.();
@@ -287,16 +299,16 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			onBack?.();
 		},
 		pageUp(): void {
-			jumpBy(-PAGE_SIZE);
+			if (!takenByItem('pageUp')) jumpBy(-PAGE_SIZE);
 		},
 		pageDown(): void {
-			jumpBy(PAGE_SIZE);
+			if (!takenByItem('pageDown')) jumpBy(PAGE_SIZE);
 		},
 		home(): void {
-			jumpEdge('first');
+			if (!takenByItem('home')) jumpEdge('first');
 		},
 		end(): void {
-			jumpEdge('last');
+			if (!takenByItem('end')) jumpEdge('last');
 		},
 		onActivate(): void {
 			onAreaActivate?.();
