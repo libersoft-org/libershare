@@ -1,7 +1,7 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHFileInspection, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification, summarizeManifest } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
@@ -84,6 +84,7 @@ interface LISHsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
 	parseFromJSON: (p: { json: string }) => ILISH[];
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
+	inspectFile: (p: { filePath: string }) => Promise<ILISHFileInspection[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
@@ -481,6 +482,24 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return importLISHFromFile(Utils.expandHome(p.filePath));
 	}
 
+	/**
+	 * Unlike {@link parseFromFile}, each manifest is checked as an import would check it and a refused one
+	 * is reported per item instead of failing the whole file. Reads the file only; nothing is imported.
+	 */
+	async function inspectFile(p: { filePath: string }): Promise<ILISHFileInspection[]> {
+		assert(p, ['filePath']);
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		return (await importLISHFromFile(Utils.expandHome(p.filePath))).map((lish): ILISHFileInspection => {
+			try {
+				validateLISHStructure(lish, maxChunkSize);
+			} catch (error) {
+				if (error instanceof CodedError) return { error: error.code, errorDetail: error.detail };
+				throw error;
+			}
+			return { detail: summarizeManifest(lish) };
+		});
+	}
+
 	function parseFromJSON(p: { json: string }): ILISH[] {
 		assert(p, ['json']);
 		return parseLISHFromJSON(p.json);
@@ -869,5 +888,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

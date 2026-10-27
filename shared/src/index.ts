@@ -186,6 +186,16 @@ export interface IPeerLishDetail {
 	links: import('./lish.ts').ILinkEntry[];
 }
 
+/** One manifest from a .lish / .lishs file, with the outcome of checking it. */
+export interface ILISHFileInspection {
+	/** Summary of the manifest; absent when its structure is invalid. */
+	detail?: IPeerLishDetail | undefined;
+	/** Error code when the manifest was refused. */
+	error?: string | undefined;
+	/** Detail of the refusal, e.g. which file has a wrong checksum count. */
+	errorDetail?: string | undefined;
+}
+
 // LISH Network definition (pure network parameters)
 export interface LISHNetworkDefinition {
 	networkID: string;

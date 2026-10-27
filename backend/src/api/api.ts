@@ -159,13 +159,16 @@ const MAX_QUEUED_IMPORTS = 8;
  * neighbours — so they ran beside a serialised parse and undid the point of the
  * lock. A name cannot be forgotten in the same way.
  *
+ * `lishs.inspectFile` parses a .lish file just as an import does, only to show
+ * it, so it queues on the same lock.
+ *
  * `parseFromUpload` is the one exclusion: it reaches the same lock further down,
  * inside `withFile`, where it also keeps the upload's disk accounting open while
  * it waits. Taking a non-reentrant mutex twice would deadlock the first upload
  * import.
  */
 export function isSerialisedImport(method: string): boolean {
-	return /\.(parseFrom|importFrom)/.test(method) && !method.endsWith('.parseFromUpload');
+	return /\.(parseFrom|importFrom|inspectFile)/.test(method) && !method.endsWith('.parseFromUpload');
 }
 
 /**
@@ -494,6 +497,7 @@ export class APIServer {
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
 			'lishs.parseFromFile': _lishs.parseFromFile,
+			'lishs.inspectFile': _lishs.inspectFile,
 			'lishs.parseFromUpload': (p, client) => this._upload.withFile(p, client, filePath => _lishs.parseFromFile({ filePath })),
 			'lishs.parseFromJSON': _lishs.parseFromJSON,
 			'lishs.parseFromURL': _lishs.parseFromURL,

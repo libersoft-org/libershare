@@ -1,4 +1,4 @@
-import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISHFileInspection, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
 import { toNetworkMutationResponse, type NetworkMutationResponse } from './network-mutation.ts';
 
 type EventCallback = (data: any) => void;
@@ -505,6 +505,11 @@ class LISHsAPI {
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
 		return this.client.call<ILISH[]>('lishs.parseFromFile', { filePath });
+	}
+
+	/** What a .lish / .lishs file holds, each manifest checked as an import would; imports nothing. */
+	inspectFile(filePath: string): Promise<ILISHFileInspection[]> {
+		return this.client.call<ILISHFileInspection[]>('lishs.inspectFile', { filePath });
 	}
 
 	/** Parse a finished upload. The server reads and deletes it; no path is ever exposed. */

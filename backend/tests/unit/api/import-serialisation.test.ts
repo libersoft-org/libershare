@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { serialiseImportHandlers } from '../../../src/api/api.ts';
+import { isSerialisedImport, serialiseImportHandlers } from '../../../src/api/api.ts';
 import { ErrorCodes } from '@shared';
 import { initUploadHandlers } from '../../../src/api/upload.ts';
 
@@ -51,7 +51,7 @@ describe('import serialisation', () => {
 		// A sanity check on the extraction: a regex that matched nothing would make
 		// everything below vacuously true.
 		expect(methods.length).toBeGreaterThan(50);
-		const imports = methods.filter(method => /\.(parseFrom|importFrom)/.test(method) && !method.endsWith('.parseFromUpload'));
+		const imports = methods.filter(isSerialisedImport);
 		// The four the opt-in list left off. They parse exactly like their
 		// `parseFrom*` neighbours — `lishnets.importFromFile` calls
 		// `networks.parseFromFile`, the `lishs.importFrom*` three reach
@@ -60,6 +60,8 @@ describe('import serialisation', () => {
 		expect(imports).toContain('lishs.importFromFile');
 		expect(imports).toContain('lishs.importFromJSON');
 		expect(imports).toContain('lishs.importFromURL');
+		// Parses a whole .lish file just to show it, so it must not run beside an import either.
+		expect(imports).toContain('lishs.inspectFile');
 
 		const table = overlapTable(imports);
 		// Every entry at once, so the queue allowance is raised out of the way — what
