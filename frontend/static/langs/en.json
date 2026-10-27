@@ -314,7 +314,9 @@
 		"errorDiskSpaceUnavailable": "Cannot check available disk space. Check access to the download and destination folders, then try again.",
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
-		"errorDownload": "Download failed: {detail}"
+		"errorDownload": "Download failed: {detail}",
+		"fileInfo": "LISH info",
+		"fileEmpty": "The file contains no LISH."
 	},
 	"import": {
 		"uploadFromLocal": "Upload from local computer",

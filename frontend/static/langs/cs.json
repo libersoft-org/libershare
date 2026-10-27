@@ -314,7 +314,9 @@
 		"errorDiskSpaceUnavailable": "Nelze zjistit volné místo na disku. Zkontrolujte přístup k pracovní a cílové složce a zkuste to znovu.",
 		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
-		"errorDownload": "Stahování selhalo: {detail}"
+		"errorDownload": "Stahování selhalo: {detail}",
+		"fileInfo": "Informace o LISH",
+		"fileEmpty": "Soubor neobsahuje žádný LISH."
 	},
 	"import": {
 		"uploadFromLocal": "Nahrát z lokálního počítače",
