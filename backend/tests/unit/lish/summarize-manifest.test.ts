@@ -27,7 +27,10 @@ describe('summarizeManifest', () => {
 		expect(detail.fileCount).toBe(2);
 		expect(detail.directoryCount).toBe(1);
 		expect(detail.links).toEqual([{ path: 'dir/link', target: 'a.bin' }]);
-		expect(detail.files).toEqual([{ path: 'dir/a.bin', size: 2560, modified: '2026-01-01T00:00:00.000Z' }, { path: 'empty.txt', size: 0 }]);
+		expect(detail.files).toEqual([
+			{ path: 'dir/a.bin', size: 2560, modified: '2026-01-01T00:00:00.000Z' },
+			{ path: 'empty.txt', size: 0 },
+		]);
 		expect(JSON.stringify(detail)).not.toContain('checksums');
 	});
 
