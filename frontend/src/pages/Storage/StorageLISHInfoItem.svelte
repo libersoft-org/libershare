@@ -15,9 +15,11 @@
 		item: ILISHFileInspection;
 		/** Translated refusal of {@link item}, empty when it is valid. */
 		error: string;
+		/** Reads the chunk checksums of one file of {@link item}. */
+		loadChecksums: (path: string) => Promise<string[]>;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, item, error, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, item, error, loadChecksums, onBack }: Props = $props();
 
 	// y=0 — Back; y=1+ — the file tree, a list open at the bottom like on the main info page.
 	createNavArea(() => ({ areaID, position, onBack, activate: true, listRange: (): [number, number] => [1, Number.MAX_SAFE_INTEGER] }));
@@ -68,7 +70,7 @@
 			<Alert type="error" message={error} />
 		{/if}
 		{#if item.detail}
-			<NetworkLishDetailView detail={item.detail} fileRowsBaseY={1} />
+			<NetworkLishDetailView detail={item.detail} fileRowsBaseY={1} {loadChecksums} />
 		{/if}
 	</div>
 </div>

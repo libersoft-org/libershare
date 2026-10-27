@@ -134,7 +134,7 @@
 </style>
 
 {#if itemSubPage.active && selected !== null && items[selected]}
-	<StorageLISHInfoItem {areaID} {position} item={items[selected]!} error={items[selected]!.error ? itemError(items[selected]!) : ''} onBack={() => void closeItem()} />
+	<StorageLISHInfoItem {areaID} {position} item={items[selected]!} error={items[selected]!.error ? itemError(items[selected]!) : ''} loadChecksums={path => api.lishs.inspectFileChecksums(filePath, selected!, path)} onBack={() => void closeItem()} />
 {:else}
 	<div class="lish-info">
 		<div class="container">
@@ -155,7 +155,7 @@
 					<Alert type="error" message={itemError(items[0]!)} />
 				{/if}
 				{#if items[0]!.detail}
-					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} />
+					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} loadChecksums={(path: string) => api.lishs.inspectFileChecksums(filePath, 0, path)} />
 				{/if}
 			{:else}
 				<Table columns="auto 1fr 14vh 10vh 16vh" columnsMobile="1fr 14vh 10vh 16vh">

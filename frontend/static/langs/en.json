@@ -318,7 +318,18 @@
 		"fileInfo": "LISH info",
 		"fileEmpty": "The file contains no LISH.",
 		"fileValid": "Valid",
-		"fileInvalid": "Invalid"
+		"fileInvalid": "Invalid",
+		"entryDetailsHint": "Select an item to show its details.",
+		"entryType": "Type",
+		"entryFile": "File",
+		"entryDirectory": "Directory",
+		"entryHardLink": "Hard link",
+		"entrySymbolicLink": "Symbolic link",
+		"entryPath": "Path",
+		"entryTarget": "Target",
+		"entryPermissions": "Permissions",
+		"entryChecksums": "Chunk checksums",
+		"entryChecksumsLoading": "Loading checksums …"
 	},
 	"import": {
 		"uploadFromLocal": "Upload from local computer",

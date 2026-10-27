@@ -102,6 +102,49 @@
 				assert(root.querySelectorAll('.row').length === 3, 'Back did not return to the table');
 				assert(calls.back === 0, 'Back from the item left the whole page');
 			});
+			await test('an entry shows its permissions, times, link type and checksums on request', async () => {
+				const checksumCalls = [];
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = async (filePath, index, path) => {
+					checksumCalls.push([filePath, index, path]);
+					return ['aa11', 'bb22', 'cc33'];
+				};
+				try {
+					const full = { detail: { ...detail('c0000000-0000-4000-8000-000000000004', 'Full', 3), directoryCount: 1, files: [{ path: 'a.bin', size: 2500, permissions: '0640', created: '2020-01-02T03:04:05.000Z', modified: '2021-06-07T08:09:10.000Z' }], directories: [{ path: 'docs', permissions: '0750' }], links: [{ path: 'hard', target: 'a.bin', hardlink: true }, { path: 'soft', target: 'a.bin' }] } };
+					await open([full], 'lish-info-details');
+					assert(!root.querySelector('.entry-details') && checksumCalls.length === 0, 'Details or checksums are shown before they are asked for');
+					const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
+					const confirmRow = async name => {
+						while (root.querySelector('.row.selected') !== rowNamed(name)) {
+							emit('down');
+							await settle();
+						}
+						emit('confirmDown');
+						emit('confirmUp');
+						await settle();
+					};
+					await confirmRow('docs');
+					let shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entryDirectory')) && shown.includes('0750'), `Directory details are wrong: ${shown}`);
+					await confirmRow('a.bin');
+					shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes('0640') && shown.includes(new Date('2020-01-02T03:04:05.000Z').toLocaleString()) && shown.includes(new Date('2021-06-07T08:09:10.000Z').toLocaleString()), `File permissions or times are missing: ${shown}`);
+					assert(checksumCalls.length === 1 && checksumCalls[0][1] === 0 && checksumCalls[0][2] === 'a.bin', `Checksums were not read for the file: ${JSON.stringify(checksumCalls)}`);
+					assert(root.querySelector('.checksums')?.textContent === '1\taa11\n2\tbb22\n3\tcc33', 'Checksums are not listed');
+					await confirmRow('hard');
+					shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entryHardLink')) && !root.querySelector('.checksums'), `Hard link details are wrong: ${shown}`);
+					await confirmRow('soft');
+					shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entrySymbolicLink')) && shown.includes('a.bin'), `Symbolic link details are wrong: ${shown}`);
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					assert(!root.querySelector('.entry-details'), 'A second confirm does not hide the details');
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('the file list of a .lishs item pages with PageDown and End', async () => {
 				const files = Array.from({ length: 25 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
 				const many = { detail: { ...detail('c0000000-0000-4000-8000-000000000003', 'Many files', 25), totalSize: 250, fileCount: 25, files } };
@@ -173,7 +216,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 7 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

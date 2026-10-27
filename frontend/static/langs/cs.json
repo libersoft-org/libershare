@@ -318,7 +318,18 @@
 		"fileInfo": "Informace o LISH",
 		"fileEmpty": "Soubor neobsahuje žádný LISH.",
 		"fileValid": "V pořádku",
-		"fileInvalid": "Vadný"
+		"fileInvalid": "Vadný",
+		"entryDetailsHint": "Výběrem položky zobrazíte její podrobnosti.",
+		"entryType": "Typ",
+		"entryFile": "Soubor",
+		"entryDirectory": "Složka",
+		"entryHardLink": "Pevný odkaz",
+		"entrySymbolicLink": "Symbolický odkaz",
+		"entryPath": "Cesta",
+		"entryTarget": "Cíl",
+		"entryPermissions": "Oprávnění",
+		"entryChecksums": "Kontrolní součty částí",
+		"entryChecksumsLoading": "Načítám kontrolní součty …"
 	},
 	"import": {
 		"uploadFromLocal": "Nahrát z lokálního počítače",

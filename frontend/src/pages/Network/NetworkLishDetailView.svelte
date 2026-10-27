@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '../../scripts/language.ts';
+	import { t, translateError } from '../../scripts/language.ts';
 	import { type IPeerLishDetail } from '@shared';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
@@ -15,8 +15,10 @@
 		 * (LISH search peer list) — the tree renders display-only there.
 		 */
 		fileRowsBaseY?: number | undefined;
+		/** Reads the chunk checksums of a file on request; without it the file details leave them out. */
+		loadChecksums?: ((path: string) => Promise<string[]>) | undefined;
 	}
-	let { detail, fileRowsBaseY = undefined }: Props = $props();
+	let { detail, fileRowsBaseY = undefined, loadChecksums }: Props = $props();
 
 	interface TreeNode {
 		name: string;
@@ -24,6 +26,8 @@
 		type: 'dir' | 'file' | 'link';
 		size: number;
 		path: string;
+		/** What the manifest says about the entry; absent for a folder only implied by the paths in it. */
+		entry?: { permissions?: string | undefined; modified?: string | undefined; created?: string | undefined; target?: string; hardlink?: boolean | undefined } | undefined;
 	}
 	interface FlatRow {
 		node: TreeNode;
@@ -46,16 +50,16 @@
 			return node;
 		}
 
-		for (const dir of d.directories) ensureDir(dir.path);
+		for (const dir of d.directories) ensureDir(dir.path).entry = dir;
 		for (const file of d.files) {
 			const parts = file.path.split('/');
 			const parentPath = parts.slice(0, -1).join('/');
-			ensureDir(parentPath).children.push({ name: parts[parts.length - 1] ?? '', children: [], type: 'file', size: file.size, path: file.path });
+			ensureDir(parentPath).children.push({ name: parts[parts.length - 1] ?? '', children: [], type: 'file', size: file.size, path: file.path, entry: file });
 		}
 		for (const link of d.links) {
 			const parts = link.path.split('/');
 			const parentPath = parts.slice(0, -1).join('/');
-			ensureDir(parentPath).children.push({ name: (parts[parts.length - 1] ?? '') + ' → ' + link.target, children: [], type: 'link', size: 0, path: link.path });
+			ensureDir(parentPath).children.push({ name: (parts[parts.length - 1] ?? '') + ' → ' + link.target, children: [], type: 'link', size: 0, path: link.path, entry: link });
 		}
 
 		function sortTree(node: TreeNode): void {
@@ -82,6 +86,39 @@
 		flattenTree(buildFileTree(detail), 0, rows);
 		return rows;
 	});
+
+	// One entry at a time shows its details; its checksums are read only then, and only for a file.
+	let expanded = $state<string | null>(null);
+	let checksums = $state<{ key: string; list?: string[]; error?: string } | null>(null);
+
+	function nodeKey(node: TreeNode): string {
+		return node.type + ':' + node.path;
+	}
+
+	async function toggleDetails(node: TreeNode): Promise<void> {
+		const key = nodeKey(node);
+		expanded = expanded === key ? null : key;
+		checksums = null;
+		if (expanded !== key || node.type !== 'file' || !loadChecksums) return;
+		checksums = { key };
+		try {
+			const list = await loadChecksums(node.path);
+			if (checksums?.key === key) checksums = { key, list };
+		} catch (e) {
+			if (checksums?.key === key) checksums = { key, error: translateError(e) };
+		}
+	}
+
+	// One text node rather than a row each: a large file has tens of thousands of chunks.
+	function checksumText(list: string[]): string {
+		return list.map((checksum, i) => `${i + 1}\t${checksum}`).join('\n');
+	}
+
+	function typeLabel(node: TreeNode): string {
+		if (node.type === 'dir') return $t('lish.entryDirectory');
+		if (node.type === 'file') return $t('lish.entryFile');
+		return node.entry?.hardlink ? $t('lish.entryHardLink') : $t('lish.entrySymbolicLink');
+	}
 
 	function typeIcon(type: TreeNode['type']): string {
 		return type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg';
@@ -176,12 +213,86 @@
 		flex-shrink: 0;
 	}
 
+	.entry-details {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5vh;
+		padding: 1vh 0 0 2.5vh;
+		font-size: 1.6vh;
+	}
+
+	.entry-row {
+		display: flex;
+		gap: 1vh;
+		min-width: 0;
+	}
+
+	.entry-row .label {
+		opacity: 0.7;
+		min-width: 16vh;
+		flex-shrink: 0;
+	}
+
+	.entry-row .value {
+		word-break: break-all;
+		white-space: normal;
+	}
+
+	.mono {
+		font-family: var(--font-mono);
+	}
+
+	.checksums {
+		max-height: 30vh;
+		overflow-y: auto;
+		white-space: pre;
+		font-family: var(--font-mono);
+		font-size: 1.5vh;
+	}
+
+	.hint {
+		font-size: 1.6vh;
+		color: var(--disabled-foreground);
+	}
+
 	.fsize {
 		font-size: 1.8vh;
 		white-space: nowrap;
 		color: var(--disabled-foreground);
 	}
 </style>
+
+{#snippet entryDetails(node: TreeNode)}
+	<div class="entry-details">
+		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value">{typeLabel(node)}</span></div>
+		<div class="entry-row"><span class="label">{$t('lish.entryPath')}:</span> <span class="value mono">{node.path}</span></div>
+		{#if node.entry?.target !== undefined}
+			<div class="entry-row"><span class="label">{$t('lish.entryTarget')}:</span> <span class="value mono">{node.entry.target}</span></div>
+		{/if}
+		{#if node.entry?.permissions}
+			<div class="entry-row"><span class="label">{$t('lish.entryPermissions')}:</span> <span class="value mono">{node.entry.permissions}</span></div>
+		{/if}
+		{#if node.entry?.created}
+			<div class="entry-row"><span class="label">{$t('network.created')}:</span> <span class="value">{formatDateTime(node.entry.created)}</span></div>
+		{/if}
+		{#if node.entry?.modified}
+			<div class="entry-row"><span class="label">{$t('localStorage.modified')}:</span> <span class="value">{formatDateTime(node.entry.modified)}</span></div>
+		{/if}
+		{#if node.type === 'file'}
+			<div class="entry-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{node.size === 0 ? 0 : Math.ceil(node.size / detail.chunkSize)}</span></div>
+			{#if checksums?.key === nodeKey(node)}
+				<div class="entry-row"><span class="label">{$t('lish.entryChecksums')}:</span></div>
+				{#if checksums.list}
+					<div class="checksums">{checksumText(checksums.list)}</div>
+				{:else if checksums.error}
+					<div class="entry-row"><span class="value">{checksums.error}</span></div>
+				{:else}
+					<div class="entry-row"><span class="value">{$t('lish.entryChecksumsLoading')}</span></div>
+				{/if}
+			{/if}
+		{/if}
+	</div>
+{/snippet}
 
 <div class="detail">
 	<div class="info-section">
@@ -202,9 +313,14 @@
 	</div>
 	{#if fileRows.length > 0}
 		{#if fileRowsBaseY !== undefined}
+			<div class="hint">{$t('lish.entryDetailsHint')}</div>
 			<Table columns="1fr auto" columnsMobile="1fr auto">
 				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} />
+					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => void toggleDetails(row.node)}>
+						{#if expanded === nodeKey(row.node)}
+							{@render entryDetails(row.node)}
+						{/if}
+					</PeerDetailLishFileRow>
 				{/each}
 			</Table>
 		{:else}
