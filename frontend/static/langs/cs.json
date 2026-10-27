@@ -316,7 +316,9 @@
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}",
 		"fileInfo": "Informace o LISH",
-		"fileEmpty": "Soubor neobsahuje žádný LISH."
+		"fileEmpty": "Soubor neobsahuje žádný LISH.",
+		"fileValid": "V pořádku",
+		"fileInvalid": "Vadný"
 	},
 	"import": {
 		"uploadFromLocal": "Nahrát z lokálního počítače",
