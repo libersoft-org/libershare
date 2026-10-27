@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
+import { type HashAlgorithm, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -480,6 +480,33 @@ export function parseLISHFromJSON(json: string): ILISH[] {
 	const data = Utils.safeJSONParse(json, 'JSON input');
 	if (Array.isArray(data)) return data.map(item => validateImportedLISH(item));
 	return [validateImportedLISH(data)];
+}
+
+/**
+ * Summary of a structurally valid manifest for display: files without their checksums, totals.
+ */
+export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
+	const files = (manifest.files ?? []).map(f => {
+		const entry: { path: string; size: number; permissions?: string; modified?: string; created?: string } = { path: f.path, size: f.size };
+		if (f.permissions !== undefined) entry.permissions = f.permissions;
+		if (f.modified !== undefined) entry.modified = f.modified;
+		if (f.created !== undefined) entry.created = f.created;
+		return entry;
+	});
+	return {
+		id: manifest.id,
+		name: manifest.name,
+		description: manifest.description,
+		created: manifest.created,
+		chunkSize: manifest.chunkSize,
+		checksumAlgo: manifest.checksumAlgo,
+		totalSize: files.reduce((sum, f) => sum + f.size, 0),
+		fileCount: files.length,
+		directoryCount: (manifest.directories ?? []).length,
+		files,
+		directories: manifest.directories ?? [],
+		links: manifest.links ?? [],
+	};
 }
 
 export interface VerifyFileProgress {
