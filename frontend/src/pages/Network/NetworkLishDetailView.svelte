@@ -5,6 +5,7 @@
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
+	import ChecksumList from './NetworkLishChecksumList.svelte';
 
 	interface Props {
 		detail: IPeerLishDetail;
@@ -107,11 +108,6 @@
 		} catch (e) {
 			if (checksums?.key === key) checksums = { key, error: translateError(e) };
 		}
-	}
-
-	// One text node rather than a row each: a large file has tens of thousands of chunks.
-	function checksumText(list: string[]): string {
-		return list.map((checksum, i) => `${i + 1}\t${checksum}`).join('\n');
 	}
 
 	/** Undefined for a link whose `hardlink` flag was invalid. */
@@ -262,14 +258,6 @@
 		color: var(--color-error);
 	}
 
-	.checksums {
-		max-height: 30vh;
-		overflow-y: auto;
-		white-space: pre;
-		font-family: var(--font-mono);
-		font-size: 1.5vh;
-	}
-
 	.hint {
 		font-size: 1.6vh;
 		color: var(--disabled-foreground);
@@ -304,7 +292,7 @@
 			{#if checksums?.key === nodeKey(node)}
 				<div class="entry-row"><span class="label">{$t('lish.entryChecksums')}:</span></div>
 				{#if checksums.list}
-					<div class="checksums">{checksumText(checksums.list)}</div>
+					<ChecksumList checksums={checksums.list} />
 				{:else if checksums.error}
 					<div class="entry-row"><span class="value">{checksums.error}</span></div>
 				{:else}
