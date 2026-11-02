@@ -497,6 +497,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				validateLISHStructure(lish, maxChunkSize);
 				// The import refuses these paths when it prepares the dataset; the check itself touches no disk.
 				validateDatasetNamespace(lish);
+				datasetRootName(lish);
 				return { detail: summarizeManifest(lish) };
 			} catch (error) {
 				if (error instanceof CodedError) return { error: error.code, errorDetail: error.detail };

@@ -120,6 +120,22 @@ describe('lishs.inspectFile', () => {
 		}
 	});
 
+	it('refuses a dataset name the import cannot use as its root directory', async () => {
+		for (const name of ['CON', 'aux.txt', 'Photos.', '..']) {
+			const lish: ILISH = { ...valid, name };
+			const file = write(`root-${name.replace(/\./g, '_')}.lish`, JSON.stringify(lish));
+			const [inspected] = (await handlers.inspectFile({ filePath: file })).items;
+			expect(inspected!.error).toBe(ErrorCodes.LISH_UNSAFE_PATH);
+			expect(inspected!.detail).toBeUndefined();
+			const downloadPath = await mkdtemp(join(tmpdir(), 'lish-inspect-dest-'));
+			try {
+				await expect(handlers.importFromFile({ filePath: file, downloadPath })).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
+			} finally {
+				await rm(downloadPath, { recursive: true, force: true });
+			}
+		}
+	});
+
 	it('shows a manifest whose entry metadata has the wrong type, with those fields flagged', async () => {
 		const odd = { ...valid, files: [{ path: 'a.bin', size: 10, checksums: ['a1'], created: { toString: 0, valueOf: 0 }, permissions: '0644' }] };
 		const [inspected] = (await handlers.inspectFile({ filePath: write('odd-meta.lish', JSON.stringify(odd)) })).items;
