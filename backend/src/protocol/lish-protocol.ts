@@ -330,8 +330,9 @@ export class LISHClient {
 				const checkPublisher = async (): Promise<void> => {
 					try {
 						assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
-					} catch (e) {
-						if (!(e instanceof CodedError)) throw e;
+					} catch (error) {
+						// The over-limit path gets here before the rest of the shape is checked, so the signed bytes may not even build.
+						const e = error instanceof CodedError ? error : new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, error instanceof Error ? error.message : String(error));
 						// Logged here: callers only see the peer-fault code and move on to the next peer.
 						console.warn(`[PROTO] getLish ${safeLishID}: manifest refused, ${e.code} ${e.detail ?? ''}`.trim());
 						// The cause keeps the real reason for callers that show it to the user.

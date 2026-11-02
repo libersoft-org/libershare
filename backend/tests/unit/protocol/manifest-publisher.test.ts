@@ -75,4 +75,11 @@ describe('requestManifest checks signature and expected publisher', () => {
 		const authentic = await sign(manifest({ chunkSize: huge, files: [{ path: 'a.txt', size: huge, checksums: [CHECKSUM] }] }), keyA);
 		await expect(client(authentic).requestManifest(ID, undefined, A)).rejects.toMatchObject({ code: ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE });
 	});
+
+	it('blames the peer for an over-limit manifest whose signed bytes cannot even be built', async () => {
+		const huge = DEFAULT_MAX_CHUNK_SIZE * 2;
+		// The over-limit path checks the signature before the rest of the shape, so a value the signed form cannot hold reaches it.
+		const signed = await sign(manifest({ chunkSize: huge, files: [{ path: 'a.txt', size: huge, checksums: [CHECKSUM] }] }), keyA);
+		await expect(client({ ...signed, checksumAlgo: 1.5 }).requestManifest(ID, undefined, A)).rejects.toMatchObject(peerFault);
+	});
 });
