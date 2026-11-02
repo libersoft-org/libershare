@@ -265,8 +265,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 			if (p.expectedPublisher !== null && typeof p.expectedPublisher !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'expectedPublisher must be a string or null');
 			return p.expectedPublisher;
 		}
-		const stored = dataServer.get(p.lishID);
-		return stored ? (stored.publisher ?? null) : undefined;
+		return dataServer.getPublisher(p.lishID);
 	}
 	/** A manifest this node refused over its signature or publisher: report that reason, not a generic peer fault. */
 	function refusalReason(error: CodedError): CodedError {

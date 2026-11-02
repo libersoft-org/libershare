@@ -484,8 +484,8 @@ export class Downloader {
 	 * caller repeats this under the LISH ownership lock right before activating the download.
 	 */
 	assertStoredPublisher(): void {
-		const stored = this.dataServer.get(this.lishID);
-		if (stored && (stored.publisher ?? null) !== this.localPublisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored.publisher ?? 'unsigned'}, file ${this.localPublisher ?? 'unsigned'}`);
+		const stored = this.dataServer.getPublisher(this.lishID);
+		if (stored !== undefined && stored !== this.localPublisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored ?? 'unsigned'}, file ${this.localPublisher ?? 'unsigned'}`);
 	}
 
 	async init(lishPath: string): Promise<void> {

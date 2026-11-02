@@ -122,16 +122,17 @@ export interface LISHMeta {
 	chunkSize: number;
 	checksumAlgo: HashAlgorithm;
 	directory: string | null;
+	publisher: string | null;
 }
 
 /**
  * Returns a lightweight metadata-only view of a LISH (no files/directories/links).
- * Used by callers that only need directory, chunkSize, and checksumAlgo (e.g. chunk I/O).
+ * Used by callers that only need directory, chunkSize, checksumAlgo or publisher (e.g. chunk I/O).
  */
 export function getLISHMeta(db: Database, lishID: LISHid): LISHMeta | null {
-	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null; publisher: string | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory, publisher FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
-	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory };
+	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory, publisher: row.publisher };
 }
 
 /** Returns summary rows for all stored LISHs, with optional sorting. */

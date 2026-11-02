@@ -76,6 +76,11 @@ export class DataServer {
 		return getLISH(this.db, lishID);
 	}
 
+	/** The stored publisher (null when unsigned), or undefined when the LISH is not stored. Reads one row. */
+	getPublisher(lishID: LISHid): string | null | undefined {
+		return getLISHMeta(this.db, lishID)?.publisher;
+	}
+
 	list(): IStoredLISH[] {
 		return listAllStoredLISHs(this.db);
 	}
