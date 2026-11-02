@@ -56,6 +56,19 @@ test('stops at the first peer on a local error', async () => {
 	expect(tried).toEqual([PEERS[0]!.peerID]);
 });
 
+test('tries the next peer when one serves a refused manifest', async () => {
+	for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_INVALID_MANIFEST']) {
+		const tried: string[] = [];
+		const result = await withPeerFallback(PEERS, async peerID => {
+			tried.push(peerID);
+			if (peerID === PEERS[0]!.peerID) throw codedError(code);
+			return 'detail';
+		});
+		expect(result).toBe('detail');
+		expect(tried).toEqual([PEERS[0]!.peerID, PEERS[1]!.peerID]);
+	}
+});
+
 test('tries the next peer on a tryNextPeer-flagged error', async () => {
 	const tried: string[] = [];
 	const result = await withPeerFallback(PEERS, async peerID => {
