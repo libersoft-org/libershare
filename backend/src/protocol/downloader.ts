@@ -653,6 +653,8 @@ export class Downloader {
 					}
 					if (this.destroyed) return;
 					if (manifest && manifest.files && manifest.files.length > 0) {
+						// Refused only when destroyed or when an import stored another publisher meanwhile;
+						// that import disables this download (forceDisableDownload → destroy), so the peer is not dropped.
 						if (!(await this.storeManifest(manifest))) return;
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
