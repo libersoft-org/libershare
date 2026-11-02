@@ -297,6 +297,9 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 				const target = relative(await fsPromises.realpath(basePath), await fsPromises.realpath(fullPath));
 				if (!target || isAbsolute(target) || target === '..' || target.startsWith('..' + sep)) {
 					console.warn(`Warning: skipping symlink ${fullPath}, its target is outside the shared folder`);
+				} else if (!(await fsPromises.stat(fullPath)).isFile()) {
+					// A receiver recreates a link only to a file of the manifest, so a folder target would fail its import.
+					console.warn(`Warning: skipping symlink ${fullPath}, its target is not a file`);
 				} else {
 					links.push({
 						path: getRelativePath(fullPath, basePath),

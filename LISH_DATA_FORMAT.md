@@ -75,7 +75,7 @@ interface ILinkEntry {
 **Note**:
 
 - When `hardlink` is `true`, the `target` points to a file path in the `files` array (hard link)
-- When `hardlink` is `false` or undefined, the `target` is the resolved symbolic link target as a path relative to the dataset root; a symbolic link whose target lies outside the dataset is left out of the manifest
+- When `hardlink` is `false` or undefined, the `target` is the resolved symbolic link target as a path relative to the dataset root; a symbolic link whose target lies outside the dataset or is not a file is left out of the manifest
 
 ## Supported hash algorithms
 
