@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { encodeSignature, ErrorCodes, signedManifestBytes, type ILISH, type LISHid } from '@shared';
+import { CodedError, encodeSignature, ErrorCodes, signedManifestBytes, type ILISH, type LISHid } from '@shared';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
@@ -274,6 +274,34 @@ describe('create with sign', () => {
 		await writeFile(source, 'payload');
 		await expect(handlers().create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never)).rejects.toMatchObject({ code: ErrorCodes.NETWORK_NOT_RUNNING });
 		expect(dataServer.list()).toHaveLength(0);
+	});
+
+	it('refuses a key or a stopped network before hashing the dataset', async () => {
+		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
+		await writeFile(source, 'payload');
+		for (const code of [ErrorCodes.LISH_SIGNING_UNSUPPORTED_KEY, ErrorCodes.NETWORK_NOT_RUNNING]) {
+			const events: string[] = [];
+			let signed = 0;
+			const signer: ManifestSigner = lish => {
+				signed++;
+				return signerA(lish);
+			};
+			const lishs = initLISHsHandlers(
+				dataServer,
+				(_client, event) => events.push(event),
+				() => {},
+				settings,
+				signer,
+				() => {
+					throw new CodedError(code);
+				}
+			);
+			created.push(lishs);
+			await expect(lishs.create({ dataPath: source, addToSharing: true, sign: true } as never, undefined as never)).rejects.toMatchObject({ code });
+			expect(events.filter(event => event === 'lishs.create:progress')).toEqual([]);
+			expect(signed).toBe(0);
+			expect(dataServer.list()).toHaveLength(0);
+		}
 	});
 });
 

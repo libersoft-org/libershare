@@ -154,7 +154,11 @@ export class LISHMutationGate {
 /** Signs a manifest as its publisher; supplied by the running network, absent in tests without one. */
 export type ManifestSigner = (lish: ILISH) => Promise<ILISH>;
 
-export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings, signManifest?: ManifestSigner): LISHsHandlers {
+/**
+ * `checkSigner` throws what `signManifest` would throw right now, so a create that asks for a
+ * signature is refused before it hashes the whole dataset.
+ */
+export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcast: BroadcastFn, settings: Settings, signManifest?: ManifestSigner, checkSigner?: () => void): LISHsHandlers {
 	/**
 	 * Every creation admitted and not yet finished.
 	 *
@@ -283,13 +287,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			const entries = await readdir(dataPath);
 			if (entries.length === 0) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		}
+		if (p.sign) {
+			if (!signManifest) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+			checkSigner?.();
+		}
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
 		let lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
 		// Only empty subfolders: no receiver could ever download such a LISH.
 		if (!lish.files?.length) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
-		if (p.sign) {
-			if (!signManifest) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+		// Checked again by the signer: the network can stop while the dataset is hashed.
+		if (p.sign && signManifest) {
 			lish = await signManifest(lish);
 			// Same check every receiver runs, so this node never publishes a signature it would refuse.
 			validateLISHStructure(lish, maxChunkSize);
