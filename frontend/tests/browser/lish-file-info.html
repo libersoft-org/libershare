@@ -219,6 +219,54 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('a checksum read queued before a refresh does not bring the change notice back', async () => {
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				const mockedInspect = api.lishs.inspectFile;
+				const pending = [];
+				const fileChanged = () => Object.assign(new Error('LISH_FILE_CHANGED'), { code: 'LISH_FILE_CHANGED', detail: '/files/example.lishs' });
+				api.lishs.inspectFileChecksums = () => new Promise((_resolve, reject) => pending.push(() => reject(fileChanged())));
+				try {
+					const two = {
+						detail: {
+							...detail('c0000000-0000-4000-8000-000000000007', 'Two files', 4),
+							fileCount: 2,
+							files: [
+								{ path: 'a.bin', size: 2500 },
+								{ path: 'b.bin', size: 10 },
+							],
+						},
+					};
+					await open([two], 'lish-info-queued');
+					const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
+					for (const name of ['a.bin', 'b.bin']) {
+						while (root.querySelector('.row.selected') !== rowNamed(name)) {
+							emit('down');
+							await settle();
+						}
+						emit('confirmDown');
+						emit('confirmUp');
+						await settle();
+					}
+					assert(pending.length === 2, `Expected two queued checksum reads, got ${pending.length}`);
+					pending[0]();
+					await settle();
+					const refresh = button(tr('common.refresh'));
+					assert(refresh, 'No refresh is offered');
+					// The backend answers in order: the second old read fails while the refresh is still loading.
+					let release;
+					api.lishs.inspectFile = () => new Promise(resolve => (release = () => resolve({ version: 'v2', items: structuredClone([two]) })));
+					refresh.click();
+					await settle();
+					pending[1]();
+					await settle();
+					release();
+					await settle();
+					assert(!root.textContent.includes(tr('lish.errorFileChanged')) && !button(tr('common.refresh')), 'The change notice came back for the refreshed content');
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+					api.lishs.inspectFile = mockedInspect;
+				}
+			});
 			await test('a long checksum list scrolls to its last checksum by keyboard and hands on at its end', async () => {
 				const list = Array.from({ length: 500 }, (_, i) => `c${String(i + 1).padStart(3, '0')}`);
 				const originalChecksums = api.lishs.inspectFileChecksums;
@@ -438,7 +486,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 16 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

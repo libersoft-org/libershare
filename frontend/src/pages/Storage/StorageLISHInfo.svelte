@@ -49,6 +49,7 @@
 		loading = true;
 		error = '';
 		changed = false;
+		version = '';
 		try {
 			({ items, version } = await api.lishs.inspectFile(filePath));
 		} catch (e: any) {
@@ -59,10 +60,12 @@
 	}
 
 	async function loadChecksums(index: number, path: string): Promise<string[]> {
+		const requested = version;
 		try {
-			return await api.lishs.inspectFileChecksums(filePath, version, index, path);
+			return await api.lishs.inspectFileChecksums(filePath, requested, index, path);
 		} catch (e: any) {
-			if (e?.code === ErrorCodes.LISH_FILE_CHANGED) changed = true;
+			// A request queued before a refresh fails against the old content; the refreshed one is fine.
+			if (e?.code === ErrorCodes.LISH_FILE_CHANGED && requested && requested === version) changed = true;
 			throw e;
 		}
 	}
