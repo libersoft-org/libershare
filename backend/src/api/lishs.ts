@@ -518,6 +518,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
 		if (version !== p.version) throw new CodedError(ErrorCodes.LISH_FILE_CHANGED, p.filePath);
+		if (!Number.isSafeInteger(p.index) || p.index < 0 || p.index >= manifests.length) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `index ${p.index} is not an item of the file`);
 		const lish = validateImportedLISH(manifests[p.index]);
 		validateLISHStructure(lish, maxChunkSize);
 		const file = lish.files?.find(f => f.path === p.path);

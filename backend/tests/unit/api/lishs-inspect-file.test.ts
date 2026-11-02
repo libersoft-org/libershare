@@ -159,7 +159,7 @@ describe('lishs.inspectFile', () => {
 		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'b.bin' })).toEqual(['b1']);
 		await expect(handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'missing.bin' })).rejects.toMatchObject({ code: ErrorCodes.FS_NOT_FOUND });
 		await expect(handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'short.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
-		await expect(handlers.inspectFileChecksums({ filePath, version, index: 2, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_FORMAT });
+		for (const index of [2, -1, 0.5, '1']) await expect(handlers.inspectFileChecksums({ filePath, version, index: index as number, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
 	});
 
 	it('refuses the checksums once the file was rewritten after its preview', async () => {
