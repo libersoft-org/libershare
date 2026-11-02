@@ -58,9 +58,6 @@ const ALLOWED_TRANSITIONS: Record<State, readonly State[]> = {
 	error: ['downloading', 'preparing', 'awaiting-manifest', 'initialized'],
 };
 
-/** Whether a manifest lists any file — one without files gives a download nothing to fetch. */
-const hasFiles = (lish: IStoredLISH): boolean => (lish.files?.length ?? 0) > 0;
-
 export class Downloader {
 	private lish!: IStoredLISH;
 	private readonly dataServer: DataServer;
@@ -655,17 +652,12 @@ export class Downloader {
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
 					if (this.destroyed) return;
-					if (manifest && !hasFiles(manifest)) {
-						// Nothing to download from it; asking it again on every pass never ends.
-						this.peerManager.remove(peerID, 'drop');
-						continue;
-					}
-					if (manifest) {
+					if (manifest && manifest.files && manifest.files.length > 0) {
 						if (!(await this.storeManifest(manifest))) return;
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
-						console.log(`[DL] Got manifest: ${manifest.files!.length} files, ${this.missingChunks.length} chunks`);
+						console.log(`[DL] Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
 						this.transitionTo('preparing', 'doWork() got manifest');
 						break;
 					}
@@ -869,13 +861,12 @@ export class Downloader {
 				}
 				if (this.destroyed) return;
 
-				// A manifest without files has nothing to download; probing it again never ends.
-				if (!manifest || !hasFiles(manifest)) {
+				if (!manifest) {
 					this.peerManager.remove(peerID, 'drop');
 					continue;
 				}
 
-				if (this.needsManifest) {
+				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
 					// Protect manifest import with workMutex to prevent race with doWork()
 					await this.workMutex.runExclusive(async () => {
 						if (this.destroyed || !this.needsManifest) return; // double-check after acquiring lock

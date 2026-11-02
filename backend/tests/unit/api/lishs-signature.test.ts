@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
@@ -302,15 +302,6 @@ describe('create with sign', () => {
 			expect(signed).toBe(0);
 			expect(dataServer.list()).toHaveLength(0);
 		}
-	});
-});
-
-describe('create without files', () => {
-	it('refuses a folder holding only empty subfolders and stores nothing', async () => {
-		const source = await tempDir('lish-empty-src-');
-		await mkdir(join(source, 'only', 'folders'), { recursive: true });
-		await expect(handlers().create({ dataPath: source, addToSharing: true } as never, undefined as never)).rejects.toMatchObject({ code: ErrorCodes.DIRECTORY_EMPTY });
-		expect(dataServer.list()).toHaveLength(0);
 	});
 });
 

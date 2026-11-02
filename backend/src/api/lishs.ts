@@ -293,8 +293,6 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
 		let lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
-		// Only empty subfolders: no receiver could ever download such a LISH.
-		if (!lish.files?.length) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		// Checked again by the signer: the network can stop while the dataset is hashed.
 		if (p.sign && signManifest) {
 			lish = await signManifest(lish);

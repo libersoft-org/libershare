@@ -106,12 +106,9 @@ for (const sign of [false, true]) {
 			expect(lish.files!.map(f => [f.path, f.size])).toEqual([['zero.bin', 0]]);
 		});
 
-		it('refuses an empty folder and a folder holding only empty folders, storing nothing', async () => {
+		it('refuses an empty folder, storing nothing', async () => {
 			const empty = await tempDir('lish-shapes-src-');
 			await expect(create(empty, sign)).rejects.toMatchObject({ code: ErrorCodes.DIRECTORY_EMPTY });
-			const onlyFolders = await tempDir('lish-shapes-src-');
-			await mkdir(join(onlyFolders, 'x', 'y'), { recursive: true });
-			await expect(create(onlyFolders, sign)).rejects.toMatchObject({ code: ErrorCodes.DIRECTORY_EMPTY });
 			expect(dataServer.list()).toHaveLength(0);
 		});
 	});

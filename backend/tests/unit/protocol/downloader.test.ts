@@ -744,31 +744,6 @@ describe('Downloader – oversized manifest across peers', () => {
 	});
 });
 
-describe('Downloader – manifest without files', () => {
-	it('drops the peer instead of asking it again on every pass, and takes the manifest from the next one', async () => {
-		const ds = new MockDataServer();
-		const dl = new Downloader('/tmp/dl-no-files', new MockNetwork() as never, ds as never, 'net-001');
-		const p = priv(dl);
-		p['state'] = 'awaiting-manifest';
-		p['needsManifest'] = true;
-		p['lish'] = null;
-		p['lishID'] = 'test-no-files-lish';
-		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
-		const empty = new MockLISHClient();
-		const { files: _files, ...withoutFiles } = makeLISH();
-		empty.requestManifestResult = withoutFiles;
-		const good = new MockLISHClient();
-		good.requestManifestResult = makeLISH();
-		peers.set('peer-no-files-01', empty);
-		peers.set('peer-valid-00001', good);
-
-		await dl.doWork();
-
-		expect(peers.has('peer-no-files-01')).toBe(false);
-		expect(ds.addedLishs.length).toBe(1);
-	});
-});
-
 describe('Downloader – malformed manifest peer handling', () => {
 	it('drops a peer whose manifest is malformed and imports from the next peer', async () => {
 		const ds = new MockDataServer();
