@@ -175,10 +175,6 @@
 		word-break: break-all;
 	}
 
-	.info-row .value.mono {
-		font-family: var(--font-mono);
-	}
-
 	.info-row .value.description {
 		white-space: pre-wrap;
 	}
