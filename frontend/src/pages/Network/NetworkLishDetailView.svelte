@@ -16,7 +16,7 @@
 		 * (LISH search peer list) — the tree renders display-only there.
 		 */
 		fileRowsBaseY?: number | undefined;
-		/** Reads the chunk checksums of a file on request; without it the file details leave them out. */
+		/** Reads the chunk checksums of a file on request; without it the rows do not open entry details. */
 		loadChecksums?: ((path: string) => Promise<string[]>) | undefined;
 	}
 	let { detail, fileRowsBaseY = undefined, loadChecksums }: Props = $props();
@@ -323,10 +323,10 @@
 	</div>
 	{#if fileRows.length > 0}
 		{#if fileRowsBaseY !== undefined}
-			<div class="hint">{$t('lish.entryDetailsHint')}</div>
+			{#if loadChecksums}<div class="hint">{$t('lish.entryDetailsHint')}</div>{/if}
 			<Table columns="1fr auto" columnsMobile="1fr auto">
 				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => void toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
+					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={loadChecksums ? () => void toggleDetails(row.node) : undefined} expanded={expanded === nodeKey(row.node)}>
 						{@render entryDetails(row.node, fileRowsBaseY + i)}
 					</PeerDetailLishFileRow>
 				{/each}
