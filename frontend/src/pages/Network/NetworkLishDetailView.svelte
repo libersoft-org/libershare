@@ -194,7 +194,7 @@
 			{#if detail.publisher}
 				<span class="label">{$t('lish.signedBy')}:</span> <span class="value mono">{detail.publisher}</span>
 			{:else}
-				<span class="label">{$t('lish.unsigned')}</span>
+				<span class="label">{$t('lish.signature')}:</span> <span class="value">{$t('lish.unsigned')}</span>
 			{/if}
 		</div>
 		{#if detail.description}
