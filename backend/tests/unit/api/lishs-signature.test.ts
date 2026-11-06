@@ -348,6 +348,13 @@ describe('add from a peer checks the expected publisher', () => {
 		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 	});
 
+	it('expects the stored publisher even when the picked row names another', async () => {
+		await handlers().importManifest(await sign(manifest(), keyA), downloadDir);
+		const lishnets = lishnetsOver(await sign(manifest(), keyQ));
+		const Q = peerIdFromPrivateKey(keyQ).toString();
+		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: Q })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+	});
+
 	it('shows the verified publisher in the preview', async () => {
 		const lishnets = lishnetsOver(await sign(manifest(), keyA));
 		expect((await lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: A })).publisher).toBe(A);

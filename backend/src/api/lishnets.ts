@@ -261,11 +261,10 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	/** What the user picked the item by, else the publisher this node already stores under the ID. */
 	function expectedPublisherFor(p: PeerLishParams): ExpectedPublisher {
-		if (p.expectedPublisher !== undefined) {
-			if (p.expectedPublisher !== null && typeof p.expectedPublisher !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'expectedPublisher must be a string or null');
-			return p.expectedPublisher;
-		}
-		return dataServer.getPublisher(p.lishID);
+		if (p.expectedPublisher !== undefined && p.expectedPublisher !== null && typeof p.expectedPublisher !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'expectedPublisher must be a string or null');
+		// An ID already stored keeps its publisher, so the preview must not accept another one either.
+		const stored = dataServer.getPublisher(p.lishID);
+		return stored !== undefined ? stored : p.expectedPublisher;
 	}
 	/** A manifest this node refused over its signature or publisher: report that reason, not a generic peer fault. */
 	function refusalReason(error: CodedError): CodedError {
