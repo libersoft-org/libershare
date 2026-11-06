@@ -317,6 +317,26 @@
 					api.lishs.inspectFileChecksums = originalChecksums;
 				}
 			});
+			await test('PageDown past an expanded file moves ten files, not counting its checksums as one', async () => {
+				const originalChecksums = api.lishs.inspectFileChecksums;
+				api.lishs.inspectFileChecksums = async () => ['aa'];
+				try {
+					const files = Array.from({ length: 15 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
+					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000008', 'Many', 15), totalSize: 150, fileCount: 15, files } }], 'lish-info-page');
+					const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
+					emit('down');
+					await settle();
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					assert(root.querySelector('.checksums') && selectedName() === 'f01.bin', `f01.bin is not expanded and selected: ${selectedName()}`);
+					emit('pageDown');
+					await settle();
+					assert(selectedName() === 'f11.bin', `PageDown from f01.bin landed on ${selectedName()}`);
+				} finally {
+					api.lishs.inspectFileChecksums = originalChecksums;
+				}
+			});
 			await test('right and left reveal the end of a checksum wider than the list', async () => {
 				// Far wider than any test window, so the overflow does not depend on the window size.
 				const list = Array.from({ length: 5 }, (_, i) => String(i).repeat(600));
@@ -486,7 +506,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 16 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 17 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

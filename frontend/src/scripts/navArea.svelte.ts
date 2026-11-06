@@ -238,14 +238,16 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		return items.filter(i => i.pos[0] === selectedPos![0] && i.pos[1] >= minY && i.pos[1] <= maxY).sort((a, b) => a.pos[1] - b.pos[1]);
 	}
 
+	/** Moves by whole rows: an item placed between rows (a fractional y, such as an expanded detail) is not counted as one. */
 	function jumpBy(delta: number): void {
-		const col = listColumnItems();
-		if (col.length === 0) return;
-		const idx = col.findIndex(i => i.pos[1] === selectedPos![1]);
+		const rows = listColumnItems().filter(i => Number.isInteger(i.pos[1]));
+		const y = selectedPos?.[1];
+		if (rows.length === 0 || y === undefined) return;
+		// From an in-between item, count from the row it hangs under.
+		const idx = rows.findLastIndex(i => i.pos[1] <= y);
 		if (idx < 0) return;
-		const targetIdx = Math.max(0, Math.min(col.length - 1, idx + delta));
-		const target = col[targetIdx];
-		if (target && target !== col[idx]) selectItem(target);
+		const target = rows[Math.max(0, Math.min(rows.length - 1, idx + delta))];
+		if (target && Math.sign(target.pos[1] - y) === Math.sign(delta)) selectItem(target);
 	}
 
 	function jumpEdge(edge: 'first' | 'last'): void {
