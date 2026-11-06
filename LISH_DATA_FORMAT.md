@@ -54,7 +54,7 @@ A LISH may be signed by its publisher. `publisher` and `signature` are either bo
 - optional fields that are absent are left out (an empty `name` or `description` counts as absent); `null` is never allowed
 - object keys sorted by UTF-16 code unit order, no whitespace, strings and numbers serialized as by `JSON.stringify`; numbers are safe integers
 
-**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, or a `publisher` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
+**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry; the local fields `directory`, `finalDirectory` and `chunks` are allowed in the root because they are left out of the signed bytes), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, or a `publisher` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
 
 **Verification.** Every place that admits a manifest (import, a `.lish` file to download, a manifest from a peer, a preview) verifies the signature when present. A node that already stores a LISH ID keeps its publisher for the life of the item: a manifest under the same ID from another publisher, or unsigned for a signed item (and the other way round), is refused.
 
