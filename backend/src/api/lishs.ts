@@ -523,7 +523,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const lish = validateImportedLISH(manifests[p.index]);
 		validateLISHStructure(lish, maxChunkSize);
 		const file = lish.files?.find(f => f.path === p.path);
-		if (!file) throw new CodedError(ErrorCodes.FS_NOT_FOUND, p.path);
+		if (!file) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${p.path} is not a file of item ${p.index}`);
 		return file.checksums;
 	}
 

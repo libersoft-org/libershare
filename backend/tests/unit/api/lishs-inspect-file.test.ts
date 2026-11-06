@@ -157,7 +157,7 @@ describe('lishs.inspectFile', () => {
 		const { version } = await handlers.inspectFile({ filePath });
 		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'a.bin' })).toEqual(['a1', 'a2', 'a3']);
 		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'b.bin' })).toEqual(['b1']);
-		await expect(handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'missing.bin' })).rejects.toMatchObject({ code: ErrorCodes.FS_NOT_FOUND });
+		await expect(handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'missing.bin' })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
 		await expect(handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'short.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
 		for (const index of [2, -1, 0.5, '1']) await expect(handlers.inspectFileChecksums({ filePath, version, index: index as number, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
 		for (const bad of ['', 1, {}]) {
