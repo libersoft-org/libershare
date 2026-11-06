@@ -34,7 +34,15 @@ function handlersServing(manifest: IStoredLISH): ReturnType<typeof initLISHnetsH
 		},
 	};
 	const networks = { getRunningNetwork: () => ({ dialProtocolByPeerId: async () => ({ stream }) }) } as never;
-	return initLISHnetsHandlers(networks, {} as never, () => {}, { get: () => undefined } as never, (async () => ({})) as never, async op => op(), new AbortController().signal);
+	return initLISHnetsHandlers(
+		networks,
+		{} as never,
+		() => {},
+		{ get: () => undefined } as never,
+		(async () => ({})) as never,
+		async op => op(),
+		new AbortController().signal
+	);
 }
 
 describe('lishnets.getPeerLish detail shape', () => {
