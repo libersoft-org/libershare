@@ -515,6 +515,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 */
 	async function inspectFileChecksums(p: { filePath: string; version: string; index: number; path: string }): Promise<string[]> {
 		assert(p, ['filePath', 'version', 'index', 'path']);
+		for (const name of ['version', 'path'] as const) if (typeof p[name] !== 'string' || p[name] === '') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${name} must be a non-empty string`);
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
 		if (version !== p.version) throw new CodedError(ErrorCodes.LISH_FILE_CHANGED, p.filePath);
