@@ -517,6 +517,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['filePath', 'version', 'index', 'path']);
 		for (const name of ['version', 'path'] as const) if (typeof p[name] !== 'string' || p[name] === '') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${name} must be a non-empty string`);
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		// Read whole again on every call: only hashing the current content proves it is still the version on screen.
+		// Each call holds the import lock for that read, so expanding many items of a large .lishs delays imports.
 		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
 		if (version !== p.version) throw new CodedError(ErrorCodes.LISH_FILE_CHANGED, p.filePath);
 		if (!Number.isSafeInteger(p.index) || p.index < 0 || p.index >= manifests.length) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `index ${p.index} is not an item of the file`);
