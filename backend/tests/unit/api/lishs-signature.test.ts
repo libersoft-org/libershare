@@ -100,6 +100,21 @@ describe('import keeps the signature', () => {
 		expect((await lishs.get({ lishID: ID }))?.publisher).toBe(A);
 	});
 
+	it('an import from a URL verifies the signature like any other import', async () => {
+		const signed = await sign(manifest(), keyA);
+		const bodies = [JSON.stringify({ ...signed, name: 'Forged' }), JSON.stringify(signed)];
+		const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(bodies.shift()) });
+		try {
+			const url = `http://127.0.0.1:${server.port}/item.lish`;
+			await expect(handlers().importFromURL({ url, downloadPath: downloadDir })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
+			expect(dataServer.get(ID)).toBeFalsy();
+			await handlers().importFromURL({ url, downloadPath: downloadDir });
+			expect(dataServer.get(ID)?.publisher).toBe(A);
+		} finally {
+			server.stop(true);
+		}
+	});
+
 	it('refuses an overwrite by another publisher before stopping the running work of the stored one', async () => {
 		const lishs = handlers();
 		await lishs.importManifest(await sign(manifest(), keyA), downloadDir);
