@@ -48,6 +48,17 @@ describe('summarizeManifest', () => {
 		expect(detail.links).toEqual([{ path: 'dir/link', target: 'a.bin', invalidFields: ['hardlink', 'modified'] }]);
 	});
 
+	it('takes only ISO 8601 text as a date', () => {
+		// Date.parse alone accepts all of these.
+		for (const notISO of ['1', '2026', 'Jan 1 2026', '2026/01/01', '2026-13-01']) {
+			const detail = summarizeManifest({ ...manifest(), files: [{ path: 'a.bin', size: 10, checksums: ['aa'], modified: notISO }] });
+			expect(detail.files[0]).toEqual({ path: 'a.bin', size: 10, invalidFields: ['modified'] });
+		}
+		for (const iso of ['2026-01-01', '2026-01-01T10:20', '2026-01-01T10:20:30+02:00', '2026-01-01T10:20:30.123Z']) {
+			expect(summarizeManifest({ ...manifest(), files: [{ path: 'a.bin', size: 10, checksums: ['aa'], modified: iso }] }).files[0]).toEqual({ path: 'a.bin', size: 10, modified: iso });
+		}
+	});
+
 	it('summarizes a manifest without files as empty', () => {
 		const { files: _files, directories: _directories, links: _links, ...bare } = manifest();
 		const detail = summarizeManifest(bare);

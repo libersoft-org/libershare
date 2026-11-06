@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
+import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -528,7 +528,7 @@ function entryMetadata<T extends object, K extends keyof typeof ENTRY_METADATA &
 		const value: unknown = entry[field];
 		if (value === undefined) continue;
 		const kind = ENTRY_METADATA[field];
-		if (kind === 'flag' ? typeof value === 'boolean' : typeof value === 'string' && (kind === 'text' || !Number.isNaN(Date.parse(value)))) shown[field] = value;
+		if (kind === 'flag' ? typeof value === 'boolean' : typeof value === 'string' && (kind === 'text' || isISODate(value))) shown[field] = value;
 		else invalid.push(field);
 	}
 	if (invalid.length > 0) shown['invalidFields'] = invalid;

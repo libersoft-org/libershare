@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { t, translateError } from '../../scripts/language.ts';
-	import { type IPeerLishDetail } from '@shared';
+	import { type IPeerLishDetail, isISODate } from '@shared';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -129,7 +129,7 @@
 	function fieldText(value: unknown, kind: 'text' | 'date'): string | undefined {
 		if (typeof value !== 'string') return undefined;
 		if (kind === 'text') return value;
-		return Number.isNaN(Date.parse(value)) ? undefined : formatDateTime(value);
+		return isISODate(value) ? formatDateTime(value) : undefined;
 	}
 
 	function typeIcon(type: TreeNode['type']): string {
