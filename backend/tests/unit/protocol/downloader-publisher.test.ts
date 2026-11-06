@@ -104,6 +104,18 @@ describe('the connected-peer loop', () => {
 		await dl.destroy();
 	});
 
+	it('an unsigned stub whose only peer serves another publisher reports it instead of waiting silently', async () => {
+		const dl = awaitingManifest(new MockDataServer(), manifest({ files: [] }) as IStoredLISH);
+		const client = new MockLISHClient();
+		const cause = new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `expected unsigned, got ${A}`);
+		client.requestManifestError = new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'refused', { cause });
+		peers(dl).set('peer-signed-00001', client);
+		await dl.doWork();
+		expect(priv(dl)['state']).toBe('error');
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_PUBLISHER_MISMATCH);
+		await dl.destroy();
+	});
+
 	it('a downloader waiting to store a manifest is released by destroy while the owner still holds the ID', async () => {
 		const ds = new MockDataServer();
 		const dl = awaitingManifest(ds, null);
@@ -162,6 +174,15 @@ describe('the topic-peer probe', () => {
 		const genuine = new MockDataServer();
 		await (priv(awaitingManifest(genuine, stored, servingNetwork(await sign(manifest(), keyA)))) as Record<string, any>)['probeTopicPeers']();
 		expect(genuine.addedLishs.map(lish => lish.publisher)).toEqual([A]);
+	});
+
+	it('an unsigned stub offered only a signed manifest reports the publisher mismatch', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingManifest(ds, manifest({ files: [] }) as IStoredLISH, servingNetwork(await sign(manifest(), keyA)));
+		await (priv(dl) as Record<string, any>)['probeTopicPeers']();
+		expect(ds.addedLishs).toHaveLength(0);
+		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_PUBLISHER_MISMATCH);
+		await dl.destroy();
 	});
 });
 
