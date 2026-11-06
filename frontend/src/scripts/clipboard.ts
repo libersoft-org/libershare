@@ -1,4 +1,4 @@
-import { translateError } from './language.ts';
+import { translateError, tt } from './language.ts';
 import { addNotification } from './notifications.ts';
 
 /**
@@ -7,9 +7,28 @@ import { addNotification } from './notifications.ts';
  */
 export async function copyToClipboard(text: string, successMessage?: string): Promise<void> {
 	try {
-		await navigator.clipboard.writeText(text);
+		// The Clipboard API exists only in a secure context; a page served over plain HTTP (e.g. on a LAN) falls back to execCommand.
+		if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+		else if (!copyWithExecCommand(text)) throw new Error(tt('common.copyFailed'));
 		if (successMessage !== undefined) addNotification(successMessage, 'success');
 	} catch (e: any) {
 		addNotification(translateError(e), 'error');
+	}
+}
+
+function copyWithExecCommand(text: string): boolean {
+	const area = document.createElement('textarea');
+	area.value = text;
+	area.setAttribute('readonly', '');
+	area.style.position = 'fixed';
+	area.style.opacity = '0';
+	document.body.appendChild(area);
+	area.select();
+	try {
+		return document.execCommand('copy');
+	} catch {
+		return false;
+	} finally {
+		area.remove();
 	}
 }

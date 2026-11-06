@@ -56,6 +56,7 @@
 		"lishIDCopied": "LISH ID zkopírováno do schránky",
 		"copyPeerID": "Kopírovat ID účastníka",
 		"peerIDCopied": "ID účastníka zkopírováno do schránky",
+		"copyFailed": "Do schránky se nepodařilo zkopírovat",
 		"errorFileExistsOverwrite": "Soubor \"{name}\" již existuje. Chcete ho přepsat?",
 		"errorFileNameIsDirectory": "Název \"{name}\" již existuje jakožto adresář, proto není možné soubor uložit.",
 		"errorFilePathRequired": "Cesta k souboru je povinná",
