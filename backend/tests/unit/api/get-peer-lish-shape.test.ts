@@ -9,7 +9,7 @@ import type { IStoredLISH } from '@shared';
  * with well-formed metadata it must answer exactly what it answered before, plus `totalChunks`.
  */
 
-const MANIFEST: IStoredLISH = {
+const MANIFEST = {
 	id: 'lish-peer-shape-test',
 	name: 'Shape',
 	description: 'From a peer',
@@ -22,7 +22,7 @@ const MANIFEST: IStoredLISH = {
 	],
 	directories: [{ path: 'dir', permissions: '0755', modified: '2026-01-02T00:00:00.000Z' }],
 	links: [{ path: 'dir/link', target: 'a.bin', hardlink: false, modified: '2026-01-02T00:00:00.000Z' }],
-};
+} satisfies IStoredLISH;
 
 function handlersServing(manifest: IStoredLISH): ReturnType<typeof initLISHnetsHandlers> {
 	const stream = {
