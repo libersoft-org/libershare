@@ -210,6 +210,12 @@
 
 <div class="page" data-testid="bootstrap-peer-detail-{peers[0]?.multiaddr}">
 	<div class="container">
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+			{#if peerID}
+				<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} onConfirm={() => copyPeerID(peerID)} />
+			{/if}
+		</ButtonBar>
 		{#if peerID}
 			<div class="detail-row">
 				<div class="detail-label">{$t('settings.lishNetwork.bootstrap.colPeer')}</div>
@@ -234,7 +240,7 @@
 					</div>
 				{/if}
 				{#if showsActualPeerID(peer) || canReplace(peer) || canRemove(peer)}
-					<ButtonBar basePosition={[0, i]}>
+					<ButtonBar basePosition={[0, i + 1]}>
 						{#if showsActualPeerID(peer)}
 							<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} padding="1vh 1.5vh" fontSize="1.6vh" onConfirm={() => copyPeerID(peer.actualPeerID)} />
 						{/if}
@@ -248,11 +254,5 @@
 				{/if}
 			</div>
 		{/each}
-		<ButtonBar basePosition={[0, peers.length]}>
-			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
-			{#if peerID}
-				<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} onConfirm={() => copyPeerID(peerID)} />
-			{/if}
-		</ButtonBar>
 	</div>
 </div>
