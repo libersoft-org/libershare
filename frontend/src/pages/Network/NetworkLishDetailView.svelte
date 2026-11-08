@@ -145,9 +145,10 @@
 		width: 100%;
 	}
 
+	/* One grid for all rows: the label column takes the widest label, so every value starts at the same place. */
 	.info-section {
-		display: flex;
-		flex-direction: column;
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
 		gap: 1vh;
 		padding: 2vh;
 		background-color: var(--secondary-hard-background);
@@ -158,21 +159,19 @@
 	}
 
 	.info-row {
-		display: flex;
-		gap: 1vh;
-		flex-wrap: wrap;
+		display: contents;
 	}
 
 	.info-row .label {
 		color: var(--disabled-foreground);
 		font-size: 1.8vh;
-		min-width: 16vh;
+		text-align: right;
 	}
 
 	.info-row .value {
 		color: var(--secondary-foreground);
 		font-size: 1.8vh;
-		word-break: break-all;
+		overflow-wrap: anywhere;
 	}
 
 	.info-row .value.description {
@@ -302,10 +301,10 @@
 
 <div class="detail">
 	<div class="info-section">
+		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
 		{#if detail.name}
 			<div class="info-row"><span class="label">{$t('common.name')}:</span> <span class="value">{detail.name}</span></div>
 		{/if}
-		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
 		{#if detail.description}
 			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
 		{/if}

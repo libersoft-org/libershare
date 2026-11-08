@@ -75,6 +75,11 @@
 			await test('a valid .lish shows its summary with the chunk count and offers the import', async () => {
 				await open([valid], 'lish-info-single');
 				assert(root.textContent.includes('First LISH') && root.textContent.includes(valid.detail.id), 'Name or ID is missing');
+				const labels = [...root.querySelectorAll('.info-row .label')];
+				assert(labels[0]?.textContent.startsWith(tr('network.lishID')) && labels[1]?.textContent.startsWith(tr('common.name')), 'LISH ID is not the first row, followed by the name');
+				// One grid for every row: all values start at the same horizontal position.
+				const starts = new Set([...root.querySelectorAll('.info-row .value')].map(value => Math.round(value.getBoundingClientRect().left)));
+				assert(starts.size === 1, `Values start at ${starts.size} different positions`);
 				const chunks = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('downloads.chunks')));
 				assert(chunks?.textContent.includes('3'), 'Chunk count row is missing or wrong');
 				button(tr('common.import')).click();
