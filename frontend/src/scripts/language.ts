@@ -151,6 +151,7 @@ const errorCodeKeys: Record<string, string> = {
 	SEARCH_QUERY_TOO_LONG: 'network.errorSearchQueryTooLong',
 	PEER_LISTING_NOT_AUTHORIZED: 'network.errorListingNotAuthorized',
 	PEER_LIST_TOO_LARGE: 'network.errorListTooLarge',
+	PEER_MANIFEST_TOO_LARGE: 'network.errorManifestTooLarge',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
 	METHOD_REQUIRED: 'common.errorMethodRequired',
