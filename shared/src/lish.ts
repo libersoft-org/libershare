@@ -32,6 +32,12 @@ export function formatSizeOverLimit(actual: number, limit: number): string {
 	return a === l ? `${actual} B > ${limit} B` : `${a} > ${l}`;
 }
 
+/** Throw `LISH_INVALID_MANIFEST` for a format version this code does not read; an absent version is the original format. */
+export function checkManifestVersion(lish: Pick<ILISH, 'version'>): void {
+	// A newer format may change what its fields mean, so it is refused rather than read as this one.
+	if (lish.version !== undefined && (!Number.isSafeInteger(lish.version) || lish.version < 1 || lish.version > LISH_FORMAT_VERSION)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `unsupported manifest version ${formatUntrustedValue(lish.version)}`);
+}
+
 /**
  * Validate chunkSize bounds and manifest consistency.
  * Throws CodedError on the first violation.
@@ -45,8 +51,7 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	// `lish` may come straight off the wire from an untrusted peer — reject malformed shapes with
 	// a coded error rather than letting a raw property access throw a native TypeError.
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
-	// A newer format may change what its fields mean, so it is refused rather than read as this one.
-	if (lish.version !== undefined && (!Number.isSafeInteger(lish.version) || lish.version < 1 || lish.version > LISH_FORMAT_VERSION)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `unsupported manifest version ${formatUntrustedValue(lish.version)}`);
+	checkManifestVersion(lish);
 	checkTextField('id', lish.id, MAX_MANIFEST_ID_BYTES, true);
 	checkTextField('name', lish.name, MAX_MANIFEST_NAME_BYTES, false);
 	checkTextField('description', lish.description, MAX_MANIFEST_DESCRIPTION_BYTES, false);

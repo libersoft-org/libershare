@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, checkManifestVersion, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
@@ -519,12 +519,14 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	/**
 	 * A preview never shows a signature it has not checked: a bad one fails the whole parse. A signed
-	 * manifest gets the full structural check first, as on import; unsigned previews stay as loose as before.
+	 * manifest gets the full structural check first, as on import; unsigned previews stay as loose as before,
+	 * except for a format version the import would refuse.
 	 */
 	async function verifiedPreview(lishs: ILISH[]): Promise<ILISH[]> {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		for (const lish of lishs) {
 			if (isSignedLISH(lish)) validateLISHStructure(lish, maxChunkSize);
+			else checkManifestVersion(lish);
 			await verifyManifestSignature(lish);
 		}
 		return lishs;
