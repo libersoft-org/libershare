@@ -16,6 +16,8 @@
 		import { get } from 'svelte/store';
 		import StorageLISHInfo from '/src/pages/Storage/StorageLISHInfo.svelte';
 		import Storage from '/src/pages/Storage/Storage.svelte';
+		import NetworkPeersPeerDetailLish from '/src/pages/Network/NetworkPeersPeerDetailLish.svelte';
+		import NetworkLishsPeerList from '/src/pages/Network/NetworkLishsPeerList.svelte';
 		import { api } from '/src/scripts/api.ts';
 		import { translations, t, translateError } from '/src/scripts/language.ts';
 		import { emit } from '/src/scripts/areas.ts';
@@ -262,6 +264,55 @@
 					Object.assign(api.fs, fs);
 				}
 			});
+			// The same manifest summary a peer sends, so the peer pages show what the storage page shows.
+			const peerDetail = { ...detail('c0000000-0000-4000-8000-000000000009', 'From a peer', 3), files: [{ path: 'a.bin', size: 2500, permissions: '0640' }] };
+			await test('the peer LISH detail opens an entry by keyboard, like the storage page', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				const original = api.lishnets.getPeerLish;
+				api.lishnets.getPeerLish = async () => structuredClone(peerDetail);
+				const page = mount(NetworkPeersPeerDetailLish, { target: root, props: { areaID: 'lish-info-peer', lish: { id: peerDetail.id, name: peerDetail.name }, peerID: 'peer-1', networkID: 'net-1', onBack: () => {} } });
+				try {
+					await settle();
+					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The hint is missing');
+					while (!root.querySelector('.row.selected')?.textContent.includes('a.bin')) {
+						emit('down');
+						await settle();
+						assert(root.querySelector('.row.selected'), 'Down did not reach the file row');
+					}
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					const shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entryFile')) && shown.includes('0640'), `Entry details are missing: ${shown}`);
+				} finally {
+					await unmount(page);
+					api.lishnets.getPeerLish = original;
+				}
+			});
+			await test('the search peer list opens an entry of the loaded detail by click', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				const original = api.lishnets.getPeerLish;
+				api.lishnets.getPeerLish = async () => structuredClone(peerDetail);
+				const row = { id: peerDetail.id, name: peerDetail.name, peers: [{ peerID: 'peer-1', networkID: 'net-1' }] };
+				const page = mount(NetworkLishsPeerList, { target: root, props: { areaID: 'lish-info-search', row, networks: [], onBack: () => {}, onOpenPeer: () => {} } });
+				try {
+					await settle();
+					button(tr('network.details')).click();
+					await settle();
+					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The hint is missing');
+					const file = [...root.querySelectorAll('.row')].find(item => item.textContent.trim().startsWith('a.bin'));
+					assert(file, 'The file row is missing');
+					file.click();
+					await settle();
+					const shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entryFile')) && shown.includes('0640'), `Entry details are missing: ${shown}`);
+				} finally {
+					await unmount(page);
+					api.lishnets.getPeerLish = original;
+				}
+			});
 			await test('an empty .lishs says so and offers no import', async () => {
 				await open([], 'lish-info-empty');
 				assert(root.textContent.includes(tr('lish.fileEmpty')), 'Empty-file message is missing');
@@ -280,7 +331,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 11 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 13 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

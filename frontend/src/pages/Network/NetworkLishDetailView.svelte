@@ -2,7 +2,6 @@
 	import { t } from '../../scripts/language.ts';
 	import { type IPeerLishDetail, isISODate } from '@shared';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
-	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
@@ -12,15 +11,13 @@
 		detail: IPeerLishDetail;
 		/**
 		 * When set, file rows register into the surrounding navArea starting at
-		 * this y so a keyboard user can scroll through them (peer detail). Leave
-		 * unset where the rows would collide with another nav list on the page
-		 * (LISH search peer list) — the tree renders display-only there.
+		 * this y so a keyboard user can scroll through them and open their details.
+		 * Leave unset where the rows would collide with another nav list on the page
+		 * (LISH search peer list) — the rows then open by mouse only.
 		 */
 		fileRowsBaseY?: number | undefined;
-		/** Confirming a file row shows the details of its entry; without it the rows do not open. */
-		entryDetails?: boolean | undefined;
 	}
-	let { detail, fileRowsBaseY = undefined, entryDetails = false }: Props = $props();
+	let { detail, fileRowsBaseY = undefined }: Props = $props();
 
 	interface TreeNode {
 		name: string;
@@ -124,10 +121,6 @@
 	}
 
 	let created = $derived(fieldText(detail.created, 'date'));
-
-	function typeIcon(type: TreeNode['type']): string {
-		return type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg';
-	}
 </script>
 
 <style>
@@ -155,48 +148,6 @@
 
 	.info-section .value.description {
 		white-space: pre-wrap;
-	}
-
-	/* Mirrors the Table component frame so both render modes look the same. */
-	.file-tree {
-		display: flex;
-		flex-direction: column;
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 1vh;
-		overflow: hidden;
-		width: 100%;
-		box-sizing: border-box;
-		color: var(--secondary-foreground);
-	}
-
-	/* Mirrors TableRow metrics so the display-only tree looks identical to the nav-registered one. */
-	.file-tree-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 2vh;
-		padding: 1.5vh 2vh;
-		border-bottom: 0.2vh solid var(--secondary-softer-background);
-	}
-
-	.file-tree-row:last-child {
-		border-bottom: none;
-	}
-
-	.fname {
-		font-size: 1.8vh;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		display: flex;
-		align-items: center;
-		gap: 0.5vh;
-		min-width: 0;
-	}
-
-	.indent {
-		display: inline-block;
-		flex-shrink: 0;
 	}
 
 	.entry-details {
@@ -234,12 +185,6 @@
 
 	.hint {
 		font-size: 1.6vh;
-		color: var(--disabled-foreground);
-	}
-
-	.fsize {
-		font-size: 1.8vh;
-		white-space: nowrap;
 		color: var(--disabled-foreground);
 	}
 </style>
@@ -295,28 +240,13 @@
 		</Table>
 	</div>
 	{#if fileRows.length > 0}
-		{#if fileRowsBaseY !== undefined}
-			{#if entryDetails}<div class="hint">{$t('lish.entryDetailsHint')}</div>{/if}
-			<Table columns="1fr auto" columnsMobile="1fr auto">
-				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={entryDetails ? () => toggleDetails(row.node) : undefined} expanded={expanded === nodeKey(row.node)}>
-						{@render entryDetailsView(row.node)}
-					</PeerDetailLishFileRow>
-				{/each}
-			</Table>
-		{:else}
-			<div class="file-tree">
-				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<div class="file-tree-row">
-						<span class="fname">
-							<span class="indent" style="width: {row.depth * 2.5}vh"></span>
-							<Icon img={typeIcon(row.node.type)} size="1.8vh" padding="0" colorVariable="--secondary-foreground" />
-							{row.node.name}
-						</span>
-						<span class="fsize">{row.node.type === 'file' ? formatSize(row.node.size) : ''}</span>
-					</div>
-				{/each}
-			</div>
-		{/if}
+		<div class="hint">{$t('lish.entryDetailsHint')}</div>
+		<Table columns="1fr auto" columnsMobile="1fr auto">
+			{#each fileRows as row, i (row.node.path + ':' + i)}
+				<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY === undefined ? undefined : fileRowsBaseY + i} onConfirm={() => toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
+					{@render entryDetailsView(row.node)}
+				</PeerDetailLishFileRow>
+			{/each}
+		</Table>
 	{/if}
 </div>
