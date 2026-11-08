@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { t } from '../../scripts/language.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import type { NavAreaController } from '../../scripts/navArea.svelte.ts';
 	import { type NetworkNodeInfo } from '@shared';
 	import Row from '../Row/Row.svelte';
@@ -16,10 +17,14 @@
 	}
 	let { nodeInfo, rowY, buttonX = 0, showAddresses = $bindable(false) }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
-	let rowSelected = $derived(navArea ? navArea.isSelected([buttonX, rowY]) : false);
+	let rowSelected = $derived(navArea ? navArea.isYSelected(rowY) : false);
 
 	function toggleAddresses(): void {
 		showAddresses = !showAddresses;
+	}
+
+	function copyPeerID(): void {
+		copyToClipboard(nodeInfo.peerID, $t('common.peerIDCopied'));
 	}
 </script>
 
@@ -71,6 +76,7 @@
 			<div class="peer-id"><span class="label">{$t('settings.lishNetwork.yourPeerID')}:</span> <span class="value">{nodeInfo.peerID}</span></div>
 			<div class="buttons">
 				<Button icon={showAddresses ? '/img/up.svg' : '/img/down.svg'} label={showAddresses ? $t('common.hide') + ' ' + $t('settings.lishNetwork.addresses') : $t('common.show') + ' ' + $t('settings.lishNetwork.addresses')} position={[buttonX, rowY]} onConfirm={toggleAddresses} />
+				<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} position={[buttonX + 1, rowY]} onConfirm={copyPeerID} />
 			</div>
 			{#if showAddresses && nodeInfo.addresses.length > 0}
 				<Table columns="auto 1fr">

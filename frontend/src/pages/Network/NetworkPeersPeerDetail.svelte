@@ -6,6 +6,7 @@
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { createSubPage } from '../../scripts/subPage.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type PeerListEntry, type PeerLishEntry } from '@shared';
 	import { api } from '../../scripts/api.ts';
 	import { tick } from 'svelte';
@@ -75,6 +76,10 @@
 	async function handleLishDetailBack(): Promise<void> {
 		selectedLish = null;
 		await lishDetailSubPage.exit();
+	}
+
+	function copyPeerID(): void {
+		copyToClipboard(peer.peerID, $t('common.peerIDCopied'));
 	}
 
 	function getConnectionInfo(): string {
@@ -179,6 +184,7 @@
 				<ButtonBar basePosition={[0, 0]}>
 					<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 					<Button icon="/img/restart.svg" label={$t('common.refresh')} onConfirm={loadLishs} width="auto" />
+					<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} onConfirm={copyPeerID} width="auto" />
 				</ButtonBar>
 			</div>
 			<div class="peer-info">

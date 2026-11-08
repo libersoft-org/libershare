@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Page root overflow regressions</title>
+	<style>
+		/* Same layout as routes/+page.svelte: a fixed header above a content area that scrolls. */
+		.test-page {
+			position: fixed;
+			inset: 0;
+			display: flex;
+			flex-direction: column;
+			height: 100dvh;
+			overflow: hidden;
+		}
+
+		.test-header {
+			height: 10vh;
+			flex-shrink: 0;
+		}
+
+		.test-content {
+			flex: 1;
+			overflow-y: auto;
+			overflow-anchor: none;
+		}
+	</style>
+	<pre id="results">Running...</pre>
+	<div class="test-page">
+		<div class="test-header"></div>
+		<div class="test-content" id="content"></div>
+	</div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { translations } from '/src/scripts/language.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import SettingsDownload from '/src/pages/Settings/SettingsDownload.svelte';
+		import SettingsFactoryReset from '/src/pages/Settings/SettingsFactoryReset.svelte';
+		import SettingsFooter from '/src/pages/Settings/SettingsFooter.svelte';
+		import SettingsLISHNetworkAddEdit from '/src/pages/Settings/SettingsLISHNetworkAddEdit.svelte';
+		import SettingsNetwork from '/src/pages/Settings/SettingsNetwork.svelte';
+		import SettingsSystem from '/src/pages/Settings/SettingsSystem.svelte';
+		import SettingsIdentity from '/src/pages/Settings/SettingsIdentity.svelte';
+		import DownloadLISHCreate from '/src/pages/Download/DownloadLISHCreate.svelte';
+		import DownloadDetailMove from '/src/pages/Download/DownloadDetailMove.svelte';
+		import ExportFileForm from '/src/components/Export/ExportFileForm.svelte';
+		import ImportFileForm from '/src/components/Import/ImportFileForm.svelte';
+		import ImportJSONForm from '/src/components/Import/ImportJSONForm.svelte';
+		import ImportWebForm from '/src/components/Import/ImportWebForm.svelte';
+
+		const content = document.querySelector('#content');
+		const results = [];
+		const originalCall = wsClient.call;
+		const pending = () => new Promise(() => {});
+		wsClient.call = async method => {
+			if (method === 'lishnets.getNodeInfo') return { peerID: '12D3KooWExamplePeerIdentifierForLayoutTests000001', addresses: [] };
+			if (method === 'system.network') return { known: true, detail: 'full', capabilities: { ipv4: false, wifi: false, staticGatewayRequired: false }, primaryID: null, interfaces: [] };
+			// Other loads stay pending: the layout under test does not depend on their data.
+			return pending();
+		};
+		const noop = () => {};
+		const parse = async () => ({});
+		const pages = [
+			{ name: 'SettingsDownload', component: SettingsDownload, root: '.settings' },
+			{ name: 'SettingsFactoryReset', component: SettingsFactoryReset, root: '.factory-reset' },
+			{ name: 'SettingsFooter', component: SettingsFooter, root: '.content' },
+			{ name: 'SettingsLISHNetworkAddEdit', component: SettingsLISHNetworkAddEdit, root: '.add-edit' },
+			{ name: 'SettingsNetwork', component: SettingsNetwork, root: '.settings' },
+			{ name: 'SettingsSystem', component: SettingsSystem, root: '.settings' },
+			{ name: 'DownloadLISHCreate', component: DownloadLISHCreate, root: '.create' },
+			{ name: 'DownloadDetailMove', component: DownloadDetailMove, root: '.move', props: { lish: { id: 'example', name: 'Example', directory: '/data/example' } } },
+			{ name: 'SettingsIdentity', component: SettingsIdentity, root: '.identity' },
+			{ name: 'ExportFileForm', component: ExportFileForm, root: '.export', props: { filePath: '', defaultDirectory: '/data', extension: '.json', fallbackFileName: 'export', doExport: async () => ({ success: true }), onSuccess: noop } },
+			{ name: 'ImportFileForm', component: ImportFileForm, root: '.import', props: { defaultDirectory: '/data', fileFilter: ['*.json'], fileFilterName: 'JSON', parseFile: parse, parseUpload: parse, onConfirmDone: noop } },
+			{ name: 'ImportJSONForm', component: ImportJSONForm, root: '.import', props: { parseJSON: parse, onConfirmDone: noop } },
+			{ name: 'ImportWebForm', component: ImportWebForm, root: '.import', props: { parseURL: parse, onConfirmDone: noop } },
+		];
+		async function settle() {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 50));
+			await tick();
+		}
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.settings)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			for (const page of pages) {
+				let component;
+				try {
+					component = mount(page.component, { target: content, props: { areaID: `overflow-${page.name}`, ...page.props } });
+					await settle();
+					const root = content.querySelector(`:scope > ${page.root}`);
+					assert(root, `Root ${page.root} was not rendered`);
+					const rootHeight = root.getBoundingClientRect().height;
+					// The padded root must fit the content area, or the content area scrolls by the padding.
+					assert(rootHeight <= content.clientHeight + 0.5, `Root is ${rootHeight}px tall in a ${content.clientHeight}px content area`);
+					if (getComputedStyle(root).overflowY === 'auto') assert(content.scrollHeight <= content.clientHeight, `Content area scrolls (${content.scrollHeight}/${content.clientHeight}) besides the scrolling page`);
+					results.push({ name: page.name, passed: true });
+				} catch (error) {
+					results.push({ name: page.name, passed: false, error: error.message });
+				} finally {
+					if (component) await unmount(component);
+					content.replaceChildren();
+				}
+			}
+		} finally {
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			window.contentOverflowTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === pages.length && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
