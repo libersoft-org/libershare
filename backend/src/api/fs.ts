@@ -119,17 +119,23 @@ export function initFsHandlers(containerCheck: () => Promise<boolean> = isContai
 		}
 		for (const dirent of dirents) {
 			const entryPath = join(path, dirent.name);
+			// Symlinks and Windows junctions report isDirectory() === false; their type comes from the stat below, which follows the link.
+			const isLink = dirent.isSymbolicLink();
 			const entry: any = {
 				name: dirent.name,
 				path: entryPath,
 				type: dirent.isDirectory() ? 'directory' : 'file',
 				hidden: dirent.name.startsWith('.'),
 			};
+			if (isLink) entry.link = true;
 			try {
 				const stats = await stat(entryPath);
+				if (isLink && stats.isDirectory()) entry.type = 'directory';
 				entry.size = stats.size;
 				entry.modified = stats.mtime.toISOString();
-			} catch {}
+			} catch {
+				if (isLink) entry.broken = true;
+			}
 			entries.push(entry);
 		}
 		entries.sort((a: any, b: any) => {

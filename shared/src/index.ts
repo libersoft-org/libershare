@@ -357,6 +357,10 @@ export interface FsEntry {
 	size?: number;
 	modified?: string;
 	hidden?: boolean;
+	/** Symbolic link or Windows junction; `type` describes the target. */
+	link?: boolean;
+	/** Link whose target is missing or unreadable; `type` is then 'file' and the entry cannot be opened. */
+	broken?: boolean;
 }
 
 export interface FsListResult {
