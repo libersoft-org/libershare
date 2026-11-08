@@ -5,6 +5,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { api } from '../../scripts/api.ts';
 	import { withPeerFallback, type PeerAttemptStatus } from '../../scripts/peerFallback.ts';
 	import { formatSize } from '../../scripts/utils.ts';
@@ -101,6 +102,10 @@
 		} finally {
 			adding = false;
 		}
+	}
+
+	async function copyLishID(): Promise<void> {
+		await copyToClipboard(row.id, $t('common.lishIDCopied'));
 	}
 
 	async function handleShowDetail(): Promise<void> {
@@ -246,6 +251,7 @@
 			<ButtonBar basePosition={[0, 0]}>
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 				<Button icon="/img/download.svg" label={$t('network.addToDownloads')} onConfirm={handleAddToSharing} width="auto" disabled={busy || row.peers.length === 0} />
+				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} onConfirm={copyLishID} width="auto" />
 				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={detail ? loadingDetail : busy || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
