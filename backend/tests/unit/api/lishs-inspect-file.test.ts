@@ -61,7 +61,7 @@ describe('lishs.inspectFile', () => {
 	}
 
 	it('summarizes a single .lish without its checksums', async () => {
-		const result = (await handlers.inspectFile({ filePath: write('one.lish', JSON.stringify(valid)) })).items;
+		const result = await handlers.inspectFile({ filePath: write('one.lish', JSON.stringify(valid)) });
 		expect(result).toHaveLength(1);
 		expect(result[0]!.error).toBeUndefined();
 		expect(result[0]!.detail).toMatchObject({ id: valid.id, name: 'Valid', totalSize: 2510, totalChunks: 4, fileCount: 2 });
@@ -69,7 +69,7 @@ describe('lishs.inspectFile', () => {
 	});
 
 	it('reports each manifest of a .lishs on its own, refusing what an import would refuse', async () => {
-		const [ok, short, huge] = (await handlers.inspectFile({ filePath: write('many.lishs', JSON.stringify([valid, wrongCount, hugeChunks])) })).items;
+		const [ok, short, huge] = await handlers.inspectFile({ filePath: write('many.lishs', JSON.stringify([valid, wrongCount, hugeChunks])) });
 		expect(ok!.detail!.totalChunks).toBe(4);
 		expect(ok!.error).toBeUndefined();
 		expect(short!.error).toBe(ErrorCodes.LISH_INVALID_MANIFEST);
@@ -81,14 +81,14 @@ describe('lishs.inspectFile', () => {
 	});
 
 	it('reads a compressed .lishs the same way', async () => {
-		const plain = (await handlers.inspectFile({ filePath: write('plain.lishs', JSON.stringify([valid, wrongCount])) })).items;
-		const gzipped = (await handlers.inspectFile({ filePath: write('packed.lishs.gz', Bun.gzipSync(JSON.stringify([valid, wrongCount]))) })).items;
+		const plain = await handlers.inspectFile({ filePath: write('plain.lishs', JSON.stringify([valid, wrongCount])) });
+		const gzipped = await handlers.inspectFile({ filePath: write('packed.lishs.gz', Bun.gzipSync(JSON.stringify([valid, wrongCount]))) });
 		expect(gzipped).toEqual(plain);
 		expect(gzipped[1]!.error).toBe(ErrorCodes.LISH_INVALID_MANIFEST);
 	});
 
 	it('shows an empty .lishs as empty', async () => {
-		expect((await handlers.inspectFile({ filePath: write('empty.lishs', '[]') })).items).toEqual([]);
+		expect(await handlers.inspectFile({ filePath: write('empty.lishs', '[]') })).toEqual([]);
 	});
 
 	it('fails the whole file when it is not JSON at all', async () => {
@@ -99,7 +99,7 @@ describe('lishs.inspectFile', () => {
 		const noID = { ...valid, id: '' };
 		const { created: _created, ...noCreated } = valid;
 		const badAlgo = { ...valid, checksumAlgo: 'md5' };
-		const [ok, missingID, missingCreated, unsupported, notObject] = (await handlers.inspectFile({ filePath: write('mixed.lishs', JSON.stringify([valid, noID, noCreated, badAlgo, 42])) })).items;
+		const [ok, missingID, missingCreated, unsupported, notObject] = await handlers.inspectFile({ filePath: write('mixed.lishs', JSON.stringify([valid, noID, noCreated, badAlgo, 42])) });
 		expect(ok!.detail).toMatchObject({ id: valid.id, totalChunks: 4 });
 		expect(missingID).toEqual({ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined });
 		expect(missingCreated!.error).toBe(ErrorCodes.LISH_MISSING_CREATED);
@@ -109,7 +109,7 @@ describe('lishs.inspectFile', () => {
 
 	it('refuses a path the import would refuse, as the import does', async () => {
 		const unsafe: ILISH = { ...valid, files: [{ path: 'C:/a.bin', size: 10, checksums: ['e1'] }] };
-		const [inspected] = (await handlers.inspectFile({ filePath: write('unsafe.lish', JSON.stringify(unsafe)) })).items;
+		const [inspected] = await handlers.inspectFile({ filePath: write('unsafe.lish', JSON.stringify(unsafe)) });
 		expect(inspected!.error).toBe(ErrorCodes.LISH_UNSAFE_PATH);
 		expect(inspected!.detail).toBeUndefined();
 		const downloadPath = await mkdtemp(join(tmpdir(), 'lish-inspect-dest-'));
@@ -124,7 +124,7 @@ describe('lishs.inspectFile', () => {
 		for (const name of ['CON', 'aux.txt', 'Photos.', '..']) {
 			const lish: ILISH = { ...valid, name };
 			const file = write(`root-${name.replace(/\./g, '_')}.lish`, JSON.stringify(lish));
-			const [inspected] = (await handlers.inspectFile({ filePath: file })).items;
+			const [inspected] = await handlers.inspectFile({ filePath: file });
 			expect(inspected!.error).toBe(ErrorCodes.LISH_UNSAFE_PATH);
 			expect(inspected!.detail).toBeUndefined();
 			const downloadPath = await mkdtemp(join(tmpdir(), 'lish-inspect-dest-'));
@@ -138,47 +138,18 @@ describe('lishs.inspectFile', () => {
 
 	it('shows a manifest whose entry metadata has the wrong type, with those fields flagged', async () => {
 		const odd = { ...valid, files: [{ path: 'a.bin', size: 10, checksums: ['a1'], created: { toString: 0, valueOf: 0 }, permissions: '0644' }] };
-		const [inspected] = (await handlers.inspectFile({ filePath: write('odd-meta.lish', JSON.stringify(odd)) })).items;
+		const [inspected] = await handlers.inspectFile({ filePath: write('odd-meta.lish', JSON.stringify(odd)) });
 		expect(inspected!.error).toBeUndefined();
 		expect(inspected!.detail!.files).toEqual([{ path: 'a.bin', size: 10, permissions: '0644', invalidFields: ['created'] }]);
 	});
 
 	it('reports a single .lish without an ID as its own refusal', async () => {
-		expect((await handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).items).toEqual([{ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined }]);
+		expect(await handlers.inspectFile({ filePath: write('noid.lish', JSON.stringify({ ...valid, id: '' })) })).toEqual([{ error: ErrorCodes.LISH_MISSING_ID, errorDetail: undefined }]);
 	});
 
 	it('refuses a compressed file that expands past the API message limit', async () => {
 		const bomb = Bun.gzipSync(new Uint8Array(MAX_API_MESSAGE_SIZE + 1).fill(0x20));
 		await expect(handlers.inspectFile({ filePath: write('bomb.lish.gz', bomb) })).rejects.toMatchObject({ code: ErrorCodes.DECOMPRESSED_TOO_LARGE });
-	});
-
-	it('gives the checksums of one file on request', async () => {
-		const filePath = write('checksums.lishs', JSON.stringify([wrongCount, valid]));
-		const { version } = await handlers.inspectFile({ filePath });
-		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'a.bin' })).toEqual(['a1', 'a2', 'a3']);
-		expect(await handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'b.bin' })).toEqual(['b1']);
-		await expect(handlers.inspectFileChecksums({ filePath, version, index: 1, path: 'missing.bin' })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
-		await expect(handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'short.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
-		for (const index of [2, -1, 0.5, '1']) await expect(handlers.inspectFileChecksums({ filePath, version, index: index as number, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
-		for (const bad of ['', 1, {}]) {
-			await expect(handlers.inspectFileChecksums({ filePath, version: bad as string, index: 1, path: 'a.bin' })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
-			await expect(handlers.inspectFileChecksums({ filePath, version, index: 1, path: bad as string })).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
-		}
-	});
-
-	it('refuses the checksums once the file was rewritten after its preview', async () => {
-		const first: ILISH = { ...valid, id: 'b0000000-0000-4000-8000-000000000004', name: 'First', files: [{ path: 'x.bin', size: 10, checksums: ['f1'] }] };
-		const second: ILISH = { ...valid, id: 'b0000000-0000-4000-8000-000000000005', name: 'Second', files: [{ path: 'x.bin', size: 2000, checksums: ['s1', 's2'] }] };
-		const filePath = write('swapped.lishs', JSON.stringify([first, second]));
-		const { version, items } = await handlers.inspectFile({ filePath });
-		expect(items[0]!.detail!.name).toBe('First');
-		expect(await handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'x.bin' })).toEqual(['f1']);
-		// Same name, same index, same inner path: only the version tells the second manifest apart.
-		write('swapped.lishs', JSON.stringify([second, first]));
-		await expect(handlers.inspectFileChecksums({ filePath, version, index: 0, path: 'x.bin' })).rejects.toMatchObject({ code: ErrorCodes.LISH_FILE_CHANGED });
-		const reloaded = await handlers.inspectFile({ filePath });
-		expect(reloaded.version).not.toBe(version);
-		expect(await handlers.inspectFileChecksums({ filePath, version: reloaded.version, index: 0, path: 'x.bin' })).toEqual(['s1', 's2']);
 	});
 
 	it('imports nothing and writes nothing', async () => {

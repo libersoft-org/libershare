@@ -16,6 +16,8 @@
 		import { get } from 'svelte/store';
 		import StorageLISHInfo from '/src/pages/Storage/StorageLISHInfo.svelte';
 		import Storage from '/src/pages/Storage/Storage.svelte';
+		import NetworkPeersPeerDetailLish from '/src/pages/Network/NetworkPeersPeerDetailLish.svelte';
+		import NetworkLishsPeerList from '/src/pages/Network/NetworkLishsPeerList.svelte';
 		import { api } from '/src/scripts/api.ts';
 		import { translations, t, translateError } from '/src/scripts/language.ts';
 		import { emit } from '/src/scripts/areas.ts';
@@ -25,7 +27,7 @@
 		let inspection;
 		api.lishs.inspectFile = async () => {
 			if (inspection instanceof Error) throw inspection;
-			return { version: 'v1', items: structuredClone(inspection) };
+			return structuredClone(inspection);
 		};
 		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [] });
 		const valid = { detail: detail('c0000000-0000-4000-8000-000000000001', 'First LISH', 3) };
@@ -39,9 +41,16 @@
 				await new Promise(resolve => setTimeout(resolve, 0));
 			}
 		}
-		const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 		function assert(value, message) {
 			if (!value) throw new Error(message);
+		}
+		/** Move down until the selected row starts with `name`; the info rows come before the files. */
+		async function downTo(name) {
+			for (let step = 0; step < 60 && !root.querySelector('.row.selected')?.textContent.trim().startsWith(name); step++) {
+				emit('down');
+				await settle();
+			}
+			assert(root.querySelector('.row.selected')?.textContent.trim().startsWith(name), `Down did not reach ${name}`);
 		}
 		function button(label) {
 			return [...root.querySelectorAll('.button')].find(item => item.textContent.trim() === label);
@@ -75,11 +84,32 @@
 			await test('a valid .lish shows its summary with the chunk count and offers the import', async () => {
 				await open([valid], 'lish-info-single');
 				assert(root.textContent.includes('First LISH') && root.textContent.includes(valid.detail.id), 'Name or ID is missing');
-				const chunks = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('downloads.chunks')));
+				const labels = [...root.querySelectorAll('.info-section .label')];
+				assert(labels[0]?.textContent.startsWith(tr('network.lishID')) && labels[1]?.textContent.startsWith(tr('common.name')), 'LISH ID is not the first row, followed by the name');
+				// One grid for every row: all values start at the same horizontal position.
+				const starts = new Set([...root.querySelectorAll('.info-section .value')].map(value => Math.round(value.getBoundingClientRect().left)));
+				assert(starts.size === 1, `Values start at ${starts.size} different positions`);
+				const chunks = [...root.querySelectorAll('.info-section .row')].find(row => row.textContent.includes(tr('downloads.chunks')));
 				assert(chunks?.textContent.includes('3'), 'Chunk count row is missing or wrong');
 				button(tr('common.import')).click();
 				button(tr('common.back')).click();
 				assert(calls.import === 1 && calls.back === 1, 'Import or Back did not reach the page owner');
+			});
+			await test('Down from the buttons walks the info rows top to bottom, then reaches the first file', async () => {
+				await open([valid], 'lish-info-nav');
+				const infoRows = [...root.querySelectorAll('.info-section .row')];
+				assert(infoRows.length === 9, `Expected nine info rows, got ${infoRows.length}`);
+				for (const [i, row] of infoRows.entries()) {
+					emit('down');
+					await settle();
+					assert(row.classList.contains('selected'), `Down #${i + 1} did not select the info row "${row.textContent.trim()}"`);
+				}
+				emit('down');
+				await settle();
+				assert(root.querySelector('.row.selected')?.textContent.trim().startsWith('a.bin'), 'Down from the last info row did not reach the file');
+				emit('up');
+				await settle();
+				assert(infoRows.at(-1).classList.contains('selected'), 'Up from the file did not return to the last info row');
 			});
 			await test('an invalid manifest shows the reason and no import', async () => {
 				await open([broken], 'lish-info-broken');
@@ -109,267 +139,64 @@
 				assert(root.querySelectorAll('.row').length === 3, 'Back did not return to the table');
 				assert(calls.back === 0, 'Back from the item left the whole page');
 			});
-			await test('an entry shows its permissions, times, link type and checksums on request', async () => {
-				const checksumCalls = [];
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async (filePath, version, index, path) => {
-					checksumCalls.push([filePath, version, index, path]);
-					return ['aa11', 'bb22', 'cc33'];
+			await test('an entry shows its permissions, times and link type on request', async () => {
+				const full = {
+					detail: {
+						...detail('c0000000-0000-4000-8000-000000000004', 'Full', 3),
+						directoryCount: 1,
+						files: [{ path: 'a.bin', size: 2500, permissions: '0640', created: '2020-01-02T03:04:05.000Z', modified: '2021-06-07T08:09:10.000Z' }],
+						directories: [{ path: 'docs', permissions: '0750' }],
+						links: [
+							{ path: 'hard', target: 'a.bin', hardlink: true },
+							{ path: 'soft', target: 'a.bin' },
+						],
+					},
 				};
-				try {
-					const full = {
-						detail: {
-							...detail('c0000000-0000-4000-8000-000000000004', 'Full', 3),
-							directoryCount: 1,
-							files: [{ path: 'a.bin', size: 2500, permissions: '0640', created: '2020-01-02T03:04:05.000Z', modified: '2021-06-07T08:09:10.000Z' }],
-							directories: [{ path: 'docs', permissions: '0750' }],
-							links: [
-								{ path: 'hard', target: 'a.bin', hardlink: true },
-								{ path: 'soft', target: 'a.bin' },
-							],
-						},
-					};
-					await open([full], 'lish-info-details');
-					// No empty details box either: as a grid item it would add a row gap to every collapsed row.
-					assert(!root.querySelector('.details') && checksumCalls.length === 0, 'Details or checksums are shown before they are asked for');
-					const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
-					const confirmRow = async name => {
-						while (root.querySelector('.row.selected') !== rowNamed(name)) {
-							emit('down');
-							await settle();
-						}
-						emit('confirmDown');
-						emit('confirmUp');
+				await open([full], 'lish-info-details');
+				// No empty details box either: as a grid item it would add a row gap to every collapsed row.
+				assert(!root.querySelector('.details'), 'Details are shown before they are asked for');
+				const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
+				const confirmRow = async name => {
+					while (root.querySelector('.row.selected') !== rowNamed(name)) {
+						emit('down');
 						await settle();
-					};
-					await confirmRow('docs');
-					let shown = root.querySelector('.entry-details')?.textContent ?? '';
-					assert(shown.includes(tr('lish.entryDirectory')) && shown.includes('0750'), `Directory details are wrong: ${shown}`);
-					await confirmRow('a.bin');
-					shown = root.querySelector('.entry-details')?.textContent ?? '';
-					assert(shown.includes('0640') && shown.includes(new Date('2020-01-02T03:04:05.000Z').toLocaleString()) && shown.includes(new Date('2021-06-07T08:09:10.000Z').toLocaleString()), `File permissions or times are missing: ${shown}`);
-					assert(checksumCalls.length === 1 && checksumCalls[0][1] === 'v1' && checksumCalls[0][2] === 0 && checksumCalls[0][3] === 'a.bin', `Checksums were not read for the file: ${JSON.stringify(checksumCalls)}`);
-					assert(root.querySelector('.checksums')?.textContent === '1\taa11\n2\tbb22\n3\tcc33', 'Checksums are not listed');
-					await confirmRow('hard');
-					shown = root.querySelector('.entry-details')?.textContent ?? '';
-					assert(shown.includes(tr('lish.entryHardLink')) && !root.querySelector('.checksums'), `Hard link details are wrong: ${shown}`);
-					await confirmRow('soft');
-					shown = root.querySelector('.entry-details')?.textContent ?? '';
-					assert(shown.includes(tr('lish.entrySymbolicLink')) && shown.includes('a.bin'), `Symbolic link details are wrong: ${shown}`);
+					}
 					emit('confirmDown');
 					emit('confirmUp');
 					await settle();
-					assert(!root.querySelector('.entry-details'), 'A second confirm does not hide the details');
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
+				};
+				await confirmRow('docs');
+				let shown = root.querySelector('.entry-details')?.textContent ?? '';
+				assert(shown.includes(tr('lish.entryDirectory')) && shown.includes('0750'), `Directory details are wrong: ${shown}`);
+				await confirmRow('a.bin');
+				shown = root.querySelector('.entry-details')?.textContent ?? '';
+				assert(shown.includes('0640') && shown.includes(new Date('2020-01-02T03:04:05.000Z').toLocaleString()) && shown.includes(new Date('2021-06-07T08:09:10.000Z').toLocaleString()), `File permissions or times are missing: ${shown}`);
+				await confirmRow('hard');
+				shown = root.querySelector('.entry-details')?.textContent ?? '';
+				assert(shown.includes(tr('lish.entryHardLink')), `Hard link details are wrong: ${shown}`);
+				await confirmRow('soft');
+				shown = root.querySelector('.entry-details')?.textContent ?? '';
+				assert(shown.includes(tr('lish.entrySymbolicLink')) && shown.includes('a.bin'), `Symbolic link details are wrong: ${shown}`);
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				assert(!root.querySelector('.entry-details'), 'A second confirm does not hide the details');
 			});
 			await test('invalid metadata shows a marker instead of breaking the details', async () => {
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async () => ['aa11', 'bb22', 'cc33'];
-				try {
-					// `created` as the file wrote it (a summary from an older node passes it on unchecked), `modified` as the backend flags it.
-					const odd = { detail: { ...detail('c0000000-0000-4000-8000-000000000006', 'Odd', 3), created: 'not a date', files: [{ path: 'a.bin', size: 2500, created: { toString: 0, valueOf: 0 }, permissions: '0640', invalidFields: ['modified'] }] } };
-					await open([odd], 'lish-info-odd');
-					const marker = tr('lish.entryInvalidValue');
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					const shown = root.querySelector('.entry-details')?.textContent ?? '';
-					assert(shown.includes('0640'), `The details did not render: ${shown}`);
-					const marked = [...root.querySelectorAll('.entry-details .invalid')].map(value => value.parentElement.textContent);
-					assert(marked.length === 2 && marked.some(row => row.includes(tr('network.created')) && row.includes(marker)) && marked.some(row => row.includes(tr('localStorage.modified')) && row.includes(marker)), `Invalid fields are not marked: ${JSON.stringify(marked)}`);
-					const created = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('network.created')));
-					assert(created?.querySelector('.invalid')?.textContent === marker, `An unreadable LISH date is not marked: ${created?.textContent}`);
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
-			});
-			await test('a file rewritten since the preview says so and refreshes instead of showing other checksums', async () => {
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async () => {
-					throw Object.assign(new Error('LISH_FILE_CHANGED'), { code: 'LISH_FILE_CHANGED', detail: '/files/example.lishs' });
-				};
-				try {
-					await open([valid, second], 'lish-info-changed');
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					assert(!root.querySelector('.checksums'), 'Checksums are shown for a rewritten file');
-					const message = tr('lish.errorFileChanged');
-					assert(root.querySelector('.alert')?.textContent.includes(message) || root.textContent.includes(message), 'The page does not say the file changed');
-					const refresh = button(tr('common.refresh'));
-					assert(refresh, 'No refresh is offered');
-					inspection = [second, valid];
-					refresh.click();
-					await settle();
-					const rows = root.querySelectorAll('.row');
-					assert(rows.length === 2 && rows[0].textContent.includes('Second LISH'), 'Refresh did not show the file as it is now');
-					assert(!root.textContent.includes(message) && !button(tr('common.refresh')), 'The change notice stays after the refresh');
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
-			});
-			await test('a checksum read queued before a refresh does not bring the change notice back', async () => {
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				const mockedInspect = api.lishs.inspectFile;
-				const pending = [];
-				const fileChanged = () => Object.assign(new Error('LISH_FILE_CHANGED'), { code: 'LISH_FILE_CHANGED', detail: '/files/example.lishs' });
-				api.lishs.inspectFileChecksums = () => new Promise((_resolve, reject) => pending.push(() => reject(fileChanged())));
-				try {
-					const two = {
-						detail: {
-							...detail('c0000000-0000-4000-8000-000000000007', 'Two files', 4),
-							fileCount: 2,
-							files: [
-								{ path: 'a.bin', size: 2500 },
-								{ path: 'b.bin', size: 10 },
-							],
-						},
-					};
-					await open([two], 'lish-info-queued');
-					const rowNamed = name => [...root.querySelectorAll('.row')].find(row => row.textContent.trim().startsWith(name));
-					for (const name of ['a.bin', 'b.bin']) {
-						while (root.querySelector('.row.selected') !== rowNamed(name)) {
-							emit('down');
-							await settle();
-						}
-						emit('confirmDown');
-						emit('confirmUp');
-						await settle();
-					}
-					assert(pending.length === 2, `Expected two queued checksum reads, got ${pending.length}`);
-					pending[0]();
-					await settle();
-					const refresh = button(tr('common.refresh'));
-					assert(refresh, 'No refresh is offered');
-					// The backend answers in order: the second old read fails while the refresh is still loading.
-					let release;
-					api.lishs.inspectFile = () => new Promise(resolve => (release = () => resolve({ version: 'v2', items: structuredClone([two]) })));
-					refresh.click();
-					await settle();
-					pending[1]();
-					await settle();
-					release();
-					await settle();
-					assert(!root.textContent.includes(tr('lish.errorFileChanged')) && !button(tr('common.refresh')), 'The change notice came back for the refreshed content');
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-					api.lishs.inspectFile = mockedInspect;
-				}
-			});
-			await test('a long checksum list scrolls to its last checksum by keyboard and hands on at its end', async () => {
-				const list = Array.from({ length: 500 }, (_, i) => `c${String(i + 1).padStart(3, '0')}`);
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async () => list;
-				try {
-					const files = [
-						{ path: 'a.bin', size: 500 * 1024 },
-						{ path: 'b.bin', size: 10 },
-					];
-					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000007', 'Long', 501), totalSize: 500 * 1024 + 10, fileCount: 2, files } }], 'lish-info-long');
-					const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					const box = root.querySelector('.checksums');
-					assert(box && box.scrollHeight > box.clientHeight * 2, 'The checksum list does not need scrolling');
-					const atBottom = () => box.scrollTop + box.clientHeight >= box.scrollHeight - 1;
-					emit('down');
-					await settle();
-					await wait(1000);
-					assert(box.classList.contains('selected') && box.scrollTop === 0, `Down from the file did not select its checksums (selected row: ${selectedName()})`);
-					emit('pageDown');
-					await settle();
-					assert(box.scrollTop > 0 && box.classList.contains('selected'), 'PageDown did not scroll the checksums');
-					emit('end');
-					await settle();
-					assert(atBottom() && box.classList.contains('selected'), 'End did not reach the last checksum');
-					const last = box.getBoundingClientRect();
-					assert(last.bottom <= innerHeight + 1 && last.top >= -1, 'The list with the last checksum is not in view');
-					emit('home');
-					await settle();
-					assert(box.scrollTop === 0 && box.classList.contains('selected'), 'Home did not return to the first checksum');
-					let reachedBottom = false;
-					for (let i = 0; i < 600 && box.classList.contains('selected'); i++) {
-						emit('down');
-						await tick();
-						reachedBottom ||= atBottom();
-					}
-					assert(reachedBottom, 'Down never reached the last checksum');
-					await settle();
-					assert(selectedName() === 'b.bin', `Down at the last checksum did not move on to the next file: ${selectedName()}`);
-					emit('up');
-					await settle();
-					assert(box.classList.contains('selected') && atBottom(), 'Up from the next file did not return to the checksums');
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
-			});
-			await test('PageDown past an expanded file moves ten files, not counting its checksums as one', async () => {
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async () => ['aa'];
-				try {
-					const files = Array.from({ length: 15 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
-					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000008', 'Many', 15), totalSize: 150, fileCount: 15, files } }], 'lish-info-page');
-					const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					assert(root.querySelector('.checksums') && selectedName() === 'f01.bin', `f01.bin is not expanded and selected: ${selectedName()}`);
-					emit('pageDown');
-					await settle();
-					assert(selectedName() === 'f11.bin', `PageDown from f01.bin landed on ${selectedName()}`);
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
-			});
-			await test('right and left reveal the end of a checksum wider than the list', async () => {
-				// Far wider than any test window, so the overflow does not depend on the window size.
-				const list = Array.from({ length: 5 }, (_, i) => String(i).repeat(600));
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				api.lishs.inspectFileChecksums = async () => list;
-				try {
-					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000008', 'Wide', 5), files: [{ path: 'a.bin', size: 5 * 1024 }] } }], 'lish-info-wide');
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					const box = root.querySelector('.checksums');
-					assert(box && box.scrollWidth > box.clientWidth, 'The checksums fit the list, nothing to scroll sideways');
-					emit('down');
-					await settle();
-					assert(box.classList.contains('selected') && box.scrollLeft === 0, 'Down from the file did not select its checksums');
-					const atRight = () => box.scrollLeft + box.clientWidth >= box.scrollWidth - 1;
-					// Each step moves a quarter of the visible width; allow every step the overflow needs, plus a margin.
-					const steps = Math.ceil((box.scrollWidth - box.clientWidth) / Math.max(1, Math.floor(box.clientWidth / 4))) + 5;
-					for (let i = 0; i < steps && !atRight(); i++) {
-						emit('right');
-						await tick();
-					}
-					assert(atRight() && box.classList.contains('selected'), 'Right did not reveal the end of the long checksums');
-					for (let i = 0; i < steps && box.scrollLeft > 0; i++) {
-						emit('left');
-						await tick();
-					}
-					assert(box.scrollLeft === 0 && box.classList.contains('selected'), 'Left did not return to the start of the checksums');
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
+				// `created` as the file wrote it (a summary from an older node passes it on unchecked), `modified` as the backend flags it.
+				const odd = { detail: { ...detail('c0000000-0000-4000-8000-000000000006', 'Odd', 3), created: 'not a date', files: [{ path: 'a.bin', size: 2500, created: { toString: 0, valueOf: 0 }, permissions: '0640', invalidFields: ['modified'] }] } };
+				await open([odd], 'lish-info-odd');
+				const marker = tr('lish.entryInvalidValue');
+				await downTo('a.bin');
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				const shown = root.querySelector('.entry-details')?.textContent ?? '';
+				assert(shown.includes('0640'), `The details did not render: ${shown}`);
+				const marked = [...root.querySelectorAll('.entry-details .invalid')].map(value => value.parentElement.textContent);
+				assert(marked.length === 2 && marked.some(row => row.includes(tr('network.created')) && row.includes(marker)) && marked.some(row => row.includes(tr('localStorage.modified')) && row.includes(marker)), `Invalid fields are not marked: ${JSON.stringify(marked)}`);
+				const created = [...root.querySelectorAll('.info-section .row')].find(row => row.textContent.includes(tr('network.created')));
+				assert(created?.querySelector('.invalid')?.textContent === marker, `An unreadable LISH date is not marked: ${created?.textContent}`);
 			});
 			await test('in a narrow window neither info page scrolls sideways', async () => {
 				assert(innerWidth < 1199, `The window is ${innerWidth} px wide, too wide for the narrow layout`);
@@ -418,9 +245,7 @@
 				await settle();
 				assert(root.textContent.includes('Many files'), 'The item did not open');
 				const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
-				emit('down');
-				await settle();
-				assert(selectedName() === 'f01.bin', `Down did not reach the first file: ${selectedName()}`);
+				await downTo('f01.bin');
 				emit('pageDown');
 				await settle();
 				assert(selectedName() !== 'f01.bin' && selectedName()?.startsWith('f'), `PageDown did not move through the files: ${selectedName()}`);
@@ -429,35 +254,7 @@
 				assert(selectedName() === 'f25.bin', `End did not reach the last file: ${selectedName()}`);
 				emit('home');
 				await settle();
-				assert(selectedName() === 'f01.bin', `Home did not return to the first file: ${selectedName()}`);
-			});
-			await test('checksums that arrive late do not scroll away from the row the user moved to', async () => {
-				let release;
-				const originalChecksums = api.lishs.inspectFileChecksums;
-				// Long enough that the answer grows the first row by the full height of the checksum list.
-				api.lishs.inspectFileChecksums = () => new Promise(resolve => (release = () => resolve(Array.from({ length: 200 }, (_, i) => `c${i}`))));
-				try {
-					const files = Array.from({ length: 80 }, (_, i) => ({ path: `f${String(i + 1).padStart(2, '0')}.bin`, size: 10 }));
-					await open([{ detail: { ...detail('c0000000-0000-4000-8000-000000000005', 'Late', 80), totalSize: 800, fileCount: 80, files } }], 'lish-info-late');
-					emit('down');
-					await settle();
-					emit('confirmDown');
-					emit('confirmUp');
-					await settle();
-					assert(release, 'The checksums of the first file were not asked for');
-					emit('end');
-					await settle();
-					await wait(1500);
-					const last = root.querySelector('.row.selected');
-					assert(last?.textContent.includes('f80.bin'), 'End did not reach the last file');
-					release();
-					await settle();
-					await wait(1500);
-					const box = last.getBoundingClientRect();
-					assert(box.bottom > 0 && box.top < innerHeight, `The selected row left the view: top ${box.top}, bottom ${box.bottom}, window ${innerHeight}`);
-				} finally {
-					api.lishs.inspectFileChecksums = originalChecksums;
-				}
+				assert(root.querySelector('.row.selected')?.textContent.includes(many.detail.id), `Home did not return to the LISH ID row: ${selectedName()}`);
 			});
 			await test('Back from a Linux file with a backslash in its name reopens its folder', async () => {
 				if (component) await unmount(component);
@@ -488,6 +285,55 @@
 					Object.assign(api.fs, fs);
 				}
 			});
+			// The same manifest summary a peer sends, so the peer pages show what the storage page shows.
+			const peerDetail = { ...detail('c0000000-0000-4000-8000-000000000009', 'From a peer', 3), files: [{ path: 'a.bin', size: 2500, permissions: '0640' }] };
+			await test('the peer LISH detail opens an entry by keyboard, like the storage page', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				const original = api.lishnets.getPeerLish;
+				api.lishnets.getPeerLish = async () => structuredClone(peerDetail);
+				const page = mount(NetworkPeersPeerDetailLish, { target: root, props: { areaID: 'lish-info-peer', lish: { id: peerDetail.id, name: peerDetail.name }, peerID: 'peer-1', networkID: 'net-1', onBack: () => {} } });
+				try {
+					await settle();
+					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The hint is missing');
+					await downTo('a.bin');
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					const shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entryFile')) && shown.includes('0640'), `Entry details are missing: ${shown}`);
+				} finally {
+					await unmount(page);
+					api.lishnets.getPeerLish = original;
+				}
+			});
+			await test('the search peer list opens an entry of the loaded detail by keyboard', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				const original = api.lishnets.getPeerLish;
+				api.lishnets.getPeerLish = async () => structuredClone(peerDetail);
+				const row = { id: peerDetail.id, name: peerDetail.name, peers: [{ peerID: 'peer-1', networkID: 'net-1' }] };
+				const page = mount(NetworkLishsPeerList, { target: root, props: { areaID: 'lish-info-search', row, networks: [], onBack: () => {}, onOpenPeer: () => {} } });
+				try {
+					await settle();
+					button(tr('network.details')).click();
+					await settle();
+					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The hint is missing');
+					await downTo('a.bin');
+					emit('confirmDown');
+					emit('confirmUp');
+					await settle();
+					const shown = root.querySelector('.entry-details')?.textContent ?? '';
+					assert(shown.includes(tr('lish.entryFile')) && shown.includes('0640'), `Entry details are missing: ${shown}`);
+					// The peer list comes after the rows of the detail.
+					emit('down');
+					await settle();
+					assert(root.querySelector('.row.selected')?.textContent.includes('peer-1'), 'Down from the last file did not reach the peer list');
+				} finally {
+					await unmount(page);
+					api.lishnets.getPeerLish = original;
+				}
+			});
 			await test('an empty .lishs says so and offers no import', async () => {
 				await open([], 'lish-info-empty');
 				assert(root.textContent.includes(tr('lish.fileEmpty')), 'Empty-file message is missing');
@@ -506,7 +352,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 17 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

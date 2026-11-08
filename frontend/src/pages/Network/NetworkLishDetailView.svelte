@@ -1,25 +1,6 @@
-<script lang="ts">
-	import { t, translateError } from '../../scripts/language.ts';
+<script lang="ts" module>
 	import { type IPeerLishDetail, isISODate } from '@shared';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
-	import Icon from '../../components/Icon/Icon.svelte';
-	import Table from '../../components/Table/Table.svelte';
-	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
-	import ChecksumList from './NetworkLishChecksumList.svelte';
-
-	interface Props {
-		detail: IPeerLishDetail;
-		/**
-		 * When set, file rows register into the surrounding navArea starting at
-		 * this y so a keyboard user can scroll through them (peer detail). Leave
-		 * unset where the rows would collide with another nav list on the page
-		 * (LISH search peer list) — the tree renders display-only there.
-		 */
-		fileRowsBaseY?: number | undefined;
-		/** Reads the chunk checksums of a file on request; without it the rows do not open entry details. */
-		loadChecksums?: ((path: string) => Promise<string[]>) | undefined;
-	}
-	let { detail, fileRowsBaseY = undefined, loadChecksums }: Props = $props();
 
 	interface TreeNode {
 		name: string;
@@ -82,32 +63,80 @@
 		}
 	}
 
-	let fileRows = $derived.by((): FlatRow[] => {
-		const rows: FlatRow[] = [];
-		flattenTree(buildFileTree(detail), 0, rows);
-		return rows;
-	});
+	/**
+	 * A manifest field as text, or undefined when it does not hold what the field should. The values
+	 * come from a file anyone can write, so nothing else reaches the date formatter.
+	 */
+	function fieldText(value: unknown, kind: 'text' | 'date'): string | undefined {
+		if (typeof value !== 'string') return undefined;
+		if (kind === 'text') return value;
+		return isISODate(value) ? formatDateTime(value) : undefined;
+	}
 
-	// One entry at a time shows its details; its checksums are read only then, and only for a file.
+	/** One row of the summary box; `value` undefined marks a field that does not hold what it should. */
+	interface InfoRow {
+		labelKey: string;
+		value: string | number | undefined;
+		kind: 'text' | 'mono' | 'description';
+	}
+
+	function infoRows(d: IPeerLishDetail): InfoRow[] {
+		const rows: InfoRow[] = [{ labelKey: 'network.lishID', value: d.id, kind: 'mono' }];
+		if (d.name) rows.push({ labelKey: 'common.name', value: d.name, kind: 'text' });
+		if (d.description) rows.push({ labelKey: 'common.description', value: d.description, kind: 'description' });
+		rows.push({ labelKey: 'network.created', value: fieldText(d.created, 'date'), kind: 'text' });
+		rows.push({ labelKey: 'network.totalSize', value: formatSize(d.totalSize), kind: 'text' });
+		rows.push({ labelKey: 'network.chunkSize', value: formatSize(d.chunkSize), kind: 'text' });
+		rows.push({ labelKey: 'downloads.chunks', value: d.totalChunks, kind: 'text' });
+		rows.push({ labelKey: 'network.checksumAlgo', value: d.checksumAlgo, kind: 'text' });
+		rows.push({ labelKey: 'common.files', value: d.fileCount, kind: 'text' });
+		rows.push({ labelKey: 'network.directories', value: d.directoryCount, kind: 'text' });
+		return rows;
+	}
+
+	function fileTreeRows(d: IPeerLishDetail): FlatRow[] {
+		const rows: FlatRow[] = [];
+		flattenTree(buildFileTree(d), 0, rows);
+		return rows;
+	}
+
+	/** How many navArea rows the view takes from its `baseY`, so a page can place its next list below them. */
+	export function lishDetailRowCount(d: IPeerLishDetail): number {
+		return infoRows(d).length + fileTreeRows(d).length;
+	}
+</script>
+
+<script lang="ts">
+	import { t } from '../../scripts/language.ts';
+	import Table from '../../components/Table/Table.svelte';
+	import TableRow from '../../components/Table/TableRow.svelte';
+	import TableCell from '../../components/Table/TableCell.svelte';
+	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
+
+	interface Props {
+		detail: IPeerLishDetail;
+		/**
+		 * The rows register into the surrounding navArea from this y, one each: first the info
+		 * rows top to bottom, then the file rows ({@link lishDetailRowCount} in total).
+		 */
+		baseY: number;
+	}
+	let { detail, baseY }: Props = $props();
+
+	let summary = $derived(infoRows(detail));
+	let fileRows = $derived(fileTreeRows(detail));
+	let fileRowsBaseY = $derived(baseY + summary.length);
+
+	// One entry at a time shows its details.
 	let expanded = $state<string | null>(null);
-	let checksums = $state<{ key: string; list?: string[]; error?: string } | null>(null);
 
 	function nodeKey(node: TreeNode): string {
 		return node.type + ':' + node.path;
 	}
 
-	async function toggleDetails(node: TreeNode): Promise<void> {
+	function toggleDetails(node: TreeNode): void {
 		const key = nodeKey(node);
 		expanded = expanded === key ? null : key;
-		checksums = null;
-		if (expanded !== key || node.type !== 'file' || !loadChecksums) return;
-		checksums = { key };
-		try {
-			const list = await loadChecksums(node.path);
-			if (checksums?.key === key) checksums = { key, list };
-		} catch (e) {
-			if (checksums?.key === key) checksums = { key, error: translateError(e) };
-		}
 	}
 
 	/** Undefined for a link whose `hardlink` flag was invalid. */
@@ -121,20 +150,6 @@
 	function isInvalid(node: TreeNode, field: string): boolean {
 		return node.entry?.invalidFields?.includes(field) ?? false;
 	}
-
-	/**
-	 * A manifest field as text, or undefined when it does not hold what the field should. The values
-	 * come from a file anyone can write, so nothing else reaches the date formatter.
-	 */
-	function fieldText(value: unknown, kind: 'text' | 'date'): string | undefined {
-		if (typeof value !== 'string') return undefined;
-		if (kind === 'text') return value;
-		return isISODate(value) ? formatDateTime(value) : undefined;
-	}
-
-	function typeIcon(type: TreeNode['type']): string {
-		return type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg';
-	}
 </script>
 
 <style>
@@ -146,79 +161,22 @@
 	}
 
 	.info-section {
-		display: flex;
-		flex-direction: column;
-		gap: 1vh;
-		padding: 2vh;
 		background-color: var(--secondary-hard-background);
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
-		color: var(--secondary-foreground);
-		box-sizing: border-box;
+		overflow: hidden;
 	}
 
-	.info-row {
-		display: flex;
-		gap: 1vh;
-		flex-wrap: wrap;
-	}
-
-	.info-row .label {
-		color: var(--disabled-foreground);
+	/* Wrap by words, breaking only a word wider than the cell, instead of the cell's break-all. */
+	.info-section .label,
+	.info-section .value {
 		font-size: 1.8vh;
-		min-width: 16vh;
+		word-break: normal;
+		overflow-wrap: anywhere;
 	}
 
-	.info-row .value {
-		color: var(--secondary-foreground);
-		font-size: 1.8vh;
-		word-break: break-all;
-	}
-
-	.info-row .value.description {
+	.info-section .value.description {
 		white-space: pre-wrap;
-	}
-
-	/* Mirrors the Table component frame so both render modes look the same. */
-	.file-tree {
-		display: flex;
-		flex-direction: column;
-		border: 0.2vh solid var(--secondary-softer-background);
-		border-radius: 1vh;
-		overflow: hidden;
-		width: 100%;
-		box-sizing: border-box;
-		color: var(--secondary-foreground);
-	}
-
-	/* Mirrors TableRow metrics so the display-only tree looks identical to the nav-registered one. */
-	.file-tree-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 2vh;
-		padding: 1.5vh 2vh;
-		border-bottom: 0.2vh solid var(--secondary-softer-background);
-	}
-
-	.file-tree-row:last-child {
-		border-bottom: none;
-	}
-
-	.fname {
-		font-size: 1.8vh;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		display: flex;
-		align-items: center;
-		gap: 0.5vh;
-		min-width: 0;
-	}
-
-	.indent {
-		display: inline-block;
-		flex-shrink: 0;
 	}
 
 	.entry-details {
@@ -258,12 +216,6 @@
 		font-size: 1.6vh;
 		color: var(--disabled-foreground);
 	}
-
-	.fsize {
-		font-size: 1.8vh;
-		white-space: nowrap;
-		color: var(--disabled-foreground);
-	}
 </style>
 
 {#snippet metaRow(label: string, value: unknown, invalid: boolean, kind: 'text' | 'date')}
@@ -273,7 +225,7 @@
 	{/if}
 {/snippet}
 
-{#snippet entryDetails(node: TreeNode, rowY: number)}
+{#snippet entryDetailsView(node: TreeNode)}
 	<div class="entry-details">
 		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
 		<div class="entry-row"><span class="label">{$t('lish.entryPath')}:</span> <span class="value mono">{node.path}</span></div>
@@ -285,61 +237,30 @@
 		{@render metaRow($t('localStorage.modified'), node.entry?.modified, isInvalid(node, 'modified'), 'date')}
 		{#if node.type === 'file'}
 			<div class="entry-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{node.size === 0 ? 0 : Math.ceil(node.size / detail.chunkSize)}</span></div>
-			{#if checksums?.key === nodeKey(node)}
-				<div class="entry-row"><span class="label">{$t('lish.entryChecksums')}:</span></div>
-				{#if checksums.list}
-					<!-- Between this row and the next one, so the arrows pass through it in reading order. -->
-					<ChecksumList checksums={checksums.list} y={rowY + 0.5} />
-				{:else if checksums.error}
-					<div class="entry-row"><span class="value">{checksums.error}</span></div>
-				{:else}
-					<div class="entry-row"><span class="value">{$t('lish.entryChecksumsLoading')}</span></div>
-				{/if}
-			{/if}
 		{/if}
 	</div>
 {/snippet}
 
 <div class="detail">
 	<div class="info-section">
-		{#if detail.name}
-			<div class="info-row"><span class="label">{$t('common.name')}:</span> <span class="value">{detail.name}</span></div>
-		{/if}
-		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
-		{#if detail.description}
-			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
-		{/if}
-		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value" class:invalid={fieldText(detail.created, 'date') === undefined}>{fieldText(detail.created, 'date') ?? $t('lish.entryInvalidValue')}</span></div>
-		<div class="info-row"><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
-		<div class="info-row"><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
-		<div class="info-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{detail.totalChunks}</span></div>
-		<div class="info-row"><span class="label">{$t('network.checksumAlgo')}:</span> <span class="value">{detail.checksumAlgo}</span></div>
-		<div class="info-row"><span class="label">{$t('common.files')}:</span> <span class="value">{detail.fileCount}</span></div>
-		<div class="info-row"><span class="label">{$t('network.directories')}:</span> <span class="value">{detail.directoryCount}</span></div>
+		<!-- Each row is its own grid, so the label column has a set width rather than the widest label; it shrinks on a narrow screen and the labels wrap. -->
+		<Table columns="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" columnsMobile="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" noBorder compact>
+			{#each summary as row, i (row.labelKey)}
+				<TableRow position={[0, baseY + i]}>
+					<TableCell align="right" wrap><span class="label">{$t(row.labelKey)}:</span></TableCell>
+					<TableCell wrap><span class="value" class:mono={row.kind === 'mono'} class:description={row.kind === 'description'} class:invalid={row.value === undefined}>{row.value ?? $t('lish.entryInvalidValue')}</span></TableCell>
+				</TableRow>
+			{/each}
+		</Table>
 	</div>
 	{#if fileRows.length > 0}
-		{#if fileRowsBaseY !== undefined}
-			{#if loadChecksums}<div class="hint">{$t('lish.entryDetailsHint')}</div>{/if}
-			<Table columns="1fr auto" columnsMobile="1fr auto">
-				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={loadChecksums ? () => void toggleDetails(row.node) : undefined} expanded={expanded === nodeKey(row.node)}>
-						{@render entryDetails(row.node, fileRowsBaseY + i)}
-					</PeerDetailLishFileRow>
-				{/each}
-			</Table>
-		{:else}
-			<div class="file-tree">
-				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<div class="file-tree-row">
-						<span class="fname">
-							<span class="indent" style="width: {row.depth * 2.5}vh"></span>
-							<Icon img={typeIcon(row.node.type)} size="1.8vh" padding="0" colorVariable="--secondary-foreground" />
-							{row.node.name}
-						</span>
-						<span class="fsize">{row.node.type === 'file' ? formatSize(row.node.size) : ''}</span>
-					</div>
-				{/each}
-			</div>
-		{/if}
+		<div class="hint">{$t('lish.entryDetailsHint')}</div>
+		<Table columns="1fr auto" columnsMobile="1fr auto">
+			{#each fileRows as row, i (row.node.path + ':' + i)}
+				<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
+					{@render entryDetailsView(row.node)}
+				</PeerDetailLishFileRow>
+			{/each}
+		</Table>
 	{/if}
 </div>
