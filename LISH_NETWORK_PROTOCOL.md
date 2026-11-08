@@ -152,9 +152,10 @@ Requests the list of LISHs the peer currently shares.
 {
 	type: 'getLishs-result',
 	lishs: Array<{
-		id: string,        // LISH identifier
-		name?: string,     // LISH name, if set
-		totalSize?: number // Total size of all files in bytes
+		id: string,         // LISH identifier
+		name?: string,      // LISH name, if set
+		totalSize?: number, // Total size of all files in bytes
+		publisher?: string  // Publisher Peer ID of a signed LISH (reported, not yet verified)
 	}>,
 	page?: true,        // Present on a paginated response
 	offset?: number,    // Start position in the stream's snapshot
@@ -174,6 +175,7 @@ Requests the list of LISHs the peer currently shares.
 - Entries that stop being advertised are omitted from later pages. Offsets may therefore have gaps. Entries added during the operation appear only in a new snapshot. A page with a continuation must make progress and contain at least one entry
 - New requesters also accept a complete legacy response from an older peer. They reject malformed pages, repeated entries, stale offsets and cursor loops. The reference client applies one 15-second deadline to the whole listing and bounds the sum of encoded response bytes by the existing configured maximum message size. Exceeding that byte budget returns `PEER_LIST_TOO_LARGE`, without partial results; it is not an entry-count limit
 - If one entry cannot fit in a page, the responder returns `PEER_LIST_TOO_LARGE`. Cancellation or a failed multi-page read aborts the stream so late replies cannot answer another request
+- `publisher` is only what the responder reports: nobody has checked a signature at this point. A requester drops an entry whose `publisher` is not a base58btc string and keeps the rest of the page. Clients show it as a reported publisher and verify it only with the manifest (`getLish`)
 
 ### getLish — fetch manifest
 
@@ -200,6 +202,7 @@ Requests the full manifest (LISH data format structure) of a single LISH.
 - The requester MUST check that the returned manifest's `id` equals the requested `lishID` — otherwise a peer could substitute an unrelated LISH for the one requested
 - Every received manifest MUST have an `id` equal to the requested `lishID` and pass structural validation before it is persisted or allocated. The reference implementation validates the manifest object, the array shape of `files`, `directories`, and `links`, file path / size / checksum types, and the following invariants: supported checksum algorithms, non-negative integer file sizes whose sum stays a safe integer, a positive integer `chunkSize` no larger than the configured limit (100 MiB by default), the exact checksum count `ceil(size / chunkSize)`, and consistent expected lengths for duplicate checksums. Text fields have byte limits: `id` 1–256, `name` 1,024, `description` 65,536, every entry path and link target 4,096 bytes of UTF-8; each checksum is 1–128 printable ASCII characters. The entries must form one tree: no two entries at one path, no file or link where a directory (explicit or an implicit parent) is needed, and no empty, `.` or NUL path component
 - The requester strips responder-local paths and per-chunk possession state at the trust boundary. These fields are never authoritative on the wire
+- A manifest carrying `publisher` and `signature` MUST verify (see Publisher signature in `LISH_DATA_FORMAT.md`). The requester may also expect a publisher: the one already stored for this ID, the one of the search result the user picked, or explicitly none for an unsigned item. A bad signature, a stripped signature or a different publisher than expected is the responding peer's fault (`PEER_INVALID_REQUEST`); the requester moves on to the next peer. Any peer can relay a signed manifest unchanged, so the publisher and the peer the data came from are independent
 
 ### getChunk — fetch chunk data
 
@@ -265,7 +268,8 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 	lishs: Array<{
 		id: string,
 		name?: string,
-		totalSize?: number
+		totalSize?: number,
+		publisher?: string // Reported publisher of a signed LISH, as in getLishs
 	}>
 }
 
@@ -278,6 +282,7 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 **Behavior**:
 
 - An empty `lishs` array is accepted by receivers as an explicit "no match" signal; the reference implementation sends no response at all instead of an empty result
+- The searcher groups results by the pair (`id`, `publisher`). Peers reporting different publishers under one ID give separate results, so a forged offer never merges into the original publisher's row; an entry with a malformed `publisher` is ignored
 
 ### Error codes
 
@@ -313,8 +318,8 @@ A requester accepts an error reply only as a plain object whose own `error` is o
 
 ## Security properties and current limitations
 
-- Strictly signed gossipsub envelopes authenticate the sender of control messages. Noise authenticates the remote endpoint of a data-plane stream. Neither property signs the LISH manifest itself
-- The reference implementation normally generates a LISH ID as a random UUID. Imported IDs must be non-empty strings. For network-received manifests, the implementation requires the returned ID to equal the requested `lishID` and to be a string of 1–256 bytes, but does not require UUID syntax. The ID is not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity. For a network-only download, version 0.0.1 uses the first accepted manifest for that identifier as its trust root; an imported `.lish` structure serves that role when present
+- Strictly signed gossipsub envelopes authenticate the sender of control messages. Noise authenticates the remote endpoint of a data-plane stream. Neither property signs the LISH manifest itself; a publisher may sign it optionally (see `LISH_DATA_FORMAT.md`)
+- The reference implementation normally generates a LISH ID as a random UUID. Imported IDs must be non-empty strings. For network-received manifests, the implementation requires the returned ID to equal the requested `lishID` and to be a string of 1–256 bytes, but does not require UUID syntax. The ID is not a content hash. Matching the requested ID, validating manifest structure, and hashing chunks proves internal consistency with the received manifest; it does not prove publisher authenticity on its own. A signed manifest proves its publisher; an unsigned one does not. For a network-only download, version 0.0.1 uses the first accepted manifest for that identifier as its trust root (and from then on its publisher, or its lack of one); an imported `.lish` structure serves that role when present
 - Inbound frames share the 32 MiB cap described above, applied before the per-request serving gate. Version 0.0.1 has no small separate request-frame cap, because the kind of a message is inside its body
 - Structural manifest validation does not cap total file count or checksum count; the manifest's frame size bounds them. The declared logical size is compared with the free space under the download directory before any file is allocated, and a dataset that does not fit fails with `DISK_FULL`
 - Upload enablement is global across joined lishnets, as described above, by design: a node that must not offer a LISH to some group has to leave that group's lishnet or run as a separate node

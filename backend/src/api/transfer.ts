@@ -16,6 +16,7 @@ import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, getDebugSnapshot } from '../protocol/peer-tracker.ts';
 import { type ProgressInfo } from '../protocol/progress-reporter.ts';
+import { withLISHOwnership } from '../lish/lish-ownership.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -485,9 +486,19 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		const network = networks.getRunningNetwork();
 		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
 		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
-		await downloader.init(p.lishPath);
+		let claim: Awaited<ReturnType<typeof claimActiveDownloader<Downloader>>>;
+		try {
+			await downloader.init(p.lishPath);
+			// An import of the same ID may store another publisher while the file was being read.
+			claim = await withLISHOwnership(downloader.getLISHID(), () => {
+				downloader.assertStoredPublisher();
+				return claimActiveDownloader(activeDownloaders, downloader.getLISHID(), downloader);
+			});
+		} catch (error) {
+			await downloader.destroy();
+			throw error;
+		}
 		const lishID = downloader.getLISHID();
-		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
 
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));

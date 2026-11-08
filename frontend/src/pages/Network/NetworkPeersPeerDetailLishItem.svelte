@@ -2,13 +2,15 @@
 	import { getContext } from 'svelte';
 	import { t } from '../../scripts/language.ts';
 	import type { NavAreaController } from '../../scripts/navArea.svelte.ts';
-	import { formatSize } from '../../scripts/utils.ts';
+	import { formatSize, shortenPeerID } from '../../scripts/utils.ts';
 	import Row from '../../components/Row/Row.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	interface Props {
 		name: string;
 		id: string;
 		totalSize?: number | undefined;
+		/** Publisher the peer reports; unverified until the manifest itself is checked. */
+		publisher?: string | undefined;
 		rowY: number;
 		disabled?: boolean;
 		highlight?: boolean;
@@ -16,7 +18,7 @@
 		onDetails: () => void;
 		el?: HTMLDivElement | undefined;
 	}
-	let { name, id, totalSize, rowY, disabled = false, highlight = false, onAdd, onDetails, el = $bindable() }: Props = $props();
+	let { name, id, totalSize, publisher, rowY, disabled = false, highlight = false, onAdd, onDetails, el = $bindable() }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let rowSelected = $derived(navArea ? navArea.isSelected([0, rowY]) || navArea.isSelected([1, rowY]) : false);
 </script>
@@ -84,6 +86,9 @@
 				<div class="size">{formatSize(totalSize)}</div>
 			{/if}
 			<div class="id">{id}</div>
+			{#if publisher}
+				<div class="size">{$t('lish.reportedPublisher')}: {shortenPeerID(publisher)}</div>
+			{/if}
 		</div>
 		<div class="actions">
 			<Button icon="/img/download.svg" label={$t('network.addToDownloads')} position={[0, rowY]} onConfirm={onAdd} {disabled} padding="1vh 1.5vh" fontSize="1.6vh" width="auto" />

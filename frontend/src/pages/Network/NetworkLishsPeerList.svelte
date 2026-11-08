@@ -24,9 +24,11 @@
 		row: LishSearchResult;
 		networks: LISHNetworkConfig[];
 		onBack: () => void;
-		onOpenPeer: (peerID: string, networkID: string, lishID: string) => void;
+		onOpenPeer: (peerID: string, networkID: string, lishID: string, publisher: string | null) => void;
 	}
 	let { areaID, position = LAYOUT.content, row, networks, onBack, onOpenPeer }: Props = $props();
+	// The publisher this row was picked by; an unsigned row expects an unsigned manifest (`null`).
+	let expectedPublisher = $derived(row.publisher ?? null);
 
 	let adding = $state(false);
 	let loadingDetail = $state(false);
@@ -76,7 +78,7 @@
 	}
 
 	function makeOpenHandler(peerID: string, networkID: string): () => void {
-		return () => onOpenPeer(peerID, networkID, row.id);
+		return () => onOpenPeer(peerID, networkID, row.id, expectedPublisher);
 	}
 
 	/** Run the shared peer-fallback loop over this row's peers, driving the per-row statuses. */
@@ -94,7 +96,7 @@
 		if (busy || row.peers.length === 0) return;
 		adding = true;
 		try {
-			await tryPeers((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID));
+			await tryPeers((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID, expectedPublisher));
 			addNotification($t('network.lishAdded', { name: row.name || row.id }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
@@ -113,7 +115,7 @@
 		loadingDetail = true;
 		try {
 			detail = await tryPeers(async (peerID, networkID) => {
-				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
+				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID, expectedPublisher);
 				// A null answer means this peer had nothing for us — flag it so the next peer is tried.
 				if (!d) throw Object.assign(new Error($t('network.peerDeclined')), { tryNextPeer: true });
 				return d;
@@ -255,6 +257,7 @@
 			<div class="lish-info">
 				<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
 				<div><span class="label">{$t('network.lishID')}:</span> <span class="value value-mono">{row.id}</span></div>
+				<div><span class="label">{$t('lish.reportedPublisher')}:</span> <span class="value value-mono">{row.publisher ?? $t('lish.unsigned')}</span></div>
 			</div>
 		{/if}
 

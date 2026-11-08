@@ -380,12 +380,13 @@ class LISHnetsAPI {
 		return this.client.call<{ lishs: PeerLishEntry[] | null }>('lishnets.getPeerLishs', { peerID, networkID });
 	}
 
-	getPeerLish(lishID: string, peerID: string, networkID: string): Promise<IPeerLishDetail | null> {
-		return this.client.call<IPeerLishDetail | null>('lishnets.getPeerLish', { lishID, peerID, networkID });
+	/** `expectedPublisher`: Peer ID of the row the user picked, `null` for an unsigned row, omitted when unknown. */
+	getPeerLish(lishID: string, peerID: string, networkID: string, expectedPublisher?: string | null): Promise<IPeerLishDetail | null> {
+		return this.client.call<IPeerLishDetail | null>('lishnets.getPeerLish', { lishID, peerID, networkID, ...(expectedPublisher !== undefined ? { expectedPublisher } : {}) });
 	}
 
-	addPeerLish(lishID: string, peerID: string, networkID: string): Promise<{ lishID: string }> {
-		return this.client.call<{ lishID: string }>('lishnets.addPeerLish', { lishID, peerID, networkID });
+	addPeerLish(lishID: string, peerID: string, networkID: string, expectedPublisher?: string | null): Promise<{ lishID: string }> {
+		return this.client.call<{ lishID: string }>('lishnets.addPeerLish', { lishID, peerID, networkID, ...(expectedPublisher !== undefined ? { expectedPublisher } : {}) });
 	}
 
 	getNodeInfo(): Promise<NetworkNodeInfo> {
@@ -470,7 +471,7 @@ class LISHsAPI {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm): Promise<CreateLISHResponse> {
+	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm, sign?: boolean): Promise<CreateLISHResponse> {
 		return this.client.call<CreateLISHResponse>('lishs.create', {
 			name,
 			description,
@@ -484,6 +485,7 @@ class LISHsAPI {
 			minifyJSON,
 			compress,
 			compressionAlgorithm,
+			sign,
 		});
 	}
 

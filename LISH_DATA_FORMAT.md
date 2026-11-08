@@ -1,7 +1,7 @@
 # LISH data structure format specification
 
 **Created**: 24 October 2025
-**Last update**: 29 October 2025
+**Last update**: 8 November 2026
 
 ## Overview
 
@@ -24,6 +24,7 @@ This specification describes the logical structure, with JSON examples for clari
 
 ```typescript
 interface ILISH {
+	version?: number; // Manifest format version, an integer; currently 1 (required when signed, see below)
 	id: string; // Unique UUID for this LISH (required)
 	name?: string; // LISH name (optional)
 	description?: string; // Free-form text description such as author, notes, etc. (optional)
@@ -33,8 +34,38 @@ interface ILISH {
 	directories?: IDirectoryEntry[]; // Array of directories (optional)
 	files?: IFileEntry[]; // Array of files (optional)
 	links?: ILinkEntry[]; // Array of symbolic links and hard links (optional)
+	publisher?: string; // Peer ID of the publisher who signed the manifest (optional, with `signature`)
+	signature?: string; // Ed25519 signature of the whole manifest, base64url without padding (optional, with `publisher`)
 }
 ```
+
+### Format version
+
+`version` is an integer naming the version of this format the manifest follows. The current version is `1`, and new manifests always carry it.
+
+- A manifest without `version` was made before the field existed and is read as version 1; it cannot be signed
+- A manifest with a version this node does not know (anything other than a positive integer up to the current version) is rejected: a newer format may change what its fields mean
+- A signed manifest must carry `version`, and it is part of the signed bytes, so the signature also fixes which rules the manifest follows
+
+### Publisher signature
+
+A LISH may be signed by its publisher. `publisher` and `signature` are either both present or both absent; an unsigned LISH has neither.
+
+- `publisher` is the canonical base58btc string of an Ed25519 libp2p Peer ID. The public key is embedded in it, so anyone can verify the signature without another lookup
+- `signature` is the 64-byte Ed25519 signature, encoded as base64url without padding (86 characters)
+- The ID stays a random UUID; the signature does not turn it into a content hash. It proves who published this exact manifest, not that the publisher owns the ID
+
+**Signed bytes.** The signature covers the UTF-8 bytes of the canonical JSON of the manifest, with nothing before or after it:
+
+- the manifest without `signature` and without local fields (`directory`, `finalDirectory`, `chunks`); `version` and `publisher` are included
+- `directories`, `files` and `links` are always present (an absent collection is written as `[]`), entries in the order given
+- `hardlink` is always present on a link (`false` when absent)
+- optional fields that are absent are left out (an empty `name` or `description` counts as absent); `null` is never allowed
+- object keys sorted by UTF-16 code unit order, no whitespace, strings and numbers serialized as by `JSON.stringify`; numbers are safe integers
+
+**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry; the local fields `directory`, `finalDirectory` and `chunks` are allowed in the root because they are left out of the signed bytes), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, a missing or unknown `version`, or a `publisher` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
+
+**Verification.** Every place that admits a manifest (import, a `.lish` file to download, a manifest from a peer, a preview) verifies the signature when present. A node that already stores a LISH ID keeps its publisher for the life of the item: a manifest under the same ID from another publisher, or unsigned for a signed item (and the other way round), is refused.
 
 ### Directory entry
 
@@ -116,6 +147,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 
 ```json
 {
+	"version": 1,
 	"id": "34aacabb-9c6f-42a2-aaf4-61fc89c45056",
 	"name": "Project Documentation",
 	"description": "User manual and guides - created by John Doe",
@@ -185,6 +217,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 - ✅ Creation and modification timestamps
 - ✅ Arbitrary chunk sizes
 - ✅ Multiple hash algorithms for checksums
+- ✅ Optional publisher signature (Ed25519, node identity)
 
 ## Notes
 

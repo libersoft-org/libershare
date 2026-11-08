@@ -24,16 +24,21 @@ export const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
  * caller explicitly flagged `tryNextPeer`. Local errors (e.g. LISH already added)
  * are not retryable — they would fail identically on every peer.
  *
- * `LISH_CHUNK_SIZE_TOO_LARGE` counts as local: the chunk size is written in the LISH
- * itself, so every honest peer answers with the same value. Walking the whole peer list
- * only makes the user watch each row fail before the identical error appears at the end.
+ * A manifest refused for its signature, publisher or shape is the fault of the peer that
+ * served it, so the next peer is asked, as `LISH_NETWORK_PROTOCOL.md` describes.
+ *
+ * `LISH_CHUNK_SIZE_TOO_LARGE` asks the next peer too, as the downloader does: any peer can
+ * claim an over-limit chunk size under this ID, so one answer does not settle the LISH.
+ * When every peer says so, the loop ends with that error.
  */
 export function isRetryablePeerError(error: unknown): boolean {
 	if ((error as { tryNextPeer?: boolean } | null)?.tryNextPeer) return true;
 	const code = (error as { code?: unknown } | null)?.code;
 	if (typeof code !== 'string') return false;
-	return code.startsWith('PEER_');
+	return code.startsWith('PEER_') || PEER_MANIFEST_REFUSALS.has(code);
 }
+
+const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_INVALID_MANIFEST', 'LISH_CHUNK_SIZE_TOO_LARGE']);
 
 /**
  * Try each peer offering a LISH in turn until one answers, returning its result.

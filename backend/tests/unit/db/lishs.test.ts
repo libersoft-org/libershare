@@ -83,6 +83,7 @@ describe('getLISHMeta', () => {
 		expect(meta?.chunkSize).toBe(1048576);
 		expect(meta?.checksumAlgo).toBe('sha256');
 		expect(meta?.directory).toBeNull();
+		expect(meta?.publisher).toBeNull();
 	});
 });
 
