@@ -588,8 +588,9 @@ export class Downloader {
 						}
 						// A structurally malformed manifest (mapped to PEER_INVALID_REQUEST) is this
 						// peer's fault — keeping it would leave the download stuck asking the same
-						// bad peer forever while discovery skips it as "connected".
-						if (error instanceof CodedError && error.code === ErrorCodes.PEER_INVALID_REQUEST) {
+						// bad peer forever while discovery skips it as "connected". A peer whose message
+						// limit is below the manifest size cannot send it until its operator raises the limit.
+						if (error instanceof CodedError && (error.code === ErrorCodes.PEER_INVALID_REQUEST || error.code === ErrorCodes.PEER_MANIFEST_TOO_LARGE)) {
 							this.peerManager.remove(peerID, 'drop');
 							continue;
 						}
