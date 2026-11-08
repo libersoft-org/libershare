@@ -147,7 +147,8 @@
 		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný",
 		"errorSearchQueryTooLong": "Hledaný text je příliš dlouhý",
 		"errorListingNotAuthorized": "Seznam nelze zobrazit: nebylo potvrzeno členství ve společné síti",
-		"errorListTooLarge": "Seznam sdílených položek překračuje limit přenosu. Upřesněte hledání nebo aktualizujte protistranu na verzi podporující stránkování seznamu."
+		"errorListTooLarge": "Seznam sdílených položek překračuje limit přenosu. Upřesněte hledání nebo aktualizujte protistranu na verzi podporující stránkování seznamu.",
+		"errorManifestTooLarge": "Účastník nemůže poslat tento LISH: jeho manifest je větší než limit velikosti zprávy nastavený u účastníka"
 	},
 	"localStorage": {
 		"title": "Místní úložiště",

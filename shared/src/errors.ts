@@ -64,6 +64,7 @@ const errorCodes = [
 	// both sides are still converging on, so the caller may ask again.
 	'PEER_LISTING_NOT_AUTHORIZED',
 	'PEER_LIST_TOO_LARGE',
+	'PEER_MANIFEST_TOO_LARGE',
 
 	// Downloader
 	'DOWNLOADER_NOT_INITIALIZED',

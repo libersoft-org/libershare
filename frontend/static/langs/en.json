@@ -147,7 +147,8 @@
 		"errorInvalidRequest": "Peer rejected the request as invalid",
 		"errorSearchQueryTooLong": "The search text is too long",
 		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed",
-		"errorListTooLarge": "The shared-item list exceeds the transfer limit. Narrow your search or update the peer to a version that supports list pages."
+		"errorListTooLarge": "The shared-item list exceeds the transfer limit. Narrow your search or update the peer to a version that supports list pages.",
+		"errorManifestTooLarge": "The peer cannot send this LISH: its manifest is larger than the message size limit set on that peer"
 	},
 	"localStorage": {
 		"title": "Local storage",
