@@ -108,6 +108,10 @@ export class Downloader {
 	private localPublisher: string | null = null;
 	private disabled = false;
 	private destroyed = false;
+	/** Probe passes in flight: any of them may still bring a valid manifest and its peer. */
+	private manifestProbes = 0;
+	/** Last manifest refusal the user can act on; reported once no source of a manifest is left. */
+	private manifestRefusal: CodedError | null = null;
 	private lastExhaustedTime = 0;
 	private downloadActive = false; // true while downloadChunks is running inside workMutex
 	/** Async work that must settle before this downloader no longer owns runtime state. */
@@ -271,6 +275,7 @@ export class Downloader {
 		if (this.errorCode === ErrorCodes.LISH_UNSAFE_PATH) return;
 		this.transitionTo('error', `setError(${code})`, true);
 		this.disabled = true;
+		this.manifestRefusal = null;
 		this.errorCode = code;
 		this.errorDetail = detail;
 		this.clearRetryTimer();
@@ -289,6 +294,16 @@ export class Downloader {
 		this.downloadReject = undefined;
 		this.pauseController.notifyStateChange();
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
+	}
+
+	/**
+	 * Fails the download with the remembered manifest refusal, but only when nothing can still
+	 * deliver a manifest: no connected peer and no probe pass that may be about to store one.
+	 */
+	private reportManifestRefusal(): void {
+		if (this.destroyed || this.disabled || !this.needsManifest || !this.manifestRefusal) return;
+		if (this.peerManager.size() > 0 || this.manifestProbes > 0) return;
+		this.setError(this.manifestRefusal.code, this.manifestRefusal.detail);
 	}
 
 	private scheduleRetry(): void {
@@ -636,7 +651,6 @@ export class Downloader {
 			// Phase 1: fetch manifest from a peer if needed
 			if (this.state === 'awaiting-manifest') {
 				if (this.peerManager.size() === 0) return;
-				let refused: CodedError | null = null;
 				// LIVE iteration on purpose (Map iterators tolerate deletes and visit entries
 				// added mid-loop): a peer joining via HAVE while we await another's manifest
 				// gets its turn in THIS pass — its doWork() trigger no-ops on the locked mutex.
@@ -646,7 +660,7 @@ export class Downloader {
 						manifest = await client.requestManifest(this.lishID, undefined, this.expectedPublisher());
 					} catch (error: any) {
 						if (this.destroyed) return;
-						refused = reportableRefusal(error) ?? refused;
+						this.manifestRefusal = reportableRefusal(error) ?? this.manifestRefusal;
 						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
 							// Any peer can claim an over-limit chunk size under this ID, so one answer
 							// must not end the download while another peer may serve the real manifest.
@@ -677,8 +691,8 @@ export class Downloader {
 					}
 				}
 				if (this.needsManifest) {
-					// No connected peer is left and a refusal the user can act on was seen: report it.
-					if (refused && this.peerManager.size() === 0) this.setError(refused.code, refused.detail);
+					// A probe waiting on this mutex to store its manifest keeps the download alive.
+					this.reportManifestRefusal();
 					return;
 				}
 			}
@@ -828,7 +842,13 @@ export class Downloader {
 	}
 
 	private probeTopicPeers(): Promise<void> {
-		return this.trackLifecycle(this.probeTopicPeersInternal());
+		this.manifestProbes++;
+		return this.trackLifecycle(
+			this.probeTopicPeersInternal().finally(() => {
+				this.manifestProbes--;
+				this.reportManifestRefusal();
+			})
+		);
 	}
 
 	private async probeTopicPeersInternal(): Promise<void> {
@@ -839,7 +859,6 @@ export class Downloader {
 		}
 		console.debug(`[DL] probeTopicPeers: ${topicPeers.size} topic, ${this.peerManager.size()} connected, ${this.peerManager.bannedSize()} banned`);
 		let foundNew = false;
-		let refused: CodedError | null = null;
 		for (const peerID of topicPeers) {
 			if (this.destroyed) return;
 			if (!this.peerManager.hasCapacity()) {
@@ -866,10 +885,10 @@ export class Downloader {
 				} catch (error: any) {
 					// Any manifest error (unreachable, malformed, over-limit) → drop this peer and let
 					// another serve it. Over-limit and publisher refusals are remembered and reported only
-					// when the pass ends without a manifest and with no connected peer, as in the connected-peer loop.
+					// when no connected peer and no other probe pass is left (see reportManifestRefusal).
 					// Mid-download the probe is just a "do you have this LISH?" test, so it never fails
 					// the transfer there.
-					if (this.needsManifest) refused = reportableRefusal(error) ?? refused;
+					if (this.needsManifest) this.manifestRefusal = reportableRefusal(error) ?? this.manifestRefusal;
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
 					this.peerManager.remove(peerID, 'drop');
 				}
@@ -915,7 +934,6 @@ export class Downloader {
 				console.debug(`[DL] probe ${peerID.slice(0, 12)} unreachable: ${err.message?.slice(0, 80)}`);
 			}
 		}
-		if (refused && this.needsManifest && this.peerManager.size() === 0 && !this.destroyed) this.setError(refused.code, refused.detail);
 		if (foundNew && !this.downloadActive && !this.destroyed) {
 			this.doWork().catch(e => {
 				if (!(e instanceof CodedError && e.code === ErrorCodes.DOWNLOAD_CANCELLED)) console.error('[DL] doWork error:', e);

@@ -319,6 +319,32 @@ describe('late manifest answers against the real store', () => {
 		await dl.destroy();
 	});
 
+	it('a refusal from the last connected peer does not fail the download while a probe is about to store a valid manifest', async () => {
+		const ds = new MockDataServer();
+		const stored = { ...manifest({ files: [] }), publisher: A } as IStoredLISH;
+		const genuine = await sign(manifest(), keyA);
+		const dl = awaitingManifest(ds, stored, servingNetworkOf([{ peer: 'peer-probe-0001', manifest: () => genuine }]));
+		let probe!: Promise<unknown>;
+		/** Answers only once a probe holding a verified manifest waits for the lock this loop holds. */
+		class RefusingWhileProbing extends MockLISHClient {
+			override async requestManifest(): Promise<IStoredLISH | null> {
+				const mutex = priv(dl)['workMutex'] as { runExclusive: (fn: () => Promise<unknown>) => Promise<unknown> };
+				const original = mutex.runExclusive.bind(mutex);
+				const probeWaiting = new Promise<void>(resolve => (mutex.runExclusive = fn => (resolve(), original(fn))));
+				probe = (priv(dl) as Record<string, any>)['probeTopicPeers']();
+				await probeWaiting;
+				throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, 'refused', { cause: new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `expected ${A}, got another`) });
+			}
+		}
+		peers(dl).set('peer-refusing-001', new RefusingWhileProbing());
+		await dl.doWork();
+		expect(priv(dl)['errorCode']).toBeUndefined();
+		await probe;
+		expect(priv(dl)['errorCode']).toBeUndefined();
+		expect(ds.addedLishs.map(lish => lish.publisher)).toEqual([A]);
+		await dl.destroy();
+	});
+
 	it('probe: one pass refuses the forged peer and stores the genuine one', async () => {
 		const ds = new DataServer(createTestDB());
 		const stored = { ...manifest({ files: [] }), publisher: A } as IStoredLISH;
