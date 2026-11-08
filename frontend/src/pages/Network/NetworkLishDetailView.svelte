@@ -4,6 +4,8 @@
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
+	import TableRow from '../../components/Table/TableRow.svelte';
+	import TableCell from '../../components/Table/TableCell.svelte';
 	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
 
 	interface Props {
@@ -121,6 +123,8 @@
 		return isISODate(value) ? formatDateTime(value) : undefined;
 	}
 
+	let created = $derived(fieldText(detail.created, 'date'));
+
 	function typeIcon(type: TreeNode['type']): string {
 		return type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg';
 	}
@@ -134,36 +138,26 @@
 		width: 100%;
 	}
 
-	/* One grid for all rows: the label column takes the widest label, so every value starts at the same place. */
 	.info-section {
-		display: grid;
-		grid-template-columns: max-content minmax(0, 1fr);
-		gap: 1vh;
-		padding: 2vh;
 		background-color: var(--secondary-hard-background);
 		border: 0.4vh solid var(--secondary-softer-background);
 		border-radius: 2vh;
-		color: var(--secondary-foreground);
-		box-sizing: border-box;
+		overflow: hidden;
 	}
 
-	.info-row {
-		display: contents;
-	}
-
-	.info-row .label {
-		color: var(--disabled-foreground);
+	/* Wrap by words, breaking only a word wider than the cell, instead of the cell's break-all. */
+	.info-section .label,
+	.info-section .value {
 		font-size: 1.8vh;
-		text-align: right;
-	}
-
-	.info-row .value {
-		color: var(--secondary-foreground);
-		font-size: 1.8vh;
+		word-break: normal;
 		overflow-wrap: anywhere;
 	}
 
-	.info-row .value.description {
+	.info-section .label {
+		color: var(--disabled-foreground);
+	}
+
+	.info-section .value.description {
 		white-space: pre-wrap;
 	}
 
@@ -261,6 +255,13 @@
 	{/if}
 {/snippet}
 
+{#snippet infoRow(label: string, value: string | number, kind: 'text' | 'mono' | 'description' = 'text', invalid = false)}
+	<TableRow>
+		<TableCell align="right" wrap><span class="label">{label}:</span></TableCell>
+		<TableCell wrap><span class="value" class:mono={kind === 'mono'} class:description={kind === 'description'} class:invalid>{value}</span></TableCell>
+	</TableRow>
+{/snippet}
+
 {#snippet entryDetailsView(node: TreeNode)}
 	<div class="entry-details">
 		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
@@ -279,20 +280,23 @@
 
 <div class="detail">
 	<div class="info-section">
-		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
-		{#if detail.name}
-			<div class="info-row"><span class="label">{$t('common.name')}:</span> <span class="value">{detail.name}</span></div>
-		{/if}
-		{#if detail.description}
-			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
-		{/if}
-		<div class="info-row"><span class="label">{$t('network.created')}:</span> <span class="value" class:invalid={fieldText(detail.created, 'date') === undefined}>{fieldText(detail.created, 'date') ?? $t('lish.entryInvalidValue')}</span></div>
-		<div class="info-row"><span class="label">{$t('network.totalSize')}:</span> <span class="value">{formatSize(detail.totalSize)}</span></div>
-		<div class="info-row"><span class="label">{$t('network.chunkSize')}:</span> <span class="value">{formatSize(detail.chunkSize)}</span></div>
-		<div class="info-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{detail.totalChunks}</span></div>
-		<div class="info-row"><span class="label">{$t('network.checksumAlgo')}:</span> <span class="value">{detail.checksumAlgo}</span></div>
-		<div class="info-row"><span class="label">{$t('common.files')}:</span> <span class="value">{detail.fileCount}</span></div>
-		<div class="info-row"><span class="label">{$t('network.directories')}:</span> <span class="value">{detail.directoryCount}</span></div>
+		<!-- Each row is its own grid, so the label column has a set width rather than the widest label; it shrinks on a narrow screen and the labels wrap. -->
+		<Table columns="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" columnsMobile="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" noBorder oddEven={false}>
+			{@render infoRow($t('network.lishID'), detail.id, 'mono')}
+			{#if detail.name}
+				{@render infoRow($t('common.name'), detail.name)}
+			{/if}
+			{#if detail.description}
+				{@render infoRow($t('common.description'), detail.description, 'description')}
+			{/if}
+			{@render infoRow($t('network.created'), created ?? $t('lish.entryInvalidValue'), 'text', created === undefined)}
+			{@render infoRow($t('network.totalSize'), formatSize(detail.totalSize))}
+			{@render infoRow($t('network.chunkSize'), formatSize(detail.chunkSize))}
+			{@render infoRow($t('downloads.chunks'), detail.totalChunks)}
+			{@render infoRow($t('network.checksumAlgo'), detail.checksumAlgo)}
+			{@render infoRow($t('common.files'), detail.fileCount)}
+			{@render infoRow($t('network.directories'), detail.directoryCount)}
+		</Table>
 	</div>
 	{#if fileRows.length > 0}
 		{#if fileRowsBaseY !== undefined}

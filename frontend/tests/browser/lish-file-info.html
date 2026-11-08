@@ -74,12 +74,12 @@
 			await test('a valid .lish shows its summary with the chunk count and offers the import', async () => {
 				await open([valid], 'lish-info-single');
 				assert(root.textContent.includes('First LISH') && root.textContent.includes(valid.detail.id), 'Name or ID is missing');
-				const labels = [...root.querySelectorAll('.info-row .label')];
+				const labels = [...root.querySelectorAll('.info-section .label')];
 				assert(labels[0]?.textContent.startsWith(tr('network.lishID')) && labels[1]?.textContent.startsWith(tr('common.name')), 'LISH ID is not the first row, followed by the name');
 				// One grid for every row: all values start at the same horizontal position.
-				const starts = new Set([...root.querySelectorAll('.info-row .value')].map(value => Math.round(value.getBoundingClientRect().left)));
+				const starts = new Set([...root.querySelectorAll('.info-section .value')].map(value => Math.round(value.getBoundingClientRect().left)));
 				assert(starts.size === 1, `Values start at ${starts.size} different positions`);
-				const chunks = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('downloads.chunks')));
+				const chunks = [...root.querySelectorAll('.info-section .row')].find(row => row.textContent.includes(tr('downloads.chunks')));
 				assert(chunks?.textContent.includes('3'), 'Chunk count row is missing or wrong');
 				button(tr('common.import')).click();
 				button(tr('common.back')).click();
@@ -170,7 +170,7 @@
 				assert(shown.includes('0640'), `The details did not render: ${shown}`);
 				const marked = [...root.querySelectorAll('.entry-details .invalid')].map(value => value.parentElement.textContent);
 				assert(marked.length === 2 && marked.some(row => row.includes(tr('network.created')) && row.includes(marker)) && marked.some(row => row.includes(tr('localStorage.modified')) && row.includes(marker)), `Invalid fields are not marked: ${JSON.stringify(marked)}`);
-				const created = [...root.querySelectorAll('.info-row')].find(row => row.textContent.includes(tr('network.created')));
+				const created = [...root.querySelectorAll('.info-section .row')].find(row => row.textContent.includes(tr('network.created')));
 				assert(created?.querySelector('.invalid')?.textContent === marker, `An unreadable LISH date is not marked: ${created?.textContent}`);
 			});
 			await test('in a narrow window neither info page scrolls sideways', async () => {
