@@ -150,7 +150,7 @@
 				assert(copy.length === 2, `Expected two copy buttons in the bootstrap detail, found ${copy.length}`);
 				const entry = copy.find(item => item.closest('.entry'));
 				const main = copy.find(item => !item.closest('.entry'));
-				assert(entry && main, 'Copy buttons are not in the mismatched entry and the bottom bar');
+				assert(entry && main, 'Copy buttons are not in the mismatched entry and the top bar');
 				entry.click();
 				await settle();
 				assert(lastCopied() === actualPeerID, `Entry copy wrote ${lastCopied()}`);
@@ -162,13 +162,15 @@
 				const copy = buttons(copyLabel);
 				const entry = copy.find(item => item.closest('.entry'));
 				const main = copy.find(item => !item.closest('.entry'));
+				// The page buttons sit above the address list, so the keyboard reaches them first.
 				for (const [target, expected] of [
-					[entry, actualPeerID],
 					[main, remotePeerID],
+					[entry, actualPeerID],
 				]) {
 					for (let step = 0; step < 6 && !target.classList.contains('selected'); step++) {
 						const selected = root.querySelector('.button.selected');
-						emit(selected && selected.parentElement === target.parentElement ? 'right' : 'down');
+						const siblings = [...target.parentElement.children];
+						emit(selected && selected.parentElement === target.parentElement ? (siblings.indexOf(selected) < siblings.indexOf(target) ? 'right' : 'left') : 'down');
 						await settle();
 					}
 					assert(target.classList.contains('selected'), `Keyboard could not select the copy button for ${expected}`);
