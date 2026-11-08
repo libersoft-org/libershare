@@ -214,7 +214,7 @@
 		scrollToSelected();
 		const item = filteredItems[index];
 		if (item && (item.type === 'directory' || item.type === 'drive')) navigateInto(item);
-		else if (item?.type === 'file') {
+		else if (item?.type === 'file' && !item.broken) {
 			if (saveFileName !== undefined) {
 				internalSaveFileName = item.name;
 				onSaveFileNameChange?.(item.name);
@@ -314,7 +314,7 @@
 			const item = filteredItems[selectedIndex];
 			if (item && (item.type === 'directory' || item.type === 'drive'))
 				navigateInto(item); // Directories/drives - navigate into them
-			else if (item?.type === 'file') {
+			else if (item?.type === 'file' && !item.broken) {
 				if (saveFileName !== undefined) {
 					// In save mode, selecting a file sets the filename and triggers save (with overwrite check)
 					internalSaveFileName = item.name;
@@ -1242,11 +1242,11 @@
 								</div>
 							{:else if error}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{:else}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{/if}
 						</div>

@@ -12,6 +12,8 @@ export interface FsEntry {
 	size?: number;
 	modified?: string;
 	hidden?: boolean;
+	link?: boolean;
+	broken?: boolean;
 }
 
 /** A path split into its directory and (optional) file-name parts. */
@@ -114,6 +116,8 @@ export function transformFsEntry(entry: FsEntry, index: number): StorageItemData
 		size: entry.size,
 		modified: formatDate(entry.modified),
 		hidden: entry.hidden,
+		link: entry.link,
+		broken: entry.broken,
 	};
 }
 
