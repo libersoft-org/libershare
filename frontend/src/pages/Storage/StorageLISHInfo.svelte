@@ -161,7 +161,7 @@
 					<Alert type="error" message={itemError(items[0]!)} />
 				{/if}
 				{#if items[0]!.detail}
-					<NetworkLishDetailView detail={items[0]!.detail} fileRowsBaseY={1} />
+					<NetworkLishDetailView detail={items[0]!.detail} baseY={1} />
 				{/if}
 			{:else}
 				<Table columns="auto 1fr 14vh 10vh 16vh" columnsMobile="1fr 14vh 10vh 16vh">

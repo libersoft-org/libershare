@@ -113,7 +113,7 @@
 		{:else if error}
 			<Alert type="error" message={error} />
 		{:else if detail}
-			<NetworkLishDetailView {detail} fileRowsBaseY={1} />
+			<NetworkLishDetailView {detail} baseY={1} />
 		{/if}
 	</div>
 </div>

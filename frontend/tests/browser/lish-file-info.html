@@ -44,6 +44,14 @@
 		function assert(value, message) {
 			if (!value) throw new Error(message);
 		}
+		/** Move down until the selected row starts with `name`; the info rows come before the files. */
+		async function downTo(name) {
+			for (let step = 0; step < 60 && !root.querySelector('.row.selected')?.textContent.trim().startsWith(name); step++) {
+				emit('down');
+				await settle();
+			}
+			assert(root.querySelector('.row.selected')?.textContent.trim().startsWith(name), `Down did not reach ${name}`);
+		}
 		function button(label) {
 			return [...root.querySelectorAll('.button')].find(item => item.textContent.trim() === label);
 		}
@@ -86,6 +94,22 @@
 				button(tr('common.import')).click();
 				button(tr('common.back')).click();
 				assert(calls.import === 1 && calls.back === 1, 'Import or Back did not reach the page owner');
+			});
+			await test('Down from the buttons walks the info rows top to bottom, then reaches the first file', async () => {
+				await open([valid], 'lish-info-nav');
+				const infoRows = [...root.querySelectorAll('.info-section .row')];
+				assert(infoRows.length === 9, `Expected nine info rows, got ${infoRows.length}`);
+				for (const [i, row] of infoRows.entries()) {
+					emit('down');
+					await settle();
+					assert(row.classList.contains('selected'), `Down #${i + 1} did not select the info row "${row.textContent.trim()}"`);
+				}
+				emit('down');
+				await settle();
+				assert(root.querySelector('.row.selected')?.textContent.trim().startsWith('a.bin'), 'Down from the last info row did not reach the file');
+				emit('up');
+				await settle();
+				assert(infoRows.at(-1).classList.contains('selected'), 'Up from the file did not return to the last info row');
 			});
 			await test('an invalid manifest shows the reason and no import', async () => {
 				await open([broken], 'lish-info-broken');
@@ -163,8 +187,7 @@
 				const odd = { detail: { ...detail('c0000000-0000-4000-8000-000000000006', 'Odd', 3), created: 'not a date', files: [{ path: 'a.bin', size: 2500, created: { toString: 0, valueOf: 0 }, permissions: '0640', invalidFields: ['modified'] }] } };
 				await open([odd], 'lish-info-odd');
 				const marker = tr('lish.entryInvalidValue');
-				emit('down');
-				await settle();
+				await downTo('a.bin');
 				emit('confirmDown');
 				emit('confirmUp');
 				await settle();
@@ -222,9 +245,7 @@
 				await settle();
 				assert(root.textContent.includes('Many files'), 'The item did not open');
 				const selectedName = () => root.querySelector('.row.selected')?.textContent.trim().split(/\s/)[0];
-				emit('down');
-				await settle();
-				assert(selectedName() === 'f01.bin', `Down did not reach the first file: ${selectedName()}`);
+				await downTo('f01.bin');
 				emit('pageDown');
 				await settle();
 				assert(selectedName() !== 'f01.bin' && selectedName()?.startsWith('f'), `PageDown did not move through the files: ${selectedName()}`);
@@ -233,7 +254,7 @@
 				assert(selectedName() === 'f25.bin', `End did not reach the last file: ${selectedName()}`);
 				emit('home');
 				await settle();
-				assert(selectedName() === 'f01.bin', `Home did not return to the first file: ${selectedName()}`);
+				assert(root.querySelector('.row.selected')?.textContent.includes(many.detail.id), `Home did not return to the LISH ID row: ${selectedName()}`);
 			});
 			await test('Back from a Linux file with a backslash in its name reopens its folder', async () => {
 				if (component) await unmount(component);
@@ -275,11 +296,7 @@
 				try {
 					await settle();
 					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The hint is missing');
-					while (!root.querySelector('.row.selected')?.textContent.includes('a.bin')) {
-						emit('down');
-						await settle();
-						assert(root.querySelector('.row.selected'), 'Down did not reach the file row');
-					}
+					await downTo('a.bin');
 					emit('confirmDown');
 					emit('confirmUp');
 					await settle();
@@ -290,7 +307,7 @@
 					api.lishnets.getPeerLish = original;
 				}
 			});
-			await test('the search peer list opens an entry of the loaded detail by click', async () => {
+			await test('the search peer list opens an entry of the loaded detail by keyboard', async () => {
 				if (component) await unmount(component);
 				component = undefined;
 				const original = api.lishnets.getPeerLish;
@@ -302,12 +319,16 @@
 					button(tr('network.details')).click();
 					await settle();
 					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The hint is missing');
-					const file = [...root.querySelectorAll('.row')].find(item => item.textContent.trim().startsWith('a.bin'));
-					assert(file, 'The file row is missing');
-					file.click();
+					await downTo('a.bin');
+					emit('confirmDown');
+					emit('confirmUp');
 					await settle();
 					const shown = root.querySelector('.entry-details')?.textContent ?? '';
 					assert(shown.includes(tr('lish.entryFile')) && shown.includes('0640'), `Entry details are missing: ${shown}`);
+					// The peer list comes after the rows of the detail.
+					emit('down');
+					await settle();
+					assert(root.querySelector('.row.selected')?.textContent.includes('peer-1'), 'Down from the last file did not reach the peer list');
 				} finally {
 					await unmount(page);
 					api.lishnets.getPeerLish = original;
@@ -331,7 +352,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 13 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

@@ -10,8 +10,7 @@
 		type: 'dir' | 'file' | 'link';
 		size: number;
 		depth: number;
-		/** Position in the surrounding navArea; without it the row is not reachable by keyboard and opens on click. */
-		rowY?: number | undefined;
+		rowY: number;
 		onConfirm?: (() => void) | undefined;
 		/** Show {@link children} across the whole row below its cells. */
 		expanded?: boolean | undefined;
@@ -20,8 +19,8 @@
 	}
 	let { name, type, size, depth, rowY, onConfirm, expanded = false, children }: Props = $props();
 	const navArea = getContext<NavAreaController | undefined>('navArea');
-	let position = $derived<NavPos | undefined>(rowY === undefined ? undefined : [0, rowY]);
-	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : false);
+	let position = $derived<NavPos>([0, rowY]);
+	let isSelected = $derived(navArea ? navArea.isSelected(position) : false);
 	let typeIcon = $derived(type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg');
 	let iconColor = $derived(isSelected ? '--primary-background' : '--secondary-foreground');
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
@@ -30,7 +29,7 @@
 	$effect(() => {
 		if (!expanded || !el) return;
 		const row = el;
-		const observer = new ResizeObserver(() => (navArea && position ? navArea.scrollToSelected() : row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })));
+		const observer = new ResizeObserver(() => (navArea ? navArea.scrollToSelected() : row.scrollIntoView({ behavior: 'smooth', block: 'nearest' })));
 		observer.observe(row);
 		return () => observer.disconnect();
 	});
@@ -58,7 +57,7 @@
 	}
 </style>
 
-<TableRow bind:el {position} {onConfirm} onclick={position ? undefined : onConfirm}>
+<TableRow bind:el {position} {onConfirm}>
 	<TableCell>
 		<span class="name">
 			<span class="indent" style="width: {depth * 2.5}vh"></span>

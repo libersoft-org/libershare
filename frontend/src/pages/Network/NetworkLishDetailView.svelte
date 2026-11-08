@@ -1,23 +1,6 @@
-<script lang="ts">
-	import { t } from '../../scripts/language.ts';
+<script lang="ts" module>
 	import { type IPeerLishDetail, isISODate } from '@shared';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
-	import Table from '../../components/Table/Table.svelte';
-	import TableRow from '../../components/Table/TableRow.svelte';
-	import TableCell from '../../components/Table/TableCell.svelte';
-	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
-
-	interface Props {
-		detail: IPeerLishDetail;
-		/**
-		 * When set, file rows register into the surrounding navArea starting at
-		 * this y so a keyboard user can scroll through them and open their details.
-		 * Leave unset where the rows would collide with another nav list on the page
-		 * (LISH search peer list) — the rows then open by mouse only.
-		 */
-		fileRowsBaseY?: number | undefined;
-	}
-	let { detail, fileRowsBaseY = undefined }: Props = $props();
 
 	interface TreeNode {
 		name: string;
@@ -80,11 +63,69 @@
 		}
 	}
 
-	let fileRows = $derived.by((): FlatRow[] => {
-		const rows: FlatRow[] = [];
-		flattenTree(buildFileTree(detail), 0, rows);
+	/**
+	 * A manifest field as text, or undefined when it does not hold what the field should. The values
+	 * come from a file anyone can write, so nothing else reaches the date formatter.
+	 */
+	function fieldText(value: unknown, kind: 'text' | 'date'): string | undefined {
+		if (typeof value !== 'string') return undefined;
+		if (kind === 'text') return value;
+		return isISODate(value) ? formatDateTime(value) : undefined;
+	}
+
+	/** One row of the summary box; `value` undefined marks a field that does not hold what it should. */
+	interface InfoRow {
+		labelKey: string;
+		value: string | number | undefined;
+		kind: 'text' | 'mono' | 'description';
+	}
+
+	function infoRows(d: IPeerLishDetail): InfoRow[] {
+		const rows: InfoRow[] = [{ labelKey: 'network.lishID', value: d.id, kind: 'mono' }];
+		if (d.name) rows.push({ labelKey: 'common.name', value: d.name, kind: 'text' });
+		if (d.description) rows.push({ labelKey: 'common.description', value: d.description, kind: 'description' });
+		rows.push({ labelKey: 'network.created', value: fieldText(d.created, 'date'), kind: 'text' });
+		rows.push({ labelKey: 'network.totalSize', value: formatSize(d.totalSize), kind: 'text' });
+		rows.push({ labelKey: 'network.chunkSize', value: formatSize(d.chunkSize), kind: 'text' });
+		rows.push({ labelKey: 'downloads.chunks', value: d.totalChunks, kind: 'text' });
+		rows.push({ labelKey: 'network.checksumAlgo', value: d.checksumAlgo, kind: 'text' });
+		rows.push({ labelKey: 'common.files', value: d.fileCount, kind: 'text' });
+		rows.push({ labelKey: 'network.directories', value: d.directoryCount, kind: 'text' });
 		return rows;
-	});
+	}
+
+	function fileTreeRows(d: IPeerLishDetail): FlatRow[] {
+		const rows: FlatRow[] = [];
+		flattenTree(buildFileTree(d), 0, rows);
+		return rows;
+	}
+
+	/** How many navArea rows the view takes from its `baseY`, so a page can place its next list below them. */
+	export function lishDetailRowCount(d: IPeerLishDetail): number {
+		return infoRows(d).length + fileTreeRows(d).length;
+	}
+</script>
+
+<script lang="ts">
+	import { t } from '../../scripts/language.ts';
+	import Table from '../../components/Table/Table.svelte';
+	import TableRow from '../../components/Table/TableRow.svelte';
+	import TableCell from '../../components/Table/TableCell.svelte';
+	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
+
+	interface Props {
+		detail: IPeerLishDetail;
+		/**
+		 * The rows register into the surrounding navArea from this y, one each: first the info
+		 * rows top to bottom, then the file rows ({@link lishDetailRowCount} in total).
+		 */
+		baseY: number;
+	}
+	let { detail, baseY }: Props = $props();
+
+	let summary = $derived(infoRows(detail));
+	let fileRows = $derived(fileTreeRows(detail));
+	let fileRowsBaseY = $derived(baseY + summary.length);
 
 	// One entry at a time shows its details.
 	let expanded = $state<string | null>(null);
@@ -109,18 +150,6 @@
 	function isInvalid(node: TreeNode, field: string): boolean {
 		return node.entry?.invalidFields?.includes(field) ?? false;
 	}
-
-	/**
-	 * A manifest field as text, or undefined when it does not hold what the field should. The values
-	 * come from a file anyone can write, so nothing else reaches the date formatter.
-	 */
-	function fieldText(value: unknown, kind: 'text' | 'date'): string | undefined {
-		if (typeof value !== 'string') return undefined;
-		if (kind === 'text') return value;
-		return isISODate(value) ? formatDateTime(value) : undefined;
-	}
-
-	let created = $derived(fieldText(detail.created, 'date'));
 </script>
 
 <style>
@@ -196,13 +225,6 @@
 	{/if}
 {/snippet}
 
-{#snippet infoRow(label: string, value: string | number, kind: 'text' | 'mono' | 'description' = 'text', invalid = false)}
-	<TableRow>
-		<TableCell align="right" wrap><span class="label">{label}:</span></TableCell>
-		<TableCell wrap><span class="value" class:mono={kind === 'mono'} class:description={kind === 'description'} class:invalid>{value}</span></TableCell>
-	</TableRow>
-{/snippet}
-
 {#snippet entryDetailsView(node: TreeNode)}
 	<div class="entry-details">
 		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
@@ -223,27 +245,19 @@
 	<div class="info-section">
 		<!-- Each row is its own grid, so the label column has a set width rather than the widest label; it shrinks on a narrow screen and the labels wrap. -->
 		<Table columns="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" columnsMobile="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" noBorder compact>
-			{@render infoRow($t('network.lishID'), detail.id, 'mono')}
-			{#if detail.name}
-				{@render infoRow($t('common.name'), detail.name)}
-			{/if}
-			{#if detail.description}
-				{@render infoRow($t('common.description'), detail.description, 'description')}
-			{/if}
-			{@render infoRow($t('network.created'), created ?? $t('lish.entryInvalidValue'), 'text', created === undefined)}
-			{@render infoRow($t('network.totalSize'), formatSize(detail.totalSize))}
-			{@render infoRow($t('network.chunkSize'), formatSize(detail.chunkSize))}
-			{@render infoRow($t('downloads.chunks'), detail.totalChunks)}
-			{@render infoRow($t('network.checksumAlgo'), detail.checksumAlgo)}
-			{@render infoRow($t('common.files'), detail.fileCount)}
-			{@render infoRow($t('network.directories'), detail.directoryCount)}
+			{#each summary as row, i (row.labelKey)}
+				<TableRow position={[0, baseY + i]}>
+					<TableCell align="right" wrap><span class="label">{$t(row.labelKey)}:</span></TableCell>
+					<TableCell wrap><span class="value" class:mono={row.kind === 'mono'} class:description={row.kind === 'description'} class:invalid={row.value === undefined}>{row.value ?? $t('lish.entryInvalidValue')}</span></TableCell>
+				</TableRow>
+			{/each}
 		</Table>
 	</div>
 	{#if fileRows.length > 0}
 		<div class="hint">{$t('lish.entryDetailsHint')}</div>
 		<Table columns="1fr auto" columnsMobile="1fr auto">
 			{#each fileRows as row, i (row.node.path + ':' + i)}
-				<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY === undefined ? undefined : fileRowsBaseY + i} onConfirm={() => toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
+				<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={() => toggleDetails(row.node)} expanded={expanded === nodeKey(row.node)}>
 					{@render entryDetailsView(row.node)}
 				</PeerDetailLishFileRow>
 			{/each}

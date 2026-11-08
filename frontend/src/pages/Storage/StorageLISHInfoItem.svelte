@@ -69,7 +69,7 @@
 			<Alert type="error" message={error} />
 		{/if}
 		{#if item.detail}
-			<NetworkLishDetailView detail={item.detail} fileRowsBaseY={1} />
+			<NetworkLishDetailView detail={item.detail} baseY={1} />
 		{/if}
 	</div>
 </div>
