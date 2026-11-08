@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHFileInspection, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
@@ -84,8 +84,7 @@ interface LISHsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
 	parseFromJSON: (p: { json: string }) => ILISH[];
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
-	inspectFile: (p: { filePath: string }) => Promise<ILISHFileInspectionResult>;
-	inspectFileChecksums: (p: { filePath: string; version: string; index: number; path: string }) => Promise<string[]>;
+	inspectFile: (p: { filePath: string }) => Promise<ILISHFileInspection[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
@@ -487,11 +486,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * Unlike {@link parseFromFile}, each manifest is checked as an import would check it and a refused one
 	 * is reported per item instead of failing the whole file. Reads the file only; nothing is imported.
 	 */
-	async function inspectFile(p: { filePath: string }): Promise<ILISHFileInspectionResult> {
+	async function inspectFile(p: { filePath: string }): Promise<ILISHFileInspection[]> {
 		assert(p, ['filePath']);
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
-		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
-		const items = manifests.map((data): ILISHFileInspection => {
+		return (await readLISHFile(Utils.expandHome(p.filePath))).map((data): ILISHFileInspection => {
 			try {
 				const lish = validateImportedLISH(data);
 				validateLISHStructure(lish, maxChunkSize);
@@ -504,29 +502,6 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 				throw error;
 			}
 		});
-		return { version, items };
-	}
-
-	/**
-	 * Chunk checksums of one file of the `index`-th manifest of a .lish / .lishs file, which
-	 * {@link inspectFile} leaves out to keep its answer small. Reads the file only. `version` is the
-	 * one {@link inspectFile} gave: a file rewritten since then is refused, so the checksums of another
-	 * manifest never show under the summary already on screen.
-	 */
-	async function inspectFileChecksums(p: { filePath: string; version: string; index: number; path: string }): Promise<string[]> {
-		assert(p, ['filePath', 'version', 'index', 'path']);
-		for (const name of ['version', 'path'] as const) if (typeof p[name] !== 'string' || p[name] === '') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${name} must be a non-empty string`);
-		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
-		// Read whole again on every call: only hashing the current content proves it is still the version on screen.
-		// Each call holds the import lock for that read, so expanding many items of a large .lishs delays imports.
-		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
-		if (version !== p.version) throw new CodedError(ErrorCodes.LISH_FILE_CHANGED, p.filePath);
-		if (!Number.isSafeInteger(p.index) || p.index < 0 || p.index >= manifests.length) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `index ${p.index} is not an item of the file`);
-		const lish = validateImportedLISH(manifests[p.index]);
-		validateLISHStructure(lish, maxChunkSize);
-		const file = lish.files?.find(f => f.path === p.path);
-		if (!file) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${p.path} is not a file of item ${p.index}`);
-		return file.checksums;
 	}
 
 	function parseFromJSON(p: { json: string }): ILISH[] {
@@ -917,5 +892,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, inspectFileChecksums, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

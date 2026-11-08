@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { t, translateError } from '../../scripts/language.ts';
+	import { t } from '../../scripts/language.ts';
 	import { type IPeerLishDetail, isISODate } from '@shared';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import PeerDetailLishFileRow from './NetworkPeersPeerDetailLishFileRow.svelte';
-	import ChecksumList from './NetworkLishChecksumList.svelte';
 
 	interface Props {
 		detail: IPeerLishDetail;
@@ -16,10 +15,10 @@
 		 * (LISH search peer list) — the tree renders display-only there.
 		 */
 		fileRowsBaseY?: number | undefined;
-		/** Reads the chunk checksums of a file on request; without it the rows do not open entry details. */
-		loadChecksums?: ((path: string) => Promise<string[]>) | undefined;
+		/** Confirming a file row shows the details of its entry; without it the rows do not open. */
+		entryDetails?: boolean | undefined;
 	}
-	let { detail, fileRowsBaseY = undefined, loadChecksums }: Props = $props();
+	let { detail, fileRowsBaseY = undefined, entryDetails = false }: Props = $props();
 
 	interface TreeNode {
 		name: string;
@@ -88,26 +87,16 @@
 		return rows;
 	});
 
-	// One entry at a time shows its details; its checksums are read only then, and only for a file.
+	// One entry at a time shows its details.
 	let expanded = $state<string | null>(null);
-	let checksums = $state<{ key: string; list?: string[]; error?: string } | null>(null);
 
 	function nodeKey(node: TreeNode): string {
 		return node.type + ':' + node.path;
 	}
 
-	async function toggleDetails(node: TreeNode): Promise<void> {
+	function toggleDetails(node: TreeNode): void {
 		const key = nodeKey(node);
 		expanded = expanded === key ? null : key;
-		checksums = null;
-		if (expanded !== key || node.type !== 'file' || !loadChecksums) return;
-		checksums = { key };
-		try {
-			const list = await loadChecksums(node.path);
-			if (checksums?.key === key) checksums = { key, list };
-		} catch (e) {
-			if (checksums?.key === key) checksums = { key, error: translateError(e) };
-		}
 	}
 
 	/** Undefined for a link whose `hardlink` flag was invalid. */
@@ -272,7 +261,7 @@
 	{/if}
 {/snippet}
 
-{#snippet entryDetails(node: TreeNode, rowY: number)}
+{#snippet entryDetailsView(node: TreeNode)}
 	<div class="entry-details">
 		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
 		<div class="entry-row"><span class="label">{$t('lish.entryPath')}:</span> <span class="value mono">{node.path}</span></div>
@@ -284,17 +273,6 @@
 		{@render metaRow($t('localStorage.modified'), node.entry?.modified, isInvalid(node, 'modified'), 'date')}
 		{#if node.type === 'file'}
 			<div class="entry-row"><span class="label">{$t('downloads.chunks')}:</span> <span class="value">{node.size === 0 ? 0 : Math.ceil(node.size / detail.chunkSize)}</span></div>
-			{#if checksums?.key === nodeKey(node)}
-				<div class="entry-row"><span class="label">{$t('lish.entryChecksums')}:</span></div>
-				{#if checksums.list}
-					<!-- Between this row and the next one, so the arrows pass through it in reading order. -->
-					<ChecksumList checksums={checksums.list} y={rowY + 0.5} />
-				{:else if checksums.error}
-					<div class="entry-row"><span class="value">{checksums.error}</span></div>
-				{:else}
-					<div class="entry-row"><span class="value">{$t('lish.entryChecksumsLoading')}</span></div>
-				{/if}
-			{/if}
 		{/if}
 	</div>
 {/snippet}
@@ -318,11 +296,11 @@
 	</div>
 	{#if fileRows.length > 0}
 		{#if fileRowsBaseY !== undefined}
-			{#if loadChecksums}<div class="hint">{$t('lish.entryDetailsHint')}</div>{/if}
+			{#if entryDetails}<div class="hint">{$t('lish.entryDetailsHint')}</div>{/if}
 			<Table columns="1fr auto" columnsMobile="1fr auto">
 				{#each fileRows as row, i (row.node.path + ':' + i)}
-					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={loadChecksums ? () => void toggleDetails(row.node) : undefined} expanded={expanded === nodeKey(row.node)}>
-						{@render entryDetails(row.node, fileRowsBaseY + i)}
+					<PeerDetailLishFileRow name={row.node.name} type={row.node.type} size={row.node.size} depth={row.depth} rowY={fileRowsBaseY + i} onConfirm={entryDetails ? () => toggleDetails(row.node) : undefined} expanded={expanded === nodeKey(row.node)}>
+						{@render entryDetailsView(row.node)}
 					</PeerDetailLishFileRow>
 				{/each}
 			</Table>
