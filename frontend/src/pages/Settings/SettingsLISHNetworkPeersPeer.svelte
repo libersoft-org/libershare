@@ -4,6 +4,7 @@
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type BootstrapPeerStatus, type LISHNetworkConfig } from '@shared';
 	import { updateNetworkBootstrapPeers } from '../../scripts/lishNetwork.ts';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -90,6 +91,14 @@
 
 	function canReplace(peer: BootstrapPeerStatus): boolean {
 		return peer.status === 'identity-mismatch' && !!peer.actualPeerID && !!peer.expectedPeerID && peer.origin === 'configured';
+	}
+
+	function showsActualPeerID(peer: BootstrapPeerStatus): boolean {
+		return !!peer.actualPeerID && peer.actualPeerID !== peerID;
+	}
+
+	function copyPeerID(id: string | null | undefined): void {
+		if (id) copyToClipboard(id, $t('common.peerIDCopied'));
 	}
 
 	function canRemove(peer: BootstrapPeerStatus): boolean {
@@ -201,6 +210,12 @@
 
 <div class="page" data-testid="bootstrap-peer-detail-{peers[0]?.multiaddr}">
 	<div class="container">
+		<ButtonBar basePosition={[0, 0]}>
+			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
+			{#if peerID}
+				<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} onConfirm={() => copyPeerID(peerID)} />
+			{/if}
+		</ButtonBar>
 		{#if peerID}
 			<div class="detail-row">
 				<div class="detail-label">{$t('settings.lishNetwork.bootstrap.colPeer')}</div>
@@ -218,14 +233,17 @@
 					<span class="entry-origin">{peer.origin === 'configured' ? $t('settings.lishNetwork.bootstrap.originConfigured') : $t('settings.lishNetwork.bootstrap.originDiscovered')}</span>
 				</div>
 				<div class="entry-address">{peer.multiaddr}</div>
-				{#if peer.actualPeerID && peer.actualPeerID !== peerID}
+				{#if showsActualPeerID(peer)}
 					<div class="entry-meta">
 						<span class="detail-label">{$t('settings.lishNetwork.bootstrap.actualPeerIDLabel')}</span>
 						<span class="detail-value">{peer.actualPeerID}</span>
 					</div>
 				{/if}
-				{#if canReplace(peer) || canRemove(peer)}
-					<ButtonBar basePosition={[0, i]}>
+				{#if showsActualPeerID(peer) || canReplace(peer) || canRemove(peer)}
+					<ButtonBar basePosition={[0, i + 1]}>
+						{#if showsActualPeerID(peer)}
+							<Button icon="/img/copy.svg" label={$t('common.copyPeerID')} padding="1vh 1.5vh" fontSize="1.6vh" onConfirm={() => copyPeerID(peer.actualPeerID)} />
+						{/if}
 						{#if canReplace(peer)}
 							<Button icon="/img/edit.svg" label={$t('settings.lishNetwork.bootstrap.replaceWithActual')} padding="1vh 1.5vh" fontSize="1.6vh" disabled={busy} onConfirm={() => replaceWithActual(peer)} />
 						{/if}
@@ -236,8 +254,5 @@
 				{/if}
 			</div>
 		{/each}
-		<ButtonBar basePosition={[0, peers.length]}>
-			<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} />
-		</ButtonBar>
 	</div>
 </div>

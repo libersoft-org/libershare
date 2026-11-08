@@ -1,7 +1,7 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
-import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, runVerification } from '../lish/lish.ts';
+import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
@@ -10,7 +10,7 @@ import { getEnabledUploads, removeUploadState, enableUpload, disableUpload } fro
 import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, restartDownloadIfEnabled, markDownloadEnabled, stopRecoveryForLISH, forceDisableDownload } from './transfer.ts';
 import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
-import { openDataset, createDataset, type DatasetRoot } from '../lish/safe-dataset-files.ts';
+import { openDataset, createDataset, validateDatasetNamespace, type DatasetRoot } from '../lish/safe-dataset-files.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
 import { assertExpectedPublisher, verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
@@ -88,6 +88,8 @@ interface LISHsHandlers {
 	parseFromFile: (p: { filePath: string }) => Promise<ILISH[]>;
 	parseFromJSON: (p: { json: string }) => Promise<ILISH[]>;
 	parseFromURL: (p: { url: string }) => Promise<ILISH[]>;
+	inspectFile: (p: { filePath: string }) => Promise<ILISHFileInspectionResult>;
+	inspectFileChecksums: (p: { filePath: string; version: string; index: number; path: string }) => Promise<string[]>;
 	verify: (p: { lishID: string }) => Promise<SuccessResponse>;
 	verifyAll: () => Promise<SuccessResponse>;
 	stopVerify: (p: { lishID: string }) => Promise<SuccessResponse>;
@@ -533,6 +535,55 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return verifiedPreview(await importLISHFromFile(Utils.expandHome(p.filePath)));
 	}
 
+	/**
+	 * Unlike {@link parseFromFile}, each manifest is checked as an import would check it and a refused one
+	 * is reported per item instead of failing the whole file. Reads the file only; nothing is imported.
+	 */
+	async function inspectFile(p: { filePath: string }): Promise<ILISHFileInspectionResult> {
+		assert(p, ['filePath']);
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
+		const items: ILISHFileInspection[] = [];
+		for (const data of manifests) {
+			try {
+				const lish = validateImportedLISH(data);
+				validateLISHStructure(lish, maxChunkSize);
+				// The summary shows the publisher, so it must be one whose signature was checked here.
+				await verifyManifestSignature(lish);
+				// The import refuses these paths when it prepares the dataset; the check itself touches no disk.
+				validateDatasetNamespace(lish);
+				datasetRootName(lish);
+				items.push({ detail: summarizeManifest(lish) });
+			} catch (error) {
+				if (error instanceof CodedError) items.push({ error: error.code, errorDetail: error.detail });
+				else throw error;
+			}
+		}
+		return { version, items };
+	}
+
+	/**
+	 * Chunk checksums of one file of the `index`-th manifest of a .lish / .lishs file, which
+	 * {@link inspectFile} leaves out to keep its answer small. Reads the file only. `version` is the
+	 * one {@link inspectFile} gave: a file rewritten since then is refused, so the checksums of another
+	 * manifest never show under the summary already on screen.
+	 */
+	async function inspectFileChecksums(p: { filePath: string; version: string; index: number; path: string }): Promise<string[]> {
+		assert(p, ['filePath', 'version', 'index', 'path']);
+		for (const name of ['version', 'path'] as const) if (typeof p[name] !== 'string' || p[name] === '') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${name} must be a non-empty string`);
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		// Read whole again on every call: only hashing the current content proves it is still the version on screen.
+		// Each call holds the import lock for that read, so expanding many items of a large .lishs delays imports.
+		const { manifests, version } = await readLISHFile(Utils.expandHome(p.filePath));
+		if (version !== p.version) throw new CodedError(ErrorCodes.LISH_FILE_CHANGED, p.filePath);
+		if (!Number.isSafeInteger(p.index) || p.index < 0 || p.index >= manifests.length) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `index ${p.index} is not an item of the file`);
+		const lish = validateImportedLISH(manifests[p.index]);
+		validateLISHStructure(lish, maxChunkSize);
+		const file = lish.files?.find(f => f.path === p.path);
+		if (!file) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, `${p.path} is not a file of item ${p.index}`);
+		return file.checksums;
+	}
+
 	async function parseFromJSON(p: { json: string }): Promise<ILISH[]> {
 		assert(p, ['json']);
 		return verifiedPreview(parseLISHFromJSON(p.json));
@@ -921,5 +972,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, inspectFileChecksums, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

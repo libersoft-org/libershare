@@ -12,6 +12,7 @@
 	import SettingsLISHNetworkImportJSON from '../Settings/SettingsLISHNetworkImportJSON.svelte';
 	import SettingsBackupImportJSON from '../Settings/SettingsBackupImportJSON.svelte';
 	import SettingsIdentityImportJSON from '../Settings/SettingsIdentityImportJSON.svelte';
+	import StorageLISHInfo from './StorageLISHInfo.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -52,14 +53,36 @@
 	let importFilePath = $state('');
 	let ImportComponent = $derived(SPECIAL_FILE_TYPES.find(t => t.mode === importMode)?.component as Component<any> | undefined);
 
+	// A LISH file opens on what it contains; importing it is the next step.
+	let lishInfoPath = $state('');
+	// The browser is rebuilt on return, so it reopens the folder of the file opened last, with that file selected.
+	let openedFrom = $state<{ dir: string; file: string } | null>(null);
+
 	const specialFileTypes = SPECIAL_FILE_TYPES.map(t => ({
 		extensions: t.extensions as unknown as string[],
-		onOpen: (path: string): void => {
+		onOpen: (path: string, dir: string, file: string): void => {
+			openedFrom = { dir, file };
+			if (t.mode === 'lish') {
+				lishInfoPath = path;
+				pushBreadcrumb(tt('lish.fileInfo'));
+				return;
+			}
 			importFilePath = path;
 			importMode = t.mode;
 			pushBreadcrumb(tt('common.import') + ' ' + t.label);
 		},
 	}));
+
+	function handleLISHInfoBack(): void {
+		popBreadcrumb();
+		lishInfoPath = '';
+	}
+
+	function handleLISHInfoImport(): void {
+		importFilePath = lishInfoPath;
+		importMode = 'lish';
+		pushBreadcrumb(tt('common.import') + ' LISH');
+	}
 
 	// Open the Create LISH page with the chosen storage path prefilled as the data source.
 	// Pass backPathIDs so that Back in Create LISH returns here instead of to the Downloads page,
@@ -81,11 +104,15 @@
 		popBreadcrumb();
 		importMode = null;
 		importFilePath = '';
+		// Imported from the info page: leave it as well, back to the file browser.
+		if (lishInfoPath) handleLISHInfoBack();
 	}
 </script>
 
 {#if ImportComponent}
 	<ImportComponent {areaID} {position} initialFilePath={importFilePath} onBack={handleImportBack} onImport={handleImportComplete} />
+{:else if lishInfoPath}
+	<StorageLISHInfo {areaID} {position} filePath={lishInfoPath} onBack={handleLISHInfoBack} onImport={handleLISHInfoImport} />
 {:else}
-	<FileBrowser {areaID} {position} {onBack} initialPath={initialPath ?? $storagePath} {initialFile} {specialFileTypes} onShare={handleShare} />
+	<FileBrowser {areaID} {position} {onBack} initialPath={openedFrom?.dir ?? initialPath ?? $storagePath} initialFile={openedFrom?.file ?? initialFile} {specialFileTypes} onShare={handleShare} />
 {/if}

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Peer ID copy regressions</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import SettingsIdentity from '/src/pages/Settings/SettingsIdentity.svelte';
+		import NetworkPeersPeerDetail from '/src/pages/Network/NetworkPeersPeerDetail.svelte';
+		import SettingsLISHNetworkPeersPeer from '/src/pages/Settings/SettingsLISHNetworkPeersPeer.svelte';
+		import Network from '/src/pages/Network/Network.svelte';
+		import SettingsLISHNetworkList from '/src/pages/Settings/SettingsLISHNetworkList.svelte';
+		import { copyToClipboard } from '/src/scripts/clipboard.ts';
+		import { notifications } from '/src/scripts/notifications.ts';
+
+		const ownPeerID = '12D3KooWOwnNodeExamplePeerIdentifierForCopyTests0001';
+		const remotePeerID = '12D3KooWRemoteExamplePeerIdentifierForCopyTests002';
+		const actualPeerID = '12D3KooWActualExamplePeerIdentifierForCopyTests003';
+		const root = document.querySelector('#page');
+		const results = [];
+		const copied = [];
+		const originalCall = wsClient.call;
+		const clipboard = { writeText: async text => void copied.push(text) };
+		Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard });
+		const listedNetwork = { networkID: 'example', name: 'Example network', description: '', created: '2026-01-01T00:00:00Z', enabled: true, bootstrapPeers: [] };
+		wsClient.call = async method => {
+			if (method === 'lishnets.getNodeInfo') return { peerID: ownPeerID, addresses: ['/ip4/192.0.2.10/tcp/9090'] };
+			if (method === 'lishnets.getPeerLishs') return { lishs: [] };
+			if (method === 'lishnets.getPeers') return [];
+			if (method === 'lishnets.list') return [listedNetwork];
+			if (method.startsWith('events.')) return true;
+			throw new Error(`Unexpected API: ${method}`);
+		};
+		/** Walk down to the node info row, then right along it, until `copy` holds the selection. */
+		async function selectByKeyboard(copy) {
+			for (let step = 0; step < 10 && !copy.classList.contains('selected'); step++) {
+				emit(root.querySelector('.row .button.selected') ? 'right' : 'down');
+				await settle();
+			}
+			assert(copy.classList.contains('selected'), 'Keyboard could not select the copy button');
+		}
+		async function confirmCopies(expected) {
+			const before = copied.length;
+			emit('confirmDown');
+			emit('confirmUp');
+			await settle();
+			assert(copied.length === before + 1 && lastCopied() === expected, `Enter copied ${lastCopied()}`);
+		}
+		async function settle() {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		}
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		function buttons(label) {
+			return [...root.querySelectorAll('.button')].filter(item => item.textContent.trim() === label);
+		}
+		function lastCopied() {
+			return copied[copied.length - 1];
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		let component;
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.common?.copyPeerID)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			const copyLabel = get(t)('common.copyPeerID');
+
+			component = mount(SettingsIdentity, { target: root, props: { areaID: 'peer-copy-identity' } });
+			await settle();
+			await test('own peer ID row copies the full ID on click', async () => {
+				const copy = buttons(copyLabel);
+				assert(copy.length === 1, `Expected one copy button in the node info row, found ${copy.length}`);
+				copy[0].click();
+				await settle();
+				assert(lastCopied() === ownPeerID, `Clipboard got ${lastCopied()}`);
+			});
+			await test('own peer ID copy button is reachable from the keyboard next to the address toggle', async () => {
+				const copy = buttons(copyLabel)[0];
+				assert(copy, 'Copy button is missing');
+				const before = copied.length;
+				for (let step = 0; step < 4 && !copy.classList.contains('selected'); step++) {
+					emit(root.querySelector('.row .button.selected') ? 'right' : 'down');
+					await settle();
+				}
+				assert(copy.classList.contains('selected'), 'Keyboard could not select the copy button; selected: ' + [...root.querySelectorAll('.selected')].map(e => e.className + '|' + e.textContent.trim().slice(0, 30)).join(' ; '));
+				assert(root.querySelector('.row.selected'), 'Node info row is not highlighted while its copy button is selected');
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				assert(copied.length === before + 1 && lastCopied() === ownPeerID, `Enter copied ${lastCopied()}`);
+			});
+			await unmount(component);
+			component = undefined;
+
+			const peer = { peerID: remotePeerID, networks: [{ networkID: 'example', networkName: 'Example network' }], direct: 1, relay: 0 };
+			component = mount(NetworkPeersPeerDetail, { target: root, props: { areaID: 'peer-copy-detail', peer, networkID: 'example' } });
+			await settle();
+			await test('peer detail copies the remote peer ID by click and keyboard', async () => {
+				const copy = buttons(copyLabel);
+				assert(copy.length === 1, `Expected one copy button in the peer detail, found ${copy.length}`);
+				copy[0].click();
+				await settle();
+				assert(lastCopied() === remotePeerID, `Click copied ${lastCopied()}`);
+				for (let step = 0; step < 4 && !copy[0].classList.contains('selected'); step++) {
+					emit('right');
+					await settle();
+				}
+				assert(copy[0].classList.contains('selected'), 'Keyboard could not select the copy button');
+				const before = copied.length;
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				assert(copied.length === before + 1 && lastCopied() === remotePeerID, `Enter copied ${lastCopied()}`);
+			});
+			await unmount(component);
+			component = undefined;
+
+			const address = index => `/ip4/192.0.2.${index}/tcp/9090/p2p/${remotePeerID}`;
+			const peers = [
+				{ multiaddr: address(1), expectedPeerID: remotePeerID, actualPeerID: remotePeerID, status: 'connected', origin: 'configured', lastError: null, updatedAt: 0 },
+				{ multiaddr: address(2), expectedPeerID: remotePeerID, actualPeerID, status: 'identity-mismatch', origin: 'configured', lastError: null, updatedAt: 0 },
+			];
+			const network = { networkID: 'example', name: 'Example network', description: '', created: '2026-01-01T00:00:00Z', enabled: true, bootstrapPeers: peers.map(item => item.multiaddr) };
+			component = mount(SettingsLISHNetworkPeersPeer, { target: root, props: { areaID: 'peer-copy-bootstrap', network, peers } });
+			await settle();
+			await test('bootstrap peer detail copies the expected and the mismatched actual peer ID', async () => {
+				const copy = buttons(copyLabel);
+				assert(copy.length === 2, `Expected two copy buttons in the bootstrap detail, found ${copy.length}`);
+				const entry = copy.find(item => item.closest('.entry'));
+				const main = copy.find(item => !item.closest('.entry'));
+				assert(entry && main, 'Copy buttons are not in the mismatched entry and the bottom bar');
+				entry.click();
+				await settle();
+				assert(lastCopied() === actualPeerID, `Entry copy wrote ${lastCopied()}`);
+				main.click();
+				await settle();
+				assert(lastCopied() === remotePeerID, `Main copy wrote ${lastCopied()}`);
+			});
+			await test('bootstrap peer detail copy buttons are reachable from the keyboard', async () => {
+				const copy = buttons(copyLabel);
+				const entry = copy.find(item => item.closest('.entry'));
+				const main = copy.find(item => !item.closest('.entry'));
+				for (const [target, expected] of [
+					[entry, actualPeerID],
+					[main, remotePeerID],
+				]) {
+					for (let step = 0; step < 6 && !target.classList.contains('selected'); step++) {
+						const selected = root.querySelector('.button.selected');
+						emit(selected && selected.parentElement === target.parentElement ? 'right' : 'down');
+						await settle();
+					}
+					assert(target.classList.contains('selected'), `Keyboard could not select the copy button for ${expected}`);
+					await confirmCopies(expected);
+				}
+			});
+			await unmount(component);
+			component = undefined;
+
+			component = mount(Network, { target: root, props: { areaID: 'peer-copy-network' } });
+			await settle();
+			await test('network peers tab copies the own peer ID from the keyboard below the tabs', async () => {
+				// Moving onto a tab opens it: down to the tab header, right to Peers.
+				for (const direction of ['down', 'right']) {
+					emit(direction);
+					await settle();
+				}
+				await settle();
+				const peersTab = [...root.querySelectorAll('.tab')].find(item => item.textContent.trim() === get(t)('common.peers'));
+				assert(peersTab?.classList.contains('active'), 'Keyboard did not open the Peers tab');
+				const copy = buttons(copyLabel);
+				assert(copy.length === 1, `Expected one copy button on the peers tab, found ${copy.length}`);
+				await selectByKeyboard(copy[0]);
+				assert(root.querySelector('.row.selected'), 'Node info row is not highlighted while its copy button is selected');
+				await confirmCopies(ownPeerID);
+			});
+			await unmount(component);
+			component = undefined;
+
+			component = mount(SettingsLISHNetworkList, { target: root, props: { areaID: 'peer-copy-network-list' } });
+			await settle();
+			await settle();
+			await test('LISH network settings copy the own peer ID from the keyboard above the network list', async () => {
+				const copy = buttons(copyLabel);
+				assert(copy.length === 1, `Expected one copy button above the network list, found ${copy.length}`);
+				await selectByKeyboard(copy[0]);
+				assert(root.querySelector('.row.selected'), 'Node info row is not highlighted while its copy button is selected');
+				await confirmCopies(ownPeerID);
+			});
+			await unmount(component);
+			component = undefined;
+
+			await test('copying falls back to execCommand outside a secure context and reports a failure', async () => {
+				const originalExec = document.execCommand;
+				Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+				try {
+					let selectedText;
+					document.execCommand = command => {
+						selectedText = command === 'copy' ? (document.activeElement?.value ?? window.getSelection()?.toString()) : undefined;
+						return true;
+					};
+					await copyToClipboard(ownPeerID, 'copied');
+					assert(selectedText === ownPeerID, `execCommand copied ${selectedText}`);
+					assert(!root.ownerDocument.querySelector('body > textarea'), 'The temporary textarea was left in the page');
+					document.execCommand = () => false;
+					await copyToClipboard(ownPeerID, 'copied');
+					const last = get(notifications).at(-1);
+					assert(last?.type === 'error' && last.text === get(t)('common.copyFailed'), `Failure reported ${JSON.stringify(last)}`);
+				} finally {
+					document.execCommand = originalExec;
+					Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard });
+				}
+			});
+		} finally {
+			if (component) await unmount(component);
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			window.peerIDCopyTestResults = results;
+			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

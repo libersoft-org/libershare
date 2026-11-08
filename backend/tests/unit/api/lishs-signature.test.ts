@@ -218,6 +218,22 @@ describe('import keeps the signature', () => {
 		const broken = await sign(manifest({ files: [{ path: 'a.bin', size: 1024, checksums: ['b'.repeat(64), 'c'.repeat(64)] }] }), keyA);
 		await expect(lishs.parseFromJSON({ json: JSON.stringify(broken) })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
 	});
+
+	it('a file preview shows the verified publisher and reports a tampered or loosely shaped signed manifest per item', async () => {
+		const lishs = handlers();
+		const signed = await sign(manifest(), keyA);
+		const unsigned = manifest({ id: 'd0000000-0000-4000-8000-000000000005', version: 1 });
+		const filePath = join(await tempDir('lish-sig-inspect-'), 'mixed.lishs');
+		await writeFile(filePath, JSON.stringify([signed, { ...signed, name: 'Changed' }, { ...signed, extra: 1 }, unsigned]));
+		const [ok, tampered, loose, plain] = (await lishs.inspectFile({ filePath })).items;
+		expect(ok!.error).toBeUndefined();
+		expect(ok!.detail!.publisher).toBe(A);
+		expect(tampered).toMatchObject({ error: ErrorCodes.LISH_INVALID_SIGNATURE });
+		expect(tampered!.detail).toBeUndefined();
+		expect(loose).toMatchObject({ error: ErrorCodes.LISH_INVALID_MANIFEST });
+		expect(plain!.error).toBeUndefined();
+		expect(plain!.detail!.publisher).toBeUndefined();
+	});
 });
 
 describe('export and import keep the signed bytes', () => {
