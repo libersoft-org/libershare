@@ -281,7 +281,7 @@
 <div class="detail">
 	<div class="info-section">
 		<!-- Each row is its own grid, so the label column has a set width rather than the widest label; it shrinks on a narrow screen and the labels wrap. -->
-		<Table columns="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" columnsMobile="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" noBorder oddEven={false}>
+		<Table columns="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" columnsMobile="minmax(0, min(32vh, 40%)) minmax(0, 1fr)" noBorder compact>
 			{@render infoRow($t('network.lishID'), detail.id, 'mono')}
 			{#if detail.name}
 				{@render infoRow($t('common.name'), detail.name)}
