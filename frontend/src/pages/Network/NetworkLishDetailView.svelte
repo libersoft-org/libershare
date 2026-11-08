@@ -153,10 +153,6 @@
 		overflow-wrap: anywhere;
 	}
 
-	.info-section .label {
-		color: var(--disabled-foreground);
-	}
-
 	.info-section .value.description {
 		white-space: pre-wrap;
 	}
