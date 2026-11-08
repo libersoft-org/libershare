@@ -38,8 +38,8 @@ export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions
 		if (stored && stored.publisher !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored.publisher ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
 		// Upsert main record — preserves upload_enabled/download_enabled on conflict
 		db.run(
-			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(lish_id) DO UPDATE SET
 			   name = excluded.name,
 			   description = excluded.description,
@@ -49,8 +49,9 @@ export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions
 			   directory = excluded.directory,
 			   final_directory = excluded.final_directory,
 			   publisher = excluded.publisher,
-			   signature = excluded.signature`,
-			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null, publisher, lish.signature ?? null]
+			   signature = excluded.signature,
+			   version = excluded.version`,
+			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null, publisher, lish.signature ?? null, lish.version ?? null]
 		);
 		// A signed body is replaced whole: a collection it leaves out is empty, never "keep the old
 		// rows", or the stored body would no longer match its signature.

@@ -13,12 +13,12 @@ function fixedKey() {
 }
 
 function manifest(overrides: Record<string, unknown> = {}): ILISH {
-	return { id: 'a0000000-0000-4000-8000-000000000001', name: 'Demo', created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.txt', size: 5, checksums: ['aa', 'bb'] }], ...overrides } as ILISH;
+	return { version: 1, id: 'a0000000-0000-4000-8000-000000000001', name: 'Demo', created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.txt', size: 5, checksums: ['aa', 'bb'] }], ...overrides } as ILISH;
 }
 
 async function sign(lish: ILISH, key?: Awaited<ReturnType<typeof fixedKey>>): Promise<ILISH> {
 	const signer = key ?? (await fixedKey());
-	const withPublisher = { ...lish, publisher: peerIdFromPrivateKey(signer).toString() };
+	const withPublisher = { version: 1, ...lish, publisher: peerIdFromPrivateKey(signer).toString() };
 	return { ...withPublisher, signature: encodeSignature(await signer.sign(signedManifestBytes(withPublisher))) };
 }
 
@@ -29,7 +29,7 @@ describe('verifyManifestSignature', () => {
 		// Ed25519 is deterministic, so the key seed and the manifest pin both values.
 		const lish = await sign(manifest());
 		expect(lish.publisher).toBe('12D3KooWJ1TsijH7H5F74hfAD5XishQz3sxrmAtVY37GtNd9CqYf');
-		expect(lish.signature).toBe('YNV3XRf6Tib4n-_lsuva7tHlQY4R9MfCnn-fj7V-vN_WKVMmcIGlmHiTlYAMpOGorhsBHfi5Bi5tls2m_VnrCQ');
+		expect(lish.signature).toBe('VRIhuzYbZiS-vKvUWSe0pRupIdAbRByyKuhC-KlcTJtU4VhrAM4Aifs_3bdahLPYHzoelOsXgQz579DSKs_1Cw');
 		expect(await verifyManifestSignature(lish)).toEqual({ signed: true, publisher: lish.publisher! });
 	});
 

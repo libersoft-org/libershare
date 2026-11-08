@@ -3,12 +3,12 @@ import { formatUntrustedValue } from './untrusted-value.ts';
 import type { IDirectoryEntry, IFileEntry, ILinkEntry, ILISH } from './lish.ts';
 
 /**
- * Domain prefix of every signed manifest. A signature over these bytes cannot be replayed as a
- * signature over anything else the node key signs (libp2p handshakes, future catalog events).
+ * Manifest format version this code writes and reads. It is part of the signed bytes, so a
+ * signature always says which rules the manifest follows; a newer format is refused, not guessed.
  */
-export const LISH_SIGNATURE_DOMAIN = 'libershare/lish-manifest/v1\n';
+export const LISH_FORMAT_VERSION = 1;
 
-const ROOT_FIELDS = new Set(['id', 'publisher', 'signature', 'name', 'description', 'created', 'chunkSize', 'checksumAlgo', 'directories', 'files', 'links', 'directory', 'finalDirectory', 'chunks']);
+const ROOT_FIELDS = new Set(['version', 'id', 'publisher', 'signature', 'name', 'description', 'created', 'chunkSize', 'checksumAlgo', 'directories', 'files', 'links', 'directory', 'finalDirectory', 'chunks']);
 const DIRECTORY_FIELDS = new Set(['path', 'permissions', 'modified', 'created']);
 const FILE_FIELDS = new Set(['path', 'size', 'permissions', 'modified', 'created', 'checksums']);
 const LINK_FIELDS = new Set(['path', 'target', 'hardlink', 'modified', 'created']);
@@ -78,6 +78,7 @@ function checkSafeCount(where: string, key: string, value: unknown): void {
 export function validateSignedLISHShape(lish: ILISH): void {
 	if (!isPlainObject(lish)) reject('signed manifest is not a plain object');
 	checkFields('manifest', lish as unknown as Record<string, unknown>, ROOT_FIELDS);
+	if (lish.version !== LISH_FORMAT_VERSION) reject(`signed manifest needs version ${LISH_FORMAT_VERSION}, got ${formatUntrustedValue(lish.version)}`);
 	if (typeof lish.publisher !== 'string' || !PEER_ID_SHAPE.test(lish.publisher)) reject(`invalid publisher ${formatUntrustedValue(lish.publisher)}`);
 	if (typeof lish.signature !== 'string' || !SIGNATURE_SHAPE.test(lish.signature)) reject('invalid signature encoding');
 	if (typeof lish.created !== 'string' || !TIMESTAMP.test(lish.created)) reject(`invalid created ${formatUntrustedValue(lish.created)}`);
@@ -137,6 +138,7 @@ function withOptional(base: Record<string, unknown>, source: object, keys: reado
  */
 export function signedManifestPayload(lish: ILISH): Record<string, unknown> {
 	const payload: Record<string, unknown> = {
+		version: lish.version,
 		id: lish.id,
 		publisher: lish.publisher,
 		created: lish.created,
@@ -172,9 +174,13 @@ export function canonicalJSON(value: unknown): string {
 	throw new Error(`canonical JSON cannot encode ${typeof value}`);
 }
 
-/** Exact bytes signed by the publisher and checked by every receiver. */
+/**
+ * Exact bytes signed by the publisher and checked by every receiver: the canonical JSON alone,
+ * `version` inside it. Other things the node key signs never take this form (libp2p signs with
+ * its own prefixes), and a verifier accepts these bytes only as a manifest with a known version.
+ */
 export function signedManifestBytes(lish: ILISH): Uint8Array {
-	return new TextEncoder().encode(LISH_SIGNATURE_DOMAIN + canonicalJSON(signedManifestPayload(lish)));
+	return new TextEncoder().encode(canonicalJSON(signedManifestPayload(lish)));
 }
 
 /** Base64url without padding, the wire form of a signature. */

@@ -14,6 +14,7 @@ interface LISHRow {
 	final_directory: string | null;
 	publisher: string | null;
 	signature: string | null;
+	version: number | null;
 }
 
 interface LISHFileRow {
@@ -32,6 +33,7 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 
 	return {
 		id: row.lish_id,
+		...(row.version != null ? { version: row.version } : {}),
 		name: row.name ?? undefined,
 		description: row.description ?? undefined,
 		created: row.created ?? '',
@@ -110,7 +112,7 @@ function getHaveChunksList(db: Database, internalID: number): string[] {
 
 /** Returns the full stored LISH (including files, directories, links, have-chunks) or null. */
 export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
-	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null; version: number | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 	return buildStoredLISH(db, row);
 }
@@ -271,12 +273,12 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 
 /** Returns all stored LISHs in insertion order (for startup hydration). */
 export function listAllStoredLISHs(db: Database): IStoredLISH[] {
-	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature FROM lishs ORDER BY added ASC').all();
+	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null; version: number | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version FROM lishs ORDER BY added ASC').all();
 	return rows.map(r => buildStoredLISH(db, r));
 }
 
 /** Returns LISHs that have a non-null directory (i.e. are bound to a local dataset path). */
 export function getDatasets(db: Database): IStoredLISH[] {
-	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature FROM lishs WHERE directory IS NOT NULL ORDER BY added ASC').all();
+	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null; version: number | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version FROM lishs WHERE directory IS NOT NULL ORDER BY added ASC').all();
 	return rows.map(r => buildStoredLISH(db, r));
 }

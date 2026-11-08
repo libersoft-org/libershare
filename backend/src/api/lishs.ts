@@ -457,6 +457,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const directory = datasetRootPath(root);
 		// Construct local state explicitly; imported root choices never grant authority.
 		const storedLISH: IStoredLISH = {
+			...(lish.version !== undefined ? { version: lish.version } : {}),
 			id: lish.id,
 			name: lish.name,
 			description: lish.description,

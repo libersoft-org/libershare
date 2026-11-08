@@ -19,7 +19,7 @@ import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
-import { CodedError, ErrorCodes, encodeSignature, signedManifestBytes, type ILISH, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, encodeSignature, LISH_FORMAT_VERSION, signedManifestBytes, type ILISH, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@libp2p/gossipsub/score';
 import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
@@ -3937,7 +3937,8 @@ export class Network {
 	async signManifest(lish: ILISH): Promise<ILISH> {
 		const key = this.signingKey();
 		const { signature: _old, ...unsigned } = lish;
-		const withPublisher: ILISH = { ...unsigned, publisher: peerIdFromPrivateKey(key).toString() };
+		// Signing writes the manifest in the current format, so an item made before `version` existed gets it here.
+		const withPublisher: ILISH = { ...unsigned, version: LISH_FORMAT_VERSION, publisher: peerIdFromPrivateKey(key).toString() };
 		const signature = await key.sign(signedManifestBytes(withPublisher));
 		return { ...withPublisher, signature: encodeSignature(signature) };
 	}

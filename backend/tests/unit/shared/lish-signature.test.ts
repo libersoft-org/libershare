@@ -10,6 +10,7 @@ const SIGNATURE = 'A'.repeat(86);
 
 function signed(overrides: Record<string, unknown> = {}): ILISH {
 	return {
+		version: 1,
 		id: '5f0c6d2e-0000-4000-8000-000000000001',
 		publisher: PUBLISHER,
 		signature: SIGNATURE,
@@ -27,8 +28,8 @@ function signed(overrides: Record<string, unknown> = {}): ILISH {
 describe('signed manifest bytes', () => {
 	it('match a fixed vector', () => {
 		const text = new TextDecoder().decode(signedManifestBytes(signed()));
-		// The domain prefix is spelled out: a changed constant must break the vector too.
-		expect(text).toBe('libershare/lish-manifest/v1\n{"checksumAlgo":"sha256","chunkSize":4,"created":"2026-10-08T10:00:00.000Z","directories":[{"path":"docs","permissions":"755"}],"files":[{"checksums":["aa","bb"],"modified":"2026-10-08T09:00:00Z","path":"docs/a.txt","permissions":"644","size":5}],"id":"5f0c6d2e-0000-4000-8000-000000000001","links":[{"hardlink":false,"path":"docs/l","target":"docs/a.txt"}],"name":"Demo","publisher":"12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo"}');
+		// Nothing precedes the JSON; the format version is the `version` field inside it.
+		expect(text).toBe('{"checksumAlgo":"sha256","chunkSize":4,"created":"2026-10-08T10:00:00.000Z","directories":[{"path":"docs","permissions":"755"}],"files":[{"checksums":["aa","bb"],"modified":"2026-10-08T09:00:00Z","path":"docs/a.txt","permissions":"644","size":5}],"id":"5f0c6d2e-0000-4000-8000-000000000001","links":[{"hardlink":false,"path":"docs/l","target":"docs/a.txt"}],"name":"Demo","publisher":"12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo","version":1}');
 	});
 
 	it('ignore key order, the signature itself and node-local fields', () => {
@@ -116,6 +117,22 @@ describe('signed manifest shape', () => {
 		reject({ ...signed(), publisher: undefined });
 		reject(signed({ publisher: 'not a peer id!' }));
 		reject(signed({ signature: 'short' }));
+	});
+
+	it('requires the current format version when signed', () => {
+		reject({ ...signed(), version: undefined });
+		reject(signed({ version: 2 }));
+		reject(signed({ version: '1' }));
+	});
+
+	it('refuses an unknown format version even unsigned, and reads a missing one as the first', () => {
+		const unsigned = (version: unknown): ILISH => ({ ...signed(), publisher: undefined, signature: undefined, version }) as unknown as ILISH;
+		for (const version of [2, 0, 1.5, '1']) expect(() => validateLISHStructure(unsigned(version), 1 << 30)).toThrow(expect.objectContaining({ code: ErrorCodes.LISH_INVALID_MANIFEST }));
+		for (const version of [1, undefined]) expect(() => validateLISHStructure(unsigned(version), 1 << 30)).not.toThrow();
+	});
+
+	it('changes the signed bytes with the version', () => {
+		expect(signedManifestBytes(signed({ version: 2 }))).not.toEqual(signedManifestBytes(signed()));
 	});
 
 	it('accepts permissions the creator writes without leading zeros', () => {

@@ -32,7 +32,8 @@ describe('Network.signManifest', () => {
 		const signed = await signWith(state, manifest);
 		expect(signed.publisher).toBe(peerIdFromPrivateKey(first).toString());
 		expect(await verifyManifestSignature(signed)).toEqual({ signed: true, publisher: signed.publisher! });
-		expect(Object.keys(signed).sort()).toEqual([...Object.keys(manifest), 'publisher', 'signature'].sort());
+		expect(Object.keys(signed).sort()).toEqual([...new Set([...Object.keys(manifest), 'version', 'publisher', 'signature'])].sort());
+		expect(signed.version).toBe(1);
 	});
 
 	it('replaces an earlier signature instead of keeping a stale one', async () => {

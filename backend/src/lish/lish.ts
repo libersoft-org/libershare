@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue } from '@shared';
+import { type HashAlgorithm, type ILISH, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, LISH_FORMAT_VERSION } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -363,6 +363,7 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 	const created = new Date().toISOString();
 	const lishID = id || globalThis.crypto.randomUUID();
 	const lish: ILISH = {
+		version: LISH_FORMAT_VERSION,
 		id: lishID,
 		name,
 		description,

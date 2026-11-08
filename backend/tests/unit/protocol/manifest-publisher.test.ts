@@ -17,7 +17,7 @@ function manifest(overrides: Record<string, unknown> = {}): ILISH {
 }
 
 async function sign(lish: ILISH, key: typeof keyA): Promise<ILISH> {
-	const withPublisher = { ...lish, publisher: peerIdFromPrivateKey(key).toString() };
+	const withPublisher = { version: 1, ...lish, publisher: peerIdFromPrivateKey(key).toString() };
 	return { ...withPublisher, signature: encodeSignature(await key.sign(signedManifestBytes(withPublisher))) };
 }
 

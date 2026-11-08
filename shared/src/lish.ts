@@ -2,7 +2,7 @@ import { CodedError, ErrorCodes } from './errors.ts';
 import { formatUntrustedValue } from './untrusted-value.ts';
 import { MAX_MANIFEST_DESCRIPTION_BYTES, MAX_MANIFEST_ID_BYTES, MAX_MANIFEST_NAME_BYTES, checkChecksum, checkEntryPath, checkEntryTree, checkTextField } from './manifest-limits.ts';
 import { formatBytes } from './utils.ts';
-import { isSignedLISH, validateSignedLISHShape } from './lish-signature.ts';
+import { LISH_FORMAT_VERSION, isSignedLISH, validateSignedLISHShape } from './lish-signature.ts';
 export type LISHid = string;
 export type ChunkID = string;
 export const SUPPORTED_ALGOS = ['sha256', 'sha384', 'sha512', 'sha512-256', 'sha3-256', 'sha3-384', 'sha3-512', 'blake2b256', 'blake2b512', 'blake2s256'] as const;
@@ -45,6 +45,8 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	// `lish` may come straight off the wire from an untrusted peer — reject malformed shapes with
 	// a coded error rather than letting a raw property access throw a native TypeError.
 	if (!lish || typeof lish !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'manifest is not an object');
+	// A newer format may change what its fields mean, so it is refused rather than read as this one.
+	if (lish.version !== undefined && (!Number.isSafeInteger(lish.version) || lish.version < 1 || lish.version > LISH_FORMAT_VERSION)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, `unsupported manifest version ${formatUntrustedValue(lish.version)}`);
 	checkTextField('id', lish.id, MAX_MANIFEST_ID_BYTES, true);
 	checkTextField('name', lish.name, MAX_MANIFEST_NAME_BYTES, false);
 	checkTextField('description', lish.description, MAX_MANIFEST_DESCRIPTION_BYTES, false);
@@ -142,6 +144,8 @@ export function expectedChunkLength(lish: ILISH, fileIndex: number, chunkIndex: 
 }
 
 export interface ILISH {
+	/** Manifest format version ({@link LISH_FORMAT_VERSION}); required when signed, absent in manifests made before it existed. */
+	version?: number;
 	id: string;
 	name?: string | undefined;
 	description?: string | undefined;
