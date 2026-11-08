@@ -36,7 +36,7 @@ function handlersServing(manifest: IStoredLISH): ReturnType<typeof initLISHnetsH
 	const networks = { getRunningNetwork: () => ({ dialProtocolByPeerId: async () => ({ stream }) }) } as never;
 	return initLISHnetsHandlers(
 		networks,
-		{} as never,
+		{ getPublisher: () => undefined } as never,
 		() => {},
 		{ get: () => undefined } as never,
 		(async () => ({})) as never,
