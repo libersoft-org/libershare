@@ -22,11 +22,11 @@ describe('ByteBudget', () => {
 	it('grants reservations that fit and queues the rest until bytes are released', async () => {
 		const budget = new ByteBudget(() => 10);
 		const first = await granted(budget.reserve(6));
-		const second = budget.reserve(6);
+		const second = budget.reserve(5);
 		expect(await settled(second)).toBe(false);
 		first();
 		expect(await settled(second)).toBe(true);
-		expect(budget.reservedBytes).toBe(6);
+		expect(budget.reservedBytes).toBe(5);
 	});
 
 	it('lets one reservation larger than the whole budget through when nothing else is reserved', async () => {
@@ -39,11 +39,37 @@ describe('ByteBudget', () => {
 		expect(await settled(small)).toBe(true);
 	});
 
+	it('lets two reservations larger than half the budget run together, but not a third', async () => {
+		const budget = new ByteBudget(() => 64);
+		const first = await granted(budget.reserve(64));
+		await granted(budget.reserve(64));
+		const third = budget.reserve(64);
+		expect(await settled(third)).toBe(false);
+		expect(budget.reservedBytes).toBe(128);
+		first();
+		expect(await settled(third)).toBe(true);
+		expect(budget.reservedBytes).toBe(128);
+	});
+
+	it('grants a large reservation beside small ones without waiting for an empty budget', async () => {
+		const budget = new ByteBudget(() => 64);
+		for (let i = 0; i < 60; i++) await granted(budget.reserve(1));
+		await granted(budget.reserve(64));
+		expect(budget.reservedBytes).toBe(124);
+	});
+
+	it('leaves reservations up to half the budget bounded by the capacity', async () => {
+		const budget = new ByteBudget(() => 64);
+		await granted(budget.reserve(32));
+		await granted(budget.reserve(32));
+		expect(await settled(budget.reserve(32))).toBe(false);
+	});
+
 	it('keeps first-come order: a waiting large reservation holds back smaller later ones', async () => {
 		const budget = new ByteBudget(() => 10);
-		const held = await granted(budget.reserve(4));
+		const held = await granted(budget.reserve(9));
 		const large = budget.reserve(8);
-		const small = budget.reserve(2);
+		const small = budget.reserve(1);
 		expect(await settled(large)).toBe(false);
 		expect(await settled(small)).toBe(false);
 		held();
@@ -53,14 +79,14 @@ describe('ByteBudget', () => {
 
 	it('removes a cancelled head waiter and lets the next one in at once', async () => {
 		const budget = new ByteBudget(() => 10);
-		await granted(budget.reserve(4));
+		await granted(budget.reserve(9));
 		const abort = new AbortController();
 		const large = budget.reserve(8, abort.signal);
-		const small = budget.reserve(2);
+		const small = budget.reserve(1);
 		abort.abort(new Error('stopped'));
 		await expect(large).rejects.toThrow('stopped');
 		expect(await settled(small)).toBe(true);
-		expect(budget.reservedBytes).toBe(6);
+		expect(budget.reservedBytes).toBe(10);
 	});
 
 	it('refuses an already aborted signal without reserving anything', async () => {

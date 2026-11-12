@@ -8,8 +8,10 @@ interface Waiter {
 /**
  * A FIFO budget of bytes shared by concurrent work. A reservation is granted when it fits under
  * the capacity, or when nothing else is reserved — one item larger than the whole budget still
- * gets through alone instead of waiting forever. A reservation that does not fit holds every
- * later one behind it, so a large item cannot be starved by a stream of small ones.
+ * gets through alone instead of waiting forever. An item larger than half the budget may also
+ * run beside reservations no larger than itself, so two large items overlap instead of taking
+ * turns; that bounds the reserved bytes at twice the largest item. A reservation that does not
+ * fit holds every later one behind it, so a large item cannot be starved by a stream of small ones.
  *
  * Not `async-mutex`'s Semaphore: its release walks every unit of free capacity, which for a
  * budget counted in bytes is tens of millions of steps per release, and a queued acquire there
@@ -70,7 +72,7 @@ export class ByteBudget {
 	}
 
 	private fits(bytes: number): boolean {
-		return this.used === 0 || this.used + bytes <= this.capacity();
+		return this.used === 0 || this.used + bytes <= Math.max(this.capacity(), 2 * bytes);
 	}
 
 	private pump(): void {

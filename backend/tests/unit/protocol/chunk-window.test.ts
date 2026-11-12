@@ -57,7 +57,7 @@ describe('ByteBudget.refresh', () => {
 		const budget = new ByteBudget(() => capacity);
 		const first = await budget.reserve(3);
 		let granted = false;
-		const waiting = budget.reserve(3).then(release => {
+		const waiting = budget.reserve(2).then(release => {
 			granted = true;
 			return release;
 		});
