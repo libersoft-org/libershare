@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Download detail toolbar navigation</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import { downloads } from '/src/scripts/downloads.ts';
+		import DownloadDetail from '/src/pages/Download/DownloadDetail.svelte';
+
+		const lishID = 'example-lish-id';
+		const root = document.querySelector('#page');
+		const results = [];
+		const copied = [];
+		const calls = [];
+		const originalCall = wsClient.call;
+		Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => void copied.push(text) } });
+		wsClient.call = async method => {
+			calls.push(method);
+			return true;
+		};
+		const download = { id: lishID, name: 'Example', directory: '/data/example', progress: 50, size: '2.00 MB', rawTotalSize: 2097152, status: 'idle', downloadEnabled: false, uploadEnabled: false, downloadPeers: 0, uploadPeers: 0, downloadSpeed: '0 B/s', rawDownloadSpeed: 0, uploadSpeed: '0 B/s', rawUploadSpeed: 0, files: [], verifiedChunks: 1, totalChunks: 2, chunkSize: 1048576, totalUploadedBytes: 0, totalDownloadedBytes: 0 };
+		async function settle() {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		}
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		function toolbar() {
+			return [...root.querySelectorAll('.toolbar .button')];
+		}
+		function selectedLabel() {
+			return root.querySelector('.toolbar .button.selected')?.textContent.trim();
+		}
+		async function press(...actions) {
+			for (const action of actions) {
+				emit(action);
+				await settle();
+			}
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		let component;
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.common?.copyLishID)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			const label = key => get(t)(key);
+			downloads.set([download]);
+			component = mount(DownloadDetail, { target: root, props: { areaID: 'detail', lishID } });
+			await settle();
+
+			await test('the first toolbar button is selected on open and left/right walk the row', async () => {
+				assert(selectedLabel() === label('common.back'), `Selected on open: ${selectedLabel()}`);
+				await press('left');
+				assert(selectedLabel() === label('common.back'), 'Left from the first button moved the selection');
+				await press('right');
+				assert(selectedLabel() === label('common.copyLishID'), `Right selected ${selectedLabel()}`);
+				for (let step = 0; step < toolbar().length + 2; step++) await press('right');
+				assert(selectedLabel() === label('common.delete'), `Right past the end selected ${selectedLabel()}`);
+			});
+			await test('Enter runs the selected action and a click runs the clicked one', async () => {
+				for (let step = 0; step < toolbar().length; step++) await press('left');
+				await press('right', 'confirmDown', 'confirmUp');
+				assert(copied.length === 1 && copied[0] === lishID, `Enter copied ${JSON.stringify(copied)}`);
+				toolbar()
+					.find(button => button.textContent.trim() === label('downloads.findPeers'))
+					.click();
+				await settle();
+				assert(calls.includes('transfer.findPeers'), 'Click did not call findPeers');
+			});
+			await test('down enters the info table and up comes back to the same button', async () => {
+				await press('down');
+				assert(!selectedLabel(), 'Toolbar kept its selection after leaving it');
+				assert(root.querySelector('tr.selected, .row.selected, [class*="selected"]'), 'Nothing is selected below the toolbar');
+				await press('up');
+				assert(selectedLabel() === label('common.copyLishID'), `Back in the toolbar on ${selectedLabel()}`);
+			});
+			await test('the selection stays on its slot when verify swaps to stop-verify', async () => {
+				for (let step = 0; step < toolbar().length && selectedLabel() !== label('downloads.verify'); step++) await press('right');
+				assert(selectedLabel() === label('downloads.verify'), `Could not reach verify: ${selectedLabel()}`);
+				downloads.set([{ ...download, status: 'verifying' }]);
+				await settle();
+				assert(selectedLabel() === label('downloads.stopVerify'), `After the swap: ${selectedLabel()}`);
+				await press('confirmDown', 'confirmUp');
+				assert(calls.includes('lishs.stopVerify'), `Enter did not stop the verification: ${calls.join(',')}`);
+				downloads.set([download]);
+				await settle();
+			});
+			await test('the toolbar works again after the export page is closed', async () => {
+				for (let step = 0; step < toolbar().length && selectedLabel() !== label('common.export'); step++) await press('right');
+				assert(selectedLabel() === label('common.export'), `Could not reach export: ${selectedLabel()}`);
+				await press('confirmDown', 'confirmUp');
+				assert(toolbar().length === 0, 'Export page did not replace the detail');
+				await press('back');
+				await settle();
+				assert(toolbar().length > 0, 'Back did not return to the detail');
+				assert(selectedLabel() === label('common.export'), `Selected after returning: ${selectedLabel()}`);
+				await press('right');
+				assert(selectedLabel() === label('downloads.moveData'), `Right after returning selected ${selectedLabel()}`);
+			});
+		} finally {
+			if (component) await unmount(component);
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
