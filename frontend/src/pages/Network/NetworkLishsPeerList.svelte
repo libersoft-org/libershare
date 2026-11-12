@@ -133,14 +133,13 @@
 	}
 
 	// y=0 — top bar (Back, Add to sharing, Details)
-	// y=1 — title block (no nav items)
-	// y=2+i — peer rows
+	// y=1.. — LISH detail rows once loaded, then the peer rows from peerRowsBaseY
 	createNavArea(() => ({
 		areaID,
 		position,
 		onBack,
 		activate: true,
-		listRange: (): [number, number] => [2, Math.max(2, 2 + row.peers.length)],
+		listRange: (): [number, number] => [1, Number.MAX_SAFE_INTEGER],
 	}));
 </script>
 
@@ -162,7 +161,7 @@
 		align-items: center;
 		gap: 2vh;
 		width: 1200px;
-		max-width: calc(94vw);
+		max-width: min(94vw, 100%);
 		padding: 2vh;
 		border-radius: 2vh;
 		box-sizing: border-box;
@@ -239,7 +238,7 @@
 
 	@media (max-width: 1199px) {
 		.container {
-			max-width: calc(100vw);
+			max-width: 100%;
 			margin: 0;
 			border-radius: 0;
 			box-shadow: none;

@@ -329,9 +329,40 @@
 					emit('down');
 					await settle();
 					assert(root.querySelector('.row.selected')?.textContent.includes('peer-1'), 'Down from the last file did not reach the peer list');
+					// Home and End span the detail rows and the peers alike.
+					emit('home');
+					await settle();
+					assert(!root.querySelector('.row.selected')?.textContent.includes('peer-1'), 'Home stayed on the peer row');
+					emit('end');
+					await settle();
+					assert(root.querySelector('.row.selected')?.textContent.includes('peer-1'), 'End did not return to the last peer');
 				} finally {
 					await unmount(page);
 					api.lishnets.getPeerLish = original;
+				}
+			});
+			await test('the search peer list pages through the peers before a detail is loaded', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				const peers = Array.from({ length: 12 }, (_, i) => ({ peerID: `peer-${String(i).padStart(2, '0')}`, networkID: 'net-1' }));
+				const page = mount(NetworkLishsPeerList, { target: root, props: { areaID: 'lish-info-search-paging', row: { id: peerDetail.id, name: peerDetail.name, peers }, networks: [], onBack: () => {}, onOpenPeer: () => {} } });
+				const selected = () => root.querySelector('.row.selected')?.textContent ?? '';
+				try {
+					await settle();
+					emit('down');
+					await settle();
+					assert(selected().includes('peer-00'), `Down did not reach the first peer: ${selected()}`);
+					emit('pageDown');
+					await settle();
+					assert(selected().includes('peer-10'), `PageDown selected ${selected()}`);
+					emit('end');
+					await settle();
+					assert(selected().includes('peer-11'), `End selected ${selected()}`);
+					emit('home');
+					await settle();
+					assert(selected().includes('peer-00'), `Home selected ${selected()}`);
+				} finally {
+					await unmount(page);
 				}
 			});
 			await test('an empty .lishs says so and offers no import', async () => {
@@ -352,7 +383,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
