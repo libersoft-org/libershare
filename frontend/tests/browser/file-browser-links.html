@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>File browser links</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import '/src/scripts/language.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import FileBrowser from '/src/pages/FileBrowser/FileBrowser.svelte';
+
+		const root = document.querySelector('#page');
+		const results = [];
+		const originalCall = wsClient.call;
+		const entries = [
+			{ name: 'linked-dir', path: '/data/linked-dir', type: 'directory', link: true },
+			{ name: 'dangling', path: '/data/dangling', type: 'file', link: true, broken: true },
+			{ name: 'plain.txt', path: '/data/plain.txt', type: 'file', size: 3 },
+		];
+		wsClient.call = async (method, params) => {
+			if (method === 'fs.info') return { platform: 'linux', separator: '/', home: '/data', roots: ['/'], localFilesystem: true };
+			if (method === 'fs.list') return { path: params?.path ?? '/data', entries };
+			if (method.startsWith('events.')) return true;
+			throw new Error(`Unexpected API: ${method}`);
+		};
+		async function settle() {
+			for (let i = 0; i < 3; i++) {
+				await tick();
+				await new Promise(resolve => setTimeout(resolve, 0));
+			}
+		}
+		function row(name) {
+			return [...root.querySelectorAll('.row')].find(item => item.textContent.includes(name));
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		let component;
+		try {
+			component = mount(FileBrowser, { target: root, props: { areaID: 'links', position: [0, 0], initialPath: '/data' } });
+			for (let i = 0; i < 20 && !row('dangling'); i++) await settle();
+			await test('a broken link is dimmed and working entries are not', async () => {
+				const broken = row('dangling');
+				if (!broken) throw new Error(`Rows: ${[...root.querySelectorAll('.row')].map(item => item.textContent.trim()).join(' | ')}`);
+				if (!broken.classList.contains('dimmed')) throw new Error('The broken link is not dimmed');
+				for (const name of ['linked-dir', 'plain.txt']) if (row(name)?.classList.contains('dimmed')) throw new Error(`${name} is dimmed`);
+			});
+		} finally {
+			if (component) await unmount(component);
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 1 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

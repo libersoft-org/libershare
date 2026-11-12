@@ -1242,11 +1242,11 @@
 								</div>
 							{:else if error}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{:else}
 								{#each filteredItems as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 								{/each}
 							{/if}
 						</div>
