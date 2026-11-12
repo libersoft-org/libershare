@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productName } from '@shared';
 	import { t } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
@@ -170,7 +171,7 @@
 				{#each footerWidgets as widget, i}
 					<TableRow position={[0, footerWidgetStartY + i]}>
 						<TableCell>{getWidgetLabel(widget, $t)}</TableCell>
-						<TableCell wrap><span class="description">{$t('help.footerWidgets.' + widget)}</span></TableCell>
+						<TableCell wrap><span class="description">{$t('help.footerWidgets.' + widget, { productName })}</span></TableCell>
 					</TableRow>
 				{/each}
 			</Table>
