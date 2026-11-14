@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { encode as lpEncode, decode as lpDecode } from 'it-length-prefixed';
 import { Uint8ArrayList } from 'uint8arraylist';
 import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
 import { encode as codecEncode, decode as codecDecode } from '../../../src/protocol/codec.ts';
 import { LISHClient, getEnabledUploads, handleLISHProtocol, removeUploadState } from '../../../src/protocol/lish-protocol.ts';
-import { useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
+import { Settings, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
 
 /**
  * A node whose message limit is below a manifest's size cannot send it. It must answer with a
@@ -12,8 +15,19 @@ import { useNetworkSettings, type SettingsData } from '../../../src/settings.ts'
  * "unreachable", and the asking side must see that code.
  */
 
-// The effective limit is max(maxMessageSize, maxChunkSize + 1 MiB headroom), so about 1 MiB here.
-useNetworkSettings(() => ({ maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: 64 * 1024, maxChunkSize: 1024 }) as SettingsData['network']);
+let defaultsDir: string;
+let defaults: SettingsData['network'];
+beforeAll(async () => {
+	defaultsDir = mkdtempSync(join(tmpdir(), 'lish-manifest-too-large-'));
+	defaults = (await Settings.create(defaultsDir)).getDefaults().network;
+	// The effective limit is max(maxMessageSize, maxChunkSize + 1 MiB headroom), so about 1 MiB here.
+	useNetworkSettings(() => ({ ...defaults, maxMessageSize: 64 * 1024, maxChunkSize: 1024 }));
+});
+// The limits are process-wide: later test files must get the defaults back.
+afterAll(() => {
+	useNetworkSettings(() => defaults);
+	rmSync(defaultsDir, { recursive: true, force: true });
+});
 
 const LISH_ID = 'b1000000-0000-4000-8000-000000000001';
 
