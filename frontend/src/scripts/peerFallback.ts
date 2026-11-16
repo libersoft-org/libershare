@@ -38,6 +38,10 @@ export function isRetryablePeerError(error: unknown): boolean {
 	return code.startsWith('PEER_') || PEER_MANIFEST_REFUSALS.has(code);
 }
 
+function isOverLimitChunkSize(error: unknown): boolean {
+	return (error as { code?: unknown } | null)?.code === 'LISH_CHUNK_SIZE_TOO_LARGE';
+}
+
 const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_INVALID_MANIFEST', 'LISH_CHUNK_SIZE_TOO_LARGE']);
 
 /**
@@ -52,7 +56,9 @@ const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNA
  * attempt starts, then `downloaded` or `unavailable` with its outcome. Statuses are not
  * cleared when the loop ends — the outcome stays visible — except after a non-retryable
  * error, where the in-flight peer gets `null`: the failure is local, so branding the peer
- * unavailable would be wrong. Callers reset all statuses when they start a new run.
+ * unavailable would be wrong. An over-limit chunk size moves on to the next peer but also
+ * gets `null`, as every honest peer of such a LISH answers the same. Callers reset all
+ * statuses when they start a new run.
  */
 export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID: string, networkID: string) => Promise<T>, onStatus?: (index: number, status: PeerAttemptStatus | null) => void, deadlineMs: number = FALLBACK_DEADLINE_MS): Promise<T> {
 	let lastErr: unknown = new Error('no peers');
@@ -70,7 +76,7 @@ export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID
 				onStatus?.(i, null);
 				throw e;
 			}
-			onStatus?.(i, 'unavailable');
+			onStatus?.(i, isOverLimitChunkSize(e) ? null : 'unavailable');
 			lastErr = e;
 		}
 	}

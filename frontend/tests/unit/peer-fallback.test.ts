@@ -173,7 +173,9 @@ test('an over-limit answer moves on to a peer serving the real manifest', async 
 	expect(asked).toEqual([PEERS[0]!.peerID, PEERS[1]!.peerID]);
 });
 
-test('an over-limit answer from every peer ends with that error', async () => {
+test('an over-limit answer from every peer ends with that error and brands no row unavailable', async () => {
+	// Every honest peer of a LISH whose chunk size is over the local limit answers the same,
+	// so the rows must not claim the peers are unavailable.
 	const threePeers: PeerRef[] = Array.from({ length: 3 }, (_, i) => ({ peerID: `peer-${i}`, networkID: 'net-1' }));
 	const statuses: Array<[number, PeerAttemptStatus | null]> = [];
 	const err = await withPeerFallback(
@@ -184,5 +186,12 @@ test('an over-limit answer from every peer ends with that error', async () => {
 		(i, s) => statuses.push([i, s])
 	).catch(e => e);
 	expect((err as { code?: string }).code).toBe('LISH_CHUNK_SIZE_TOO_LARGE');
-	expect(statuses.filter(([, s]) => s === 'unavailable').map(([i]) => i)).toEqual([0, 1, 2]);
+	expect(statuses).toEqual([
+		[0, 'downloading'],
+		[0, null],
+		[1, 'downloading'],
+		[1, null],
+		[2, 'downloading'],
+		[2, null],
+	]);
 });
