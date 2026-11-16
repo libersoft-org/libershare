@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
+	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import { api } from '../../scripts/api.ts';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
@@ -19,27 +19,70 @@
 		onUp?: () => void;
 	}
 	let { areaID, filePath, fileName, position, onBack, onUp }: Props = $props();
-	// Calculate sub-area positions
-	let toolbarPosition = $derived({ x: position.x + CONTENT_OFFSETS.top.x, y: position.y + CONTENT_OFFSETS.top.y });
-	let editorPosition = $derived({ x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y });
-	let toolbarAreaID = $derived(`${areaID}-toolbar`);
-	let editorAreaID = $derived(`${areaID}-editor`);
 	let content = $state('');
 	let originalContent = $state('');
 	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
+	// Text that failed to load is not entered from the toolbar: saving it would overwrite the file.
+	let loadFailed = $state(false);
 	let inputRef: ReturnType<typeof Input> | undefined = $state();
-	let selectedToolbarIndex = $state(0);
-	let toolbarActive = $derived($activeArea === toolbarAreaID);
-	let editorActive = $derived($activeArea === editorAreaID);
 	let hasChanges = $derived(content !== originalContent);
 	let toolbarActions = $derived([
 		{ id: 'save', label: $t('common.save'), icon: '/img/check.svg', disabled: !hasChanges || saving },
 		{ id: 'close', label: $t('common.back'), icon: '/img/back.svg', disabled: false },
 	]);
-	let unregisterToolbar: (() => void) | null = null;
-	let unregisterEditor: (() => void) | null = null;
+
+	// One NavArea: the toolbar buttons on row 0 and the text below them on row 1.
+	const TEXT_POS: NavPos = [0, 1];
+	// The toolbar button the text returns to, so up and back land where the toolbar was left.
+	let toolbarPos: NavPos = [0, 0];
+	let fromText = false;
+	const nav = createNavArea(() => ({
+		areaID,
+		position: { x: position.x + CONTENT_OFFSETS.main.x, y: position.y + CONTENT_OFFSETS.main.y },
+		activate: true,
+		initialPosition: [0, 0],
+		onBack: handleBack,
+		onSelect(pos: NavPos): void {
+			if (pos[1] === TEXT_POS[1]) {
+				fromText = true;
+				return;
+			}
+			if (fromText) {
+				fromText = false;
+				leaveText();
+				return;
+			}
+			toolbarPos = pos;
+		},
+		// Up is only left over on the toolbar row: the text moves up to the toolbar.
+		onUp(): boolean {
+			onUp?.();
+			return true;
+		},
+		// Down stays put on both rows; without loaded text the toolbar has nothing below it.
+		onDown: (): boolean => true,
+		// The ends of the toolbar keep the selection; from the text the area layout decides.
+		onLeft: (): boolean => !textSelected(),
+		onRight: (): boolean => !textSelected(),
+	}));
+
+	function textSelected(): boolean {
+		return nav.controller.isSelected(TEXT_POS);
+	}
+
+	function leaveText(): void {
+		inputRef?.blur();
+		nav.controller.select(toolbarPos);
+	}
+
+	function handleBack(): void {
+		if (textSelected()) {
+			fromText = false;
+			leaveText();
+		} else onBack();
+	}
 
 	async function loadFile(): Promise<void> {
 		loading = true;
@@ -49,6 +92,7 @@
 			originalContent = content;
 		} catch (e) {
 			error = translateError(e);
+			loadFailed = true;
 		} finally {
 			loading = false;
 		}
@@ -82,65 +126,8 @@
 		}
 	}
 
-	const toolbarAreaHandlers = {
-		up(): boolean {
-			onUp?.();
-			return true;
-		},
-		down(): boolean {
-			if (!loading && !error) activateArea(editorAreaID);
-			return true;
-		},
-		left(): boolean {
-			if (selectedToolbarIndex > 0) selectedToolbarIndex--;
-			return true;
-		},
-		right(): boolean {
-			if (selectedToolbarIndex < toolbarActions.length - 1) selectedToolbarIndex++;
-			return true;
-		},
-		confirmUp(): void {
-			const action = toolbarActions[selectedToolbarIndex]!;
-			if (!action.disabled) handleToolbarAction(action.id);
-		},
-		back(): void {
-			onBack();
-		},
-	};
-
-	const editorAreaHandlers = {
-		up(): boolean {
-			inputRef?.blur();
-			activateArea(toolbarAreaID);
-			return true;
-		},
-		down(): boolean {
-			return true;
-		},
-		left(): boolean {
-			return false;
-		},
-		right(): boolean {
-			return false;
-		},
-		confirmUp(): void {
-			inputRef?.focus();
-		},
-		back(): void {
-			inputRef?.blur();
-			activateArea(toolbarAreaID);
-		},
-	};
-
 	onMount(() => {
 		loadFile();
-		unregisterToolbar = useArea(toolbarAreaID, toolbarAreaHandlers, toolbarPosition);
-		unregisterEditor = useArea(editorAreaID, editorAreaHandlers, editorPosition);
-		activateArea(toolbarAreaID);
-		return () => {
-			unregisterToolbar?.();
-			unregisterEditor?.();
-		};
 	});
 </script>
 
@@ -201,7 +188,7 @@
 <div class="editor">
 	<div class="toolbar">
 		{#each toolbarActions as action, index (action.id)}
-			<Button label={action.label} icon={action.icon} selected={toolbarActive && selectedToolbarIndex === index} disabled={action.disabled} onConfirm={() => handleToolbarAction(action.id)} />
+			<Button label={action.label} icon={action.icon} position={[index, 0]} disabled={action.disabled} onConfirm={() => handleToolbarAction(action.id)} />
 		{/each}
 	</div>
 	{#if error}
@@ -214,7 +201,7 @@
 			</div>
 		{:else}
 			<div class="editor-wrapper">
-				<Input bind:this={inputRef} bind:value={content} multiline={true} rows={30} fontSize="1.8vh" padding="1vh" flex={true} selected={editorActive} />
+				<Input bind:this={inputRef} bind:value={content} multiline={true} rows={30} fontSize="1.8vh" padding="1vh" flex={true} position={loadFailed ? undefined : TEXT_POS} />
 			</div>
 		{/if}
 	</div>

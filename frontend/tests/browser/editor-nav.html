@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Editor navigation</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import Editor from '/src/pages/Editor/Editor.svelte';
+
+		const root = document.querySelector('#page');
+		const results = [];
+		const calls = [];
+		const originalCall = wsClient.call;
+		let readFails = false;
+		let backs = 0;
+		let ups = 0;
+		wsClient.call = async (method, params) => {
+			calls.push({ method, params });
+			if (method === 'fs.readText') {
+				if (readFails) throw new Error('read failed');
+				return { content: 'first line' };
+			}
+			if (method === 'fs.writeText') return { success: true };
+			return true;
+		};
+		async function settle() {
+			await tick();
+			await new Promise(resolve => setTimeout(resolve, 0));
+			await tick();
+		}
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		function selectedButton() {
+			return root.querySelector('.toolbar .button.selected')?.textContent.trim();
+		}
+		function textSelected() {
+			return !!root.querySelector('.editor-wrapper .input-field.selected');
+		}
+		function textarea() {
+			return root.querySelector('.editor-wrapper textarea');
+		}
+		async function press(...actions) {
+			for (const action of actions) {
+				emit(action);
+				await settle();
+			}
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		async function open() {
+			const component = mount(Editor, { target: root, props: { areaID: 'editor', filePath: '/data/notes.txt', fileName: 'notes.txt', position: { x: 0, y: 0 }, onBack: () => backs++, onUp: () => ups++ } });
+			await settle();
+			await settle();
+			return component;
+		}
+		let component;
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.common?.save)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			const label = key => get(t)(key);
+			component = await open();
+
+			await test('the first toolbar button is selected on open and the ends of the toolbar keep the selection', async () => {
+				assert(selectedButton() === label('common.save'), `Selected on open: ${selectedButton()}`);
+				await press('left');
+				assert(selectedButton() === label('common.save'), `Left from the first button selected ${selectedButton()}`);
+				await press('right');
+				assert(selectedButton() === label('common.back'), `Right selected ${selectedButton()}`);
+				await press('right');
+				assert(selectedButton() === label('common.back'), `Right past the end selected ${selectedButton()}`);
+			});
+			await test('down enters the text and up returns to the button the toolbar was left on', async () => {
+				await press('down');
+				assert(textSelected() && !selectedButton(), 'Down did not move into the text');
+				await press('up');
+				assert(selectedButton() === label('common.back'), `Up from the text selected ${selectedButton()}`);
+			});
+			await test('back in the text returns to the toolbar, back on the toolbar leaves the editor', async () => {
+				await press('left', 'down', 'back');
+				assert(selectedButton() === label('common.save') && backs === 0, `Back from the text: ${selectedButton()}, backs ${backs}`);
+				await press('back');
+				assert(backs === 1, `Back on the toolbar called onBack ${backs} times`);
+			});
+			await test('up on the toolbar is handed to the parent and keeps the selection', async () => {
+				await press('up');
+				assert(ups === 1, `onUp called ${ups} times`);
+				assert(selectedButton() === label('common.save'), `Selected after up: ${selectedButton()}`);
+			});
+			await test('down in the text stays in the text', async () => {
+				await press('down', 'down');
+				assert(textSelected(), 'Down from the text left it');
+			});
+			await test('Enter focuses the text and Save writes what was typed', async () => {
+				await press('confirmDown', 'confirmUp');
+				assert(document.activeElement === textarea(), 'Enter did not focus the text');
+				textarea().value = 'changed text';
+				textarea().dispatchEvent(new Event('input', { bubbles: true }));
+				textarea().blur();
+				await settle();
+				await press('up');
+				assert(selectedButton() === label('common.save'), `Up from the text selected ${selectedButton()}`);
+				await press('confirmDown', 'confirmUp');
+				await settle();
+				const write = calls.find(call => call.method === 'fs.writeText');
+				assert(write?.params.content === 'changed text', `Save wrote ${JSON.stringify(write?.params)}`);
+			});
+			await test('a click on a toolbar button runs it', async () => {
+				[...root.querySelectorAll('.toolbar .button')].find(button => button.textContent.trim() === label('common.back')).click();
+				await settle();
+				assert(backs === 2, `Click on Back called onBack ${backs} times in total`);
+			});
+			await test('text that failed to load is not entered from the toolbar', async () => {
+				await unmount(component);
+				component = undefined;
+				readFails = true;
+				component = await open();
+				assert(root.querySelector('.editor-wrapper textarea'), 'The text is not shown after the load failed');
+				await press('down');
+				assert(!textSelected() && selectedButton() === label('common.save'), `Down after a failed load: text ${textSelected()}, button ${selectedButton()}`);
+			});
+		} finally {
+			if (component) await unmount(component);
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
