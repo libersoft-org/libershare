@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { FsEntry } from '@shared';
@@ -25,7 +26,7 @@ try {
 }
 if (fileLinkDenied) console.warn('fs-list-links: file symlink test skipped, EPERM (needs Developer Mode or admin on Windows)');
 
-describe('fs.list with links', () => {
+describe('fs.list and fs.delete with links', () => {
 	let entries: Map<string, FsEntry>;
 
 	beforeAll(async () => {
@@ -69,5 +70,17 @@ describe('fs.list with links', () => {
 	it.skipIf(fileLinkDenied)('reports a linked file as a file', () => {
 		expect(entries.get('file-link.txt')).toMatchObject({ type: 'file', link: true, size: 5 });
 		expect(entries.get('file-link.txt')?.broken).toBeUndefined();
+	});
+
+	// A linked folder now opens like any other, so "Delete directory" can be run on the link path itself.
+	it('deleting a linked directory removes only the link and keeps the target files', async () => {
+		const target = join(root, 'delete-target');
+		const link = join(root, 'delete-link');
+		await mkdir(join(target, 'sub'), { recursive: true });
+		await writeFile(join(target, 'sub', 'keep.txt'), 'keep');
+		await symlink(target, link, dirLinkType);
+		await initFsHandlers().delete({ path: link });
+		expect(existsSync(link)).toBe(false);
+		expect(await readFile(join(target, 'sub', 'keep.txt'), 'utf8')).toBe('keep');
 	});
 });
