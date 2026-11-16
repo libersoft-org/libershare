@@ -299,7 +299,7 @@ A requester accepts an error reply only as a plain object whose own `error` is o
 2. **Want** — broadcast `want` with the LISH ID; while seeders are missing, the `want` may be re-broadcast periodically (receivers rate-limit their responses, see above)
 3. **Have** — seeders reply with unicast `announceHave` (chunk availability + dial addresses)
 4. **Manifest** — the downloader dials a seeder and fetches the manifest via `getLish` (skipped when it already has the structure, e.g. from an imported `.lish` file)
-5. **Chunks** — the downloader requests chunks from multiple seeders in parallel via `getChunk`, pipelining several requests on each seeder's stream (up to `network.chunkWindowBytes` per seeder and `network.chunkInflightBudgetBytes` across all downloads), and verifies every chunk against its manifest checksum
+5. **Chunks** — the downloader requests chunks from multiple seeders in parallel via `getChunk`, pipelining several requests on each seeder's stream (up to `network.chunkWindowBytes` per seeder and `network.chunkInflightBudgetBytes` across all downloads; chunks larger than half of that budget may run two at a time, up to twice their own size), and verifies every chunk against its manifest checksum
 6. **Resume** — verified chunks are persisted; a restarted download requests only the missing chunks
 7. **Seed** — a peer can serve every chunk it has verified, even before its own download completes (partial seeding)
 
