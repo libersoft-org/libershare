@@ -42,39 +42,48 @@ function oversizedManifest(): IStoredLISH {
 	} as IStoredLISH;
 }
 
+/** A manifest within the limit, as an honest peer serves it. */
+function validManifest(): IStoredLISH {
+	return { id: 'test-probe-lish', created: new Date().toISOString(), chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['h1'] }] } as IStoredLISH;
+}
+
 /** Stream stub that answers any request with one length-prefixed manifest frame. */
-function cannedStream(): any {
-	const frame = lpEncode.single(codecEncode({ manifest: oversizedManifest() })).subarray();
+function cannedStream(manifest: IStoredLISH): any {
+	const frame = lpEncode.single(codecEncode({ manifest })).subarray();
 	async function* source() {
 		yield frame;
 	}
 	return { status: 'open', send() {}, close: async () => {}, abort() {}, [Symbol.asyncIterator]: source };
 }
 
-/** Network stub listing one topic peer whose dial hands back the canned stream. */
+/** Network stub listing topic peers whose dial hands back a stream answering with that peer's manifest. */
 class ProbeNetwork {
+	private readonly manifests: Map<string, () => IStoredLISH>;
+	constructor(manifests: Map<string, () => IStoredLISH>) {
+		this.manifests = manifests;
+	}
 	subscribe(): void {}
 	unsubscribeHandler(): void {}
 	async broadcast(): Promise<void> {}
 	getTopicPeers(): string[] {
-		return ['peer-probe-0001'];
+		return [...this.manifests.keys()];
 	}
-	async dialProtocolByPeerId(): Promise<{ stream: unknown; connectionType: string }> {
-		return { stream: cannedStream(), connectionType: 'direct' };
+	async dialProtocolByPeerId(peerID: string): Promise<{ stream: unknown; connectionType: string }> {
+		return { stream: cannedStream(this.manifests.get(peerID)!()), connectionType: 'direct' };
 	}
 	isRunning(): boolean {
 		return true;
 	}
 }
 
-function makeDownloader(): any {
+function makeDownloader(manifests = new Map([['peer-probe-0001', oversizedManifest]]), added: IStoredLISH[] = []): any {
 	const ds = {
 		getMissingChunks: () => [],
 		getAllChunkCount: () => 2,
-		add: () => {},
+		add: (lish: IStoredLISH) => added.push(lish),
 		isChunkDownloaded: () => false,
 	};
-	const dl = new Downloader('/tmp/dl-probe', new ProbeNetwork() as never, ds as never, 'net-001');
+	const dl = new Downloader('/tmp/dl-probe', new ProbeNetwork(manifests) as never, ds as never, 'net-001');
 	priv(dl)['lishID'] = 'test-probe-lish';
 	return dl;
 }
@@ -97,7 +106,27 @@ test('a probe answered with an over-limit manifest does not fail a running downl
 	expect(priv(dl)['errorCode']).toBeUndefined();
 });
 
-test('the same answer is terminal while the manifest is still missing', async () => {
+test('an over-limit answer from one topic peer does not stop the next peer serving the manifest', async () => {
+	chunkLimit = CHUNK_LIMIT;
+	const added: IStoredLISH[] = [];
+	const dl = makeDownloader(
+		new Map([
+			['peer-probe-0001', oversizedManifest],
+			['peer-probe-0002', validManifest],
+		]),
+		added
+	);
+	priv(dl)['state'] = 'awaiting-manifest';
+	priv(dl)['needsManifest'] = true;
+	priv(dl)['lish'] = null;
+
+	await priv(dl)['probeTopicPeers']();
+
+	expect(priv(dl)['errorCode']).toBeUndefined();
+	expect(added.map(lish => lish.chunkSize)).toEqual([1024]);
+});
+
+test('the same answer is terminal while the manifest is still missing and no other peer is left', async () => {
 	chunkLimit = CHUNK_LIMIT;
 	const dl = makeDownloader();
 	priv(dl)['state'] = 'awaiting-manifest';
