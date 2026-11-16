@@ -12,7 +12,7 @@ import { encode as lpEncode } from 'it-length-prefixed';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
-import { ErrorCodes, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
 
 const CHUNK_LIMIT = 1024 * 1024;
 /** The chunk limit is read live from settings, so a test sets it by moving this. */
@@ -137,4 +137,33 @@ test('the same answer is terminal while the manifest is still missing and no oth
 
 	expect(priv(dl)['state']).toBe('error');
 	expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+});
+
+test('an over-limit answer from the last connected peer does not fail the download while a probe is about to store a valid manifest', async () => {
+	chunkLimit = CHUNK_LIMIT;
+	const added: IStoredLISH[] = [];
+	const dl = makeDownloader(new Map([['peer-probe-0002', validManifest]]), added);
+	priv(dl)['state'] = 'awaiting-manifest';
+	priv(dl)['needsManifest'] = true;
+	priv(dl)['lish'] = null;
+	const mutex = priv(dl)['workMutex'];
+	const original = mutex.runExclusive.bind(mutex);
+	let probe!: Promise<unknown>;
+	// Answers only once a probe holding a valid manifest waits for the lock this loop holds.
+	const connected = {
+		async requestManifest(): Promise<IStoredLISH> {
+			const probeWaiting = new Promise<void>(resolve => (mutex.runExclusive = (fn: () => Promise<unknown>) => (resolve(), original(fn))));
+			probe = priv(dl)['probeTopicPeers']();
+			await probeWaiting;
+			throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE, '8.00 MB > 1.00 MB');
+		},
+		async close(): Promise<void> {},
+	};
+	priv(dl)['peerManager'].peers.set('peer-connected-01', connected);
+
+	await dl.doWork();
+	expect(priv(dl)['errorCode']).toBeUndefined();
+	await probe;
+	expect(priv(dl)['errorCode']).not.toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+	expect(added.map(lish => lish.chunkSize)).toEqual([1024]);
 });
