@@ -44,7 +44,7 @@
 		}
 		let component;
 		try {
-			component = mount(FileBrowser, { target: root, props: { areaID: 'links', position: [0, 0], initialPath: '/data' } });
+			component = mount(FileBrowser, { target: root, props: { areaID: 'links', position: { x: 0, y: 0 }, initialPath: '/data' } });
 			for (let i = 0; i < 20 && !row('dangling'); i++) await settle();
 			await test('a broken link is dimmed and working entries are not', async () => {
 				const broken = row('dangling');
