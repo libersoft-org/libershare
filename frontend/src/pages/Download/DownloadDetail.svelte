@@ -161,7 +161,13 @@
 	function restoreDetailAreas(): void {
 		toolbarNav.resume();
 		// By action, not by slot: the sub-page may have changed which buttons the toolbar shows.
-		toolbarNav.controller.select([Math.max(0, toolbarActions.findIndex(action => action.id === openedByAction)), 0]);
+		toolbarNav.controller.select([
+			Math.max(
+				0,
+				toolbarActions.findIndex(action => action.id === openedByAction)
+			),
+			0,
+		]);
 		registerDetailAreas();
 	}
 
