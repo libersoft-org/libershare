@@ -677,6 +677,8 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		const runB = cdB.run();
 		await Bun.sleep(20);
 		expect(budget.reservedBytes).toBe(CHUNK_SIZE);
+		// A second chunk fits beside B's, so fill that too: download A must really wait.
+		const second = await budget.reserve(CHUNK_SIZE);
 
 		// Download A waits for budget, then gets disabled.
 		let disabled = false;
@@ -695,7 +697,9 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		pcA.notifyStateChange();
 		const ended = await Promise.race([runA.then(() => true), Bun.sleep(1000).then(() => false)]);
 		expect(ended).toBe(true);
+		expect(budget.reservedBytes).toBe(2 * CHUNK_SIZE);
 
+		second();
 		holder.abort();
 		await pmB.closeAllAwait('test done', true);
 		await Promise.race([runB, Bun.sleep(1000)]);
