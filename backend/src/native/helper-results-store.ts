@@ -42,7 +42,7 @@ export function helperRequestHash(request: NetworkHelperRequest | string): strin
 export function helperResultsDirectory(): string {
 	if (process.platform === 'win32') return join(windowsProgramDataPath(), productName, 'helper-results');
 	if (process.platform === 'darwin') return `/Library/Application Support/${productName}/helper-results`;
-	if (process.platform === 'linux') return '/var/lib/libershare-helper-results';
+	if (process.platform === 'linux') return `/var/lib/${productName.toLowerCase()}-helper-results`;
 	throw new Error('Privileged helper results are unavailable on this platform');
 }
 
