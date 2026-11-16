@@ -12,7 +12,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -119,8 +119,8 @@
 	let removeFileBrowserBackHandler: (() => void) | null = null;
 
 	// The toolbar is a declarative NavArea: its buttons register themselves by [x, y].
-	// The button that opened a sub-page; remembered on confirm, so a mouse click counts too.
-	let toolbarPos: NavPos = [0, 0];
+	// The action that opened a sub-page; remembered on confirm, so a mouse click counts too.
+	let openedByAction: DownloadToolbarActionID = 'back';
 	const toolbarNav = createNavArea(() => ({
 		areaID: `${areaID}-toolbar`,
 		position,
@@ -160,7 +160,8 @@
 	/** Bring the areas back after a sub-page closes, with the toolbar on the button that opened it. */
 	function restoreDetailAreas(): void {
 		toolbarNav.resume();
-		toolbarNav.controller.select(toolbarPos);
+		// By action, not by slot: the sub-page may have changed which buttons the toolbar shows.
+		toolbarNav.controller.select([Math.max(0, toolbarActions.findIndex(action => action.id === openedByAction)), 0]);
 		registerDetailAreas();
 	}
 
@@ -258,8 +259,8 @@
 		onBack?.();
 	}
 
-	function confirmToolbarAction(index: number, actionID: DownloadToolbarActionID): void {
-		toolbarPos = [index, 0];
+	function confirmToolbarAction(actionID: DownloadToolbarActionID): void {
+		openedByAction = actionID;
 		handleToolbarAction(actionID);
 	}
 
@@ -807,7 +808,7 @@
 	<div class="detail">
 		<div class="toolbar">
 			{#each toolbarActions as action, index (index)}
-				<Button icon={action.icon} label={action.label} position={[index, 0]} onConfirm={() => confirmToolbarAction(index, action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
+				<Button icon={action.icon} label={action.label} position={[index, 0]} onConfirm={() => confirmToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
 			{/each}
 		</div>
 		{#if deleteError}

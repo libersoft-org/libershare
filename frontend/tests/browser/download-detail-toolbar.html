@@ -92,7 +92,7 @@
 			await test('down enters the info table and up comes back to the same button', async () => {
 				await press('down');
 				assert(!selectedLabel(), 'Toolbar kept its selection after leaving it');
-				assert(root.querySelector('tr.selected, .row.selected, [class*="selected"]'), 'Nothing is selected below the toolbar');
+				assert(root.querySelector('.info.selected .row') === root.querySelector('.info .row.selected'), 'The first info row is not the selected one');
 				await press('up');
 				assert(selectedLabel() === label('common.copyLishID'), `Back in the toolbar on ${selectedLabel()}`);
 			});
@@ -130,11 +130,32 @@
 				await settle();
 				assert(selectedLabel() === label('common.export'), `Selected after returning: ${selectedLabel()}`);
 			});
+			await test('a sub-page that hides its own button returns to the first one, not to a neighbour', async () => {
+				toolbar()
+					.find(button => button.textContent.trim() === label('downloads.moveData'))
+					.click();
+				await settle();
+				assert(toolbar().length === 0, 'Click did not open the move page');
+				downloads.set([{ ...download, status: 'verifying' }]);
+				await press('back');
+				await settle();
+				assert(selectedLabel() === label('common.back'), `Selected after returning: ${selectedLabel()}`);
+				downloads.set([download]);
+				await settle();
+			});
+			await test('cancelling the delete dialog returns to the delete button', async () => {
+				for (let step = 0; step < toolbar().length + 2; step++) await press('right');
+				assert(selectedLabel() === label('common.delete'), `Could not reach delete: ${selectedLabel()}`);
+				await press('confirmDown', 'confirmUp');
+				assert(!selectedLabel(), 'The toolbar kept its selection under the dialog');
+				await press('back');
+				assert(selectedLabel() === label('common.delete'), `Selected after cancelling: ${selectedLabel()}`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 6 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
