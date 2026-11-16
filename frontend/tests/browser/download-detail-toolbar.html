@@ -119,11 +119,22 @@
 				await press('right');
 				assert(selectedLabel() === label('downloads.moveData'), `Right after returning selected ${selectedLabel()}`);
 			});
+			await test('a clicked button is the selected one after its sub-page closes', async () => {
+				for (let step = 0; step < toolbar().length; step++) await press('left');
+				toolbar()
+					.find(button => button.textContent.trim() === label('common.export'))
+					.click();
+				await settle();
+				assert(toolbar().length === 0, 'Click did not open the export page');
+				await press('back');
+				await settle();
+				assert(selectedLabel() === label('common.export'), `Selected after returning: ${selectedLabel()}`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 5 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 6 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

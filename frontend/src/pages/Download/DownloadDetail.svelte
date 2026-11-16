@@ -119,12 +119,12 @@
 	let removeFileBrowserBackHandler: (() => void) | null = null;
 
 	// The toolbar is a declarative NavArea: its buttons register themselves by [x, y].
+	// The button that opened a sub-page; remembered on confirm, so a mouse click counts too.
 	let toolbarPos: NavPos = [0, 0];
 	const toolbarNav = createNavArea(() => ({
 		areaID: `${areaID}-toolbar`,
 		position,
 		onBack: handleBack,
-		onSelect: pos => (toolbarPos = pos),
 		onDown(): string | false {
 			if (!download) return false;
 			selectedInfoIndex = 0;
@@ -256,6 +256,11 @@
 
 	function handleBack(): void {
 		onBack?.();
+	}
+
+	function confirmToolbarAction(index: number, actionID: DownloadToolbarActionID): void {
+		toolbarPos = [index, 0];
+		handleToolbarAction(actionID);
 	}
 
 	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
@@ -802,7 +807,7 @@
 	<div class="detail">
 		<div class="toolbar">
 			{#each toolbarActions as action, index (index)}
-				<Button icon={action.icon} label={action.label} position={[index, 0]} onConfirm={() => handleToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
+				<Button icon={action.icon} label={action.label} position={[index, 0]} onConfirm={() => confirmToolbarAction(index, action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
 			{/each}
 		</div>
 		{#if deleteError}
