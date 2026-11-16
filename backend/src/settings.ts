@@ -50,7 +50,8 @@ export interface SettingsData {
 		chunkWindowBytes: number;
 		/**
 		 * Bytes of chunk requests in flight across every download in the process, including
-		 * verified chunks waiting for a write retry. Applies to running downloads.
+		 * verified chunks waiting for a write retry. Chunks larger than half of it may reach twice
+		 * their own size instead. Applies to running downloads.
 		 */
 		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;
