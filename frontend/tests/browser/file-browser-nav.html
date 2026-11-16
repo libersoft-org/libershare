@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>File browser navigation</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { translations, t } from '/src/scripts/language.ts';
+		import { emit, emitTypedChar } from '/src/scripts/areas.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import FileBrowser from '/src/pages/FileBrowser/FileBrowser.svelte';
+
+		const root = document.querySelector('#page');
+		const results = [];
+		const calls = [];
+		const saved = [];
+		const originalCall = wsClient.call;
+		const listings = {
+			'/home/user': [
+				{ name: 'docs', path: '/home/user/docs', type: 'directory' },
+				{ name: 'games', path: '/home/user/games', type: 'directory' },
+				{ name: 'alpha.txt', path: '/home/user/alpha.txt', type: 'file', size: 10 },
+				{ name: 'beta.txt', path: '/home/user/beta.txt', type: 'file', size: 10 },
+				{ name: 'gamma.txt', path: '/home/user/gamma.txt', type: 'file', size: 10 },
+			],
+			'/home/user/docs': [{ name: 'notes.txt', path: '/home/user/docs/notes.txt', type: 'file', size: 5 }],
+			'/home': [{ name: 'user', path: '/home/user', type: 'directory' }],
+		};
+		wsClient.call = async (method, params) => {
+			calls.push({ method, params });
+			if (method === 'fs.info') return { platform: 'linux', separator: '/', home: '/home/user', roots: ['/'], localFilesystem: true };
+			if (method === 'fs.list') return { path: params.path, entries: listings[params.path] ?? [] };
+			if (method === 'fs.readText') return { content: 'hello' };
+			if (method === 'fs.exists') return { exists: false };
+			if (method === 'fs.writeText' || method === 'fs.mkdir') return { success: true };
+			return true;
+		};
+		async function settle() {
+			for (let round = 0; round < 3; round++) {
+				await tick();
+				await new Promise(resolve => setTimeout(resolve, 0));
+			}
+		}
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		function rows() {
+			return [...root.querySelectorAll('.items .row')];
+		}
+		function selectedRow() {
+			return rows().findIndex(row => row.classList.contains('selected'));
+		}
+		function selectedRowText() {
+			return rows()[selectedRow()]?.textContent ?? '';
+		}
+		function selectedButton() {
+			return root.querySelector('.directory-actions .button.selected')?.textContent.trim();
+		}
+		function selectedAction() {
+			return root.querySelector('.actions .button.selected')?.textContent.trim();
+		}
+		async function press(...actions) {
+			for (const action of actions) {
+				emit(action);
+				await settle();
+			}
+		}
+		async function walkToolbarTo(text) {
+			for (let step = 0; step < 10 && selectedButton() !== text; step++) await press('left');
+			for (let step = 0; step < 10 && selectedButton() !== text; step++) await press('right');
+			assert(selectedButton() === text, `Could not reach ${text}: ${selectedButton()}`);
+		}
+		async function selectRowNamed(name) {
+			await press('home');
+			for (let step = 0; step < rows().length && !selectedRowText().includes(name); step++) await press('down');
+			assert(selectedRowText().includes(name), `Could not reach the row ${name}: ${selectedRowText()}`);
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		async function open(props = {}) {
+			const component = mount(FileBrowser, { target: root, props: { areaID: 'fb', position: { x: 0, y: 0 }, initialPath: '/home/user', ...props } });
+			await settle();
+			return component;
+		}
+		let component;
+		try {
+			await new Promise(resolve => {
+				const unsubscribe = translations.subscribe(value => {
+					if (value.fileBrowser?.showNameFilter)
+						queueMicrotask(() => {
+							unsubscribe();
+							resolve();
+						});
+				});
+			});
+			const label = key => get(t)(key);
+			component = await open();
+
+			await test('the list has the keyboard on open and the list keys walk its rows', async () => {
+				assert(rows().length >= 5 && selectedRow() === 0, `On open: ${rows().length} rows, selected ${selectedRow()}`);
+				await press('down');
+				assert(selectedRow() === 1, `Down selected ${selectedRow()}`);
+				await press('end');
+				assert(selectedRow() === rows().length - 1, `End selected ${selectedRow()}`);
+				await press('home');
+				assert(selectedRow() === 0, `Home selected ${selectedRow()}`);
+				await press('pageDown');
+				assert(selectedRow() === Math.min(rows().length - 1, 10), `Page down selected ${selectedRow()}`);
+				await press('pageUp');
+				assert(selectedRow() === 0, `Page up selected ${selectedRow()}`);
+			});
+			await test('up from the first row goes to the toolbar, which keeps its button when the list is entered and left again', async () => {
+				await press('up');
+				assert(selectedButton() === label('common.newDirectory') && selectedRow() === -1, `Up from the first row: ${selectedButton()}, row ${selectedRow()}`);
+				await press('right', 'down');
+				assert(selectedRow() === 0 && !selectedButton(), `Down from the toolbar: row ${selectedRow()}`);
+				await press('up');
+				assert(selectedButton() === label('fileBrowser.renameDirectory'), `Back on the toolbar: ${selectedButton()}`);
+			});
+			await test('up from the toolbar goes to the path breadcrumb and down from it returns to the toolbar', async () => {
+				await press('up');
+				assert(root.querySelector('.breadcrumb .item.selected') && !selectedButton(), 'Up from the toolbar did not reach the path');
+				await press('down');
+				assert(selectedButton() === label('fileBrowser.renameDirectory'), `Down from the path: ${selectedButton()}`);
+				await press('down');
+				assert(selectedRow() === 0, `Down from the toolbar: row ${selectedRow()}`);
+			});
+			await test('Enter on a directory opens it and back returns to the parent on that directory', async () => {
+				await selectRowNamed('docs');
+				await press('confirmDown', 'confirmUp');
+				assert(
+					rows().some(row => row.textContent.includes('notes.txt')),
+					'The directory did not open'
+				);
+				await press('back');
+				assert(selectedRowText().includes('docs') && rows().some(row => row.textContent.includes('alpha.txt')), `Back selected ${selectedRowText()}`);
+			});
+			await test('Enter on a file opens the actions panel, which keeps the keyboard until back', async () => {
+				await selectRowNamed('alpha.txt');
+				await press('confirmDown', 'confirmUp');
+				assert(selectedAction() === label('fileBrowser.openFile'), `The panel opened on ${selectedAction()}`);
+				await press('left', 'right', 'up');
+				assert(selectedAction() === label('fileBrowser.openFile'), `The panel let the selection go: ${selectedAction()}`);
+				await press('down');
+				assert(selectedAction() === label('fileBrowser.editFile'), `Down in the panel: ${selectedAction()}`);
+				await press('back');
+				assert(!root.querySelector('.actions') && selectedRowText().includes('alpha.txt'), `After back: panel ${!!root.querySelector('.actions')}, row ${selectedRowText()}`);
+			});
+			await test('right from the list stays on the list while no panel is open', async () => {
+				await press('right');
+				assert(selectedRowText().includes('alpha.txt') && !selectedButton() && !root.querySelector('.actions'), `Right moved the selection: ${selectedRowText()}`);
+			});
+			await test('typed letters select the first row that starts with them', async () => {
+				emitTypedChar('b');
+				await settle();
+				assert(selectedRowText().includes('beta.txt'), `Typing b selected ${selectedRowText()}`);
+			});
+			await test('the name filter opens focused from the toolbar and down and up leave it', async () => {
+				await press('home', 'up');
+				await walkToolbarTo(label('fileBrowser.showNameFilter'));
+				await press('confirmDown', 'confirmUp');
+				const input = root.querySelector('.name-filter-row input');
+				assert(input && document.activeElement === input, 'The name filter is not focused');
+				assert(root.querySelector('.name-filter-row .input-field.selected'), 'The name filter is not selected');
+				input.blur();
+				await press('down');
+				assert(selectedRow() === 0, `Down from the name filter: row ${selectedRow()}`);
+				await press('up');
+				assert(root.querySelector('.name-filter-row .input-field.selected'), 'Up from the list did not return to the name filter');
+				await press('up');
+				assert(selectedButton() === label('fileBrowser.hideNameFilter'), `Up from the name filter: ${selectedButton()}`);
+				await press('confirmDown', 'confirmUp');
+				assert(!root.querySelector('.name-filter-row'), 'The name filter did not close');
+			});
+			await test('a dialog keeps the keyboard and cancelling it returns to the toolbar on the same button', async () => {
+				await walkToolbarTo(label('common.newDirectory'));
+				await press('confirmDown', 'confirmUp');
+				assert(root.querySelector('.dialog'), 'The new directory dialog did not open');
+				await press('back');
+				assert(!root.querySelector('.dialog') && selectedButton() === label('common.newDirectory'), `After cancelling: dialog ${!!root.querySelector('.dialog')}, button ${selectedButton()}`);
+			});
+			await test('the editor opens from the actions panel and closing it returns to the list on that file', async () => {
+				await press('down');
+				await selectRowNamed('alpha.txt');
+				await press('confirmDown', 'confirmUp', 'down', 'confirmDown', 'confirmUp');
+				assert(root.querySelector('.editor') && calls.some(call => call.method === 'fs.readText' && call.params.path === '/home/user/alpha.txt'), 'The editor did not open the file');
+				await press('back');
+				await settle();
+				assert(!root.querySelector('.editor') && selectedRowText().includes('alpha.txt'), `After the editor: ${selectedRowText()}`);
+			});
+			await test('the filter panel opens on the current filter and back returns to the toolbar', async () => {
+				await press('home', 'up');
+				await walkToolbarTo('*.*');
+				await press('confirmDown', 'confirmUp');
+				assert(selectedAction() === '*.*', `The filter panel opened on ${selectedAction()}`);
+				await press('down');
+				assert(selectedAction() === label('fileBrowser.customFilter'), `Down in the filter panel: ${selectedAction()}`);
+				await press('back');
+				assert(!root.querySelector('.actions') && selectedButton() === '*.*', `After back: panel ${!!root.querySelector('.actions')}, button ${selectedButton()}`);
+			});
+			await test('in save mode the file name row sits between the toolbar and the list', async () => {
+				await unmount(component);
+				component = undefined;
+				component = await open({ saveFileName: 'out.txt', saveContent: 'data', onSaveComplete: path => saved.push(path) });
+				await press('up');
+				assert(root.querySelector('.save-filename-row .input-field.selected'), 'Up from the list did not reach the file name');
+				await press('right');
+				assert(root.querySelector('.save-filename-row .button.selected'), 'Right did not reach the Save button');
+				await press('up');
+				assert(selectedButton() === label('common.newDirectory'), `Up from the file name row: ${selectedButton()}`);
+				await press('down');
+				assert(root.querySelector('.save-filename-row .button.selected'), 'Down from the toolbar did not return to the Save button');
+				await press('down');
+				assert(selectedRow() === 0, `Down from the file name row: row ${selectedRow()}`);
+				await press('up', 'confirmDown', 'confirmUp');
+				await settle();
+				assert(saved[0] === '/home/user/out.txt', `Save wrote ${JSON.stringify(saved)}`);
+			});
+		} finally {
+			if (component) await unmount(component);
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 12 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
