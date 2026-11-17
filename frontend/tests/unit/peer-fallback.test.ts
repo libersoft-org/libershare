@@ -182,3 +182,22 @@ test('an over-limit answer from every peer ends with that error and brands no ro
 		[2, null],
 	]);
 });
+
+test('an over-limit answer stays the error at the end when a later peer cannot be reached', async () => {
+	// The limit is what the user can act on; an unreachable peer after it must not hide it.
+	const statuses: Array<[number, PeerAttemptStatus | null]> = [];
+	const err = await withPeerFallback(
+		PEERS,
+		async peerID => {
+			throw codedError(peerID === PEERS[0]!.peerID ? 'LISH_CHUNK_SIZE_TOO_LARGE' : 'PEER_UNREACHABLE');
+		},
+		(i, s) => statuses.push([i, s])
+	).catch(e => e);
+	expect((err as { code?: string }).code).toBe('LISH_CHUNK_SIZE_TOO_LARGE');
+	expect(statuses).toEqual([
+		[0, 'downloading'],
+		[0, null],
+		[1, 'downloading'],
+		[1, 'unavailable'],
+	]);
+});
