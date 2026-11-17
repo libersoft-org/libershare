@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { datasetCopyBytes } from '../../../src/lish/dataset-transfer.ts';
 import { createLISH } from '../../../src/lish/lish.ts';
 
 const dirLinkType = process.platform === 'win32' ? 'junction' : 'dir';
@@ -36,6 +37,26 @@ describe('createLISH symlinks', () => {
 
 			expect(lish.links ?? []).toEqual(withFileLinks ? [expect.objectContaining({ path: 'inside.bin', target: 'sub/a.bin' })] : []);
 			expect(JSON.stringify(lish.links ?? [])).not.toContain(base.replaceAll('\\', '/'));
+			// The receiver's own rule: every link must resolve to a file of the manifest.
+			expect(() => datasetCopyBytes(lish, { kind: 'explicit', path: shared })).not.toThrow();
+		} finally {
+			await rm(base, { recursive: true, force: true });
+		}
+	});
+
+	it('points a link to a hardlinked copy at the file the manifest lists', async () => {
+		const base = await mkdtemp(join(tmpdir(), 'create-links-'));
+		try {
+			await mkdir(join(base, 'sub'));
+			await writeFile(join(base, 'a.bin'), 'data');
+			await link(join(base, 'a.bin'), join(base, 'b.bin'));
+			if (!(await fileSymlink(join(base, 'b.bin'), join(base, 'sub', 'to-copy.bin')))) return;
+
+			const lish = await createLISH(base, 'links', 1024, 'sha256');
+
+			const target = lish.links?.find(entry => entry.path === 'sub/to-copy.bin')?.target;
+			expect(lish.files?.map(file => file.path)).toContain(target);
+			expect(() => datasetCopyBytes(lish, { kind: 'explicit', path: base })).not.toThrow();
 		} finally {
 			await rm(base, { recursive: true, force: true });
 		}

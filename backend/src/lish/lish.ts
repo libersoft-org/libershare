@@ -432,6 +432,9 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
 		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
+		// A symlink to a hardlinked copy would name a link entry, which a receiver cannot resolve: point it at the file both names share.
+		const hardlinkTargets = new Map(links.filter(link => link.hardlink).map(link => [link.path, link.target]));
+		for (const link of links) if (!link.hardlink) link.target = hardlinkTargets.get(link.target) ?? link.target;
 		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));
 		files.sort((a, b) => a.path.localeCompare(b.path));
