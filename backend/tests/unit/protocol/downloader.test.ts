@@ -4,6 +4,8 @@ import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
+import { encode as codecEncode } from '../../../src/protocol/codec.ts';
+import { encode as lpEncode } from 'it-length-prefixed';
 import { MockDataServer, MockLISHClient, makeLISH, makeMissingChunk, priv } from './downloader-test-helpers.ts';
 describe('Downloader – static speed limit', () => {
 	afterEach(() => {
@@ -728,6 +730,67 @@ describe('Downloader – oversized manifest across peers', () => {
 		expect(peers.size).toBe(0); // the over-limit peer dropped
 		expect(priv(dl)['state']).toBe('error');
 		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+	});
+});
+
+describe('Downloader – manifest without files', () => {
+	it('drops the peer instead of asking it again on every pass, and takes the manifest from the next one', async () => {
+		const ds = new MockDataServer();
+		const dl = new Downloader('/tmp/dl-no-files', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-no-files-lish';
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const empty = new MockLISHClient();
+		const { files: _files, ...withoutFiles } = makeLISH();
+		empty.requestManifestResult = withoutFiles;
+		const good = new MockLISHClient();
+		good.requestManifestResult = makeLISH();
+		peers.set('peer-no-files-01', empty);
+		peers.set('peer-valid-00001', good);
+
+		await dl.doWork();
+
+		expect(peers.has('peer-no-files-01')).toBe(false);
+		expect(ds.addedLishs.length).toBe(1);
+	});
+
+	it('drops a probed peer whose manifest has no files instead of opening a download stream to it', async () => {
+		const { files: _files, ...withoutFiles } = makeLISH();
+		const frame = lpEncode.single(codecEncode({ manifest: withoutFiles })).subarray();
+		const dials: string[] = [];
+		const net = Object.assign(new MockNetwork(), {
+			getTopicPeers: () => ['peer-no-files-02'],
+			dialProtocolByPeerId: async (peerID: string) => {
+				dials.push(peerID);
+				const stream = {
+					status: 'open',
+					send() {},
+					close: async () => {},
+					abort() {},
+					async *[Symbol.asyncIterator]() {
+						yield frame;
+					},
+				};
+				return { stream, connectionType: 'direct' };
+			},
+		});
+		const dl = new Downloader('/tmp/dl-no-files-probe', net as never, new MockDataServer() as never, 'net-001');
+		const p = priv(dl);
+		p['needsManifest'] = true;
+		p['lishID'] = withoutFiles.id;
+		const peerManager = p['peerManager'] as { has(peerID: string): boolean; isDropped(peerID: string): boolean; hasCapacity(): boolean };
+		// The per-LISH peer cap comes from the live network settings, which other test files replace; it is not under test here.
+		peerManager.hasCapacity = () => true;
+
+		await (p['probeTopicPeers'] as () => Promise<void>).call(dl);
+
+		expect(peerManager.isDropped('peer-no-files-02')).toBe(true);
+		expect(peerManager.has('peer-no-files-02')).toBe(false);
+		// Only the manifest request: a second dial would open a chunk stream to a peer with nothing to give.
+		expect(dials).toEqual(['peer-no-files-02']);
 	});
 });
 

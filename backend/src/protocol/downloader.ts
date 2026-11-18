@@ -596,6 +596,11 @@ export class Downloader {
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
 					if (this.destroyed) return;
+					if (manifest && !manifest.files?.length) {
+						// Nothing to download from it; asking it again on every pass never ends.
+						this.peerManager.remove(peerID, 'drop');
+						continue;
+					}
 					if (manifest && manifest.files && manifest.files.length > 0) {
 						// The manifest is sanitized (no peer-supplied local paths). Keep our own
 						// local state: the download directory, and any post-download move target
@@ -811,12 +816,13 @@ export class Downloader {
 				}
 				if (this.destroyed) return;
 
-				if (!manifest) {
+				// A manifest without files has nothing to download; probing it again never ends.
+				if (!manifest || !manifest.files?.length) {
 					this.peerManager.remove(peerID, 'drop');
 					continue;
 				}
 
-				if (this.needsManifest && manifest.files && manifest.files.length > 0) {
+				if (this.needsManifest) {
 					// Protect manifest import with workMutex to prevent race with doWork()
 					await this.workMutex.runExclusive(async () => {
 						if (this.destroyed || !this.needsManifest) return; // double-check after acquiring lock
