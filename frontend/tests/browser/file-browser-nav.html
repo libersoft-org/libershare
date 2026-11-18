@@ -274,11 +274,31 @@
 				await press('home');
 				assert(selectedRow() === 0 && items.scrollTop === 0, `Home left the list at ${items.scrollTop} with row ${selectedRow()} selected`);
 			});
+			await test('the selected row stays in view when the rows change height', async () => {
+				const items = root.querySelector('.items');
+				await press('end', 'pageUp');
+				assert(selectedRowText().includes('entry-19989.txt'), `Selected "${selectedRowText()}"`);
+				// Rows are sized in vh: taller rows in a shorter list stand in for a resized window.
+				const style = document.head.appendChild(document.createElement('style'));
+				style.textContent = '.items .row { padding-top: 30px !important; padding-bottom: 30px !important; }';
+				root.style.height = '500px';
+				const inView = () => {
+					const row = rows()[selectedRow()]?.getBoundingClientRect();
+					const box = items.getBoundingClientRect();
+					return !!row && row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+				};
+				for (let wait = 0; wait < 40 && !inView(); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+				const shown = inView();
+				const firstDrawn = rows()[0]?.textContent.trim();
+				style.remove();
+				root.style.height = '600px';
+				assert(shown, `After the resize the list starts at "${firstDrawn}" and the selected row is not in view`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 16 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

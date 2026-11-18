@@ -144,12 +144,13 @@
 		void listHeight;
 		const row = !loading && filteredItems.length > 0 ? itemsEl?.querySelector('.row') : null;
 		if (!row || !itemsEl) return;
-		const firstMeasure = rowHeight === 0;
-		rowHeight = row.getBoundingClientRect().height;
+		const height = row.getBoundingClientRect().height;
+		const resized = height !== rowHeight;
+		rowHeight = height;
 		// The list may have been cut short or replaced without a scroll event.
 		listScrollTop = itemsEl.scrollTop;
-		// The first folder is drawn before the height is known, so its selection could not be scrolled to yet.
-		if (firstMeasure) tick().then(scrollToSelected);
+		// The scroll position stands for a row only at the height it was set with: unknown for the first folder, other after a resize.
+		if (resized) tick().then(scrollToSelected);
 	});
 
 	function handleNameFilterChange(_value: string): void {
