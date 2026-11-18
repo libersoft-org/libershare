@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
@@ -222,6 +222,75 @@ test('a direct download refuses another valid signed revision and keeps the stor
 		expect(dataServer.getMissingChunks(ID)).toHaveLength(1);
 		expect(handlers.getActiveTransfers()).toEqual([]);
 	} finally {
+		db.close();
+	}
+});
+
+for (const kind of ['explicit', 'derived'] as const) {
+	test(`a direct download refuses a signed dataset at a stored ${kind} root outside managed downloads`, async () => {
+		initDownloadState(new Set(), () => {});
+		initUploadState(new Set(), () => {});
+		const dataDir = await tempDir('lish-local-data-');
+		const base = await tempDir('lish-local-source-');
+		const component = 'published';
+		const directory = join(base, component);
+		await mkdir(directory);
+		const filePath = join(directory, 'a.bin');
+		await writeFile(filePath, 'source file changed since publication');
+		const signed = await sign(manifest, keyA);
+		const lishPath = join(dataDir, 'signed.lish');
+		await writeFile(lishPath, JSON.stringify(signed));
+		const db = openDatabase(dataDir);
+		const dataServer = new DataServer(db);
+		dataServer.addDataset({ ...signed, directory }, kind === 'explicit' ? { kind, path: directory } : { kind, base, component });
+		const networks = { getRunningNetwork: () => new MockNetwork(), getNetwork: () => ({ pauseLISHProtocolHandlersAndDrain: async () => {} }) } as unknown as Networks;
+		const handlers = initTransferHandlers(
+			networks,
+			dataServer,
+			dataDir,
+			() => {},
+			() => {}
+		);
+		try {
+			await expect(handlers.download({ networkID: 'net-a', lishPath }, undefined)).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
+			expect(await readFile(filePath, 'utf8')).toBe('source file changed since publication');
+			expect(dataServer.get(ID)).toMatchObject({ signature: signed.signature, directory });
+		} finally {
+			await handlers.clearAll();
+			db.close();
+		}
+	});
+}
+
+test('initializing a signed dataset keeps its stored final directory and root', async () => {
+	initDownloadState(new Set(), () => {});
+	initUploadState(new Set(), () => {});
+	const dataDir = await tempDir('lish-local-data-');
+	const finalDirectory = await tempDir('lish-local-final-');
+	const finalRoot = { kind: 'explicit', path: finalDirectory } as const;
+	const signed = await sign(manifest, keyA);
+	const lishPath = join(dataDir, 'signed.lish');
+	await writeFile(lishPath, JSON.stringify(signed));
+
+	const db = openDatabase(dataDir);
+	const dataServer = new DataServer(db);
+	dataServer.add({ ...signed, finalDirectory });
+	dataServer.setDatasetRoot(ID, finalRoot, true);
+	const networks = { getRunningNetwork: () => new MockNetwork(), getNetwork: () => ({ pauseLISHProtocolHandlersAndDrain: async () => {} }) } as unknown as Networks;
+	const handlers = initTransferHandlers(
+		networks,
+		dataServer,
+		dataDir,
+		() => {},
+		() => {}
+	);
+	try {
+		const { downloadDir } = await handlers.download({ networkID: 'net-a', lishPath }, undefined);
+		expect(dataServer.get(ID)).toMatchObject({ signature: signed.signature, directory: downloadDir, finalDirectory });
+		expect(dataServer.getDatasetRoot(ID, true)).toEqual(finalRoot);
+		expect(dataServer.getMissingChunks(ID)).toHaveLength(1);
+	} finally {
+		await handlers.clearAll();
 		db.close();
 	}
 });

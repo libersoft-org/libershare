@@ -67,6 +67,10 @@ A LISH may be signed by its publisher. `publisher` and `signature` are either bo
 
 **Verification.** Every place that admits a manifest (import, a `.lish` file to download, a manifest from a peer, a preview) verifies the signature when present. A node that already stores a LISH ID keeps its publisher for the life of the item: a manifest under the same ID from another publisher, or unsigned for a signed item (and the other way round), is refused.
 
+For signed creation over the local API, call `lishs.createSigned` with the usual creation parameters and `sign: true`. This method is available on servers that support signed creation and returns the confirmed `publisher`. Unsigned creation uses `lishs.create`.
+
+A direct download with `transfer.download` stores the verified manifest and its chunk records together. For an existing ID, the file must match the stored signature and the dataset must be in the server's managed download directory. Use the stored transfer controls for datasets imported into another directory.
+
 ### Directory entry
 
 ```typescript

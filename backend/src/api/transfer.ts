@@ -607,12 +607,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		if (refusal) return abandonStoredDownload(lishID, prepared, refusal);
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
-		if (disabled) downloader.disable();
-		launchClaimedDownloader(downloader, client, true);
+		launchClaimedDownloader(downloader, client, true, disabled);
 		return downloader;
 	}
 
-	function launchClaimedDownloader(downloader: Downloader, client: any, finalize: boolean): void {
+	function launchClaimedDownloader(downloader: Downloader, client: any, finalize: boolean, disabled = false): void {
 		const lishID = downloader.getLISHID();
 		const downloadDir = downloader.getDownloadDirectory();
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
@@ -623,6 +622,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (info.resolved) send('transfer.download:resumed', { lishID });
 			else send('transfer.download:retrying', { lishID, ...info });
 		});
+		if (disabled) downloader.disable();
 		const running = downloader.download();
 		const lifecycle = running
 			.then(async () => {

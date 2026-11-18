@@ -1,4 +1,5 @@
 import { CodedError, ErrorCodes, validateLISHStructure, type IStoredLISH } from '@shared';
+import { resolve } from 'node:path';
 import { isBusy } from '../api/busy.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { conservativeDatasetRoot, datasetRootPath } from '../lish/dataset-root.ts';
@@ -21,14 +22,19 @@ export async function bindSignedDataset(dataServer: DataServer, lish: IStoredLIS
 	if (stored && stored.signature !== lish.signature) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'The signed file does not match the stored manifest for this ID');
 	if (isBusy(lish.id)) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'The stored LISH is busy');
 	if (stored?.directory) {
-		// Keep the file order and root the existing chunk slots refer to.
-		return { lish: stored, root: dataServer.getDatasetRoot(lish.id) ?? conservativeDatasetRoot(stored.directory) };
+		const root = dataServer.getDatasetRoot(lish.id);
+		if (root?.kind !== 'derived' || resolve(root.base) !== resolve(base) || datasetRootPath(root) !== resolve(stored.directory)) {
+			throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'The stored dataset is outside the managed download directory');
+		}
+		return { lish: stored, root };
 	}
 
 	const parent = await openDataset({ kind: 'explicit', path: base }, true);
 	await parent.close();
 	const root: DatasetRoot = { kind: 'derived', base, component: crypto.randomUUID() };
-	const dataset = { ...lish, directory: datasetRootPath(root) };
-	dataServer.addDataset(dataset, root, undefined, { requireNew: !stored });
+	const finalDirectory = stored?.finalDirectory;
+	const finalRoot = finalDirectory ? (dataServer.getDatasetRoot(lish.id, true) ?? conservativeDatasetRoot(finalDirectory)) : undefined;
+	const dataset = { ...lish, directory: datasetRootPath(root), ...(finalDirectory ? { finalDirectory } : {}) };
+	dataServer.addDataset(dataset, root, finalRoot, { requireNew: !stored });
 	return { lish: dataset, root };
 }
