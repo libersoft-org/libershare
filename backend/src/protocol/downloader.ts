@@ -107,8 +107,8 @@ export class Downloader {
 	private localPublisher: string | null = null;
 	private disabled = false;
 	private destroyed = false;
-	/** Probe passes in flight: any of them may still bring a valid manifest and its peer. */
-	private manifestProbes = 0;
+	/** In-flight probes and HAVE attempts can still supply a manifest or another peer. */
+	private manifestDiscoveryInFlight = 0;
 	/** Last manifest refusal the user can act on; reported once no source of a manifest is left. */
 	private manifestRefusal: CodedError | null = null;
 	private lastExhaustedTime = 0;
@@ -295,13 +295,10 @@ export class Downloader {
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
 	}
 
-	/**
-	 * Fails the download with the remembered manifest refusal, but only when nothing can still
-	 * deliver a manifest: no connected peer and no probe pass that may be about to store one.
-	 */
+	/** Report the refusal only when no connected or pending peer can supply a manifest. */
 	private reportManifestRefusal(): void {
 		if (this.destroyed || this.disabled || !this.needsManifest || !this.manifestRefusal) return;
-		if (this.peerManager.size() > 0 || this.manifestProbes > 0) return;
+		if (this.peerManager.size() > 0 || this.manifestDiscoveryInFlight > 0) return;
 		this.setError(this.manifestRefusal.code, this.manifestRefusal.detail);
 	}
 
@@ -687,7 +684,6 @@ export class Downloader {
 					}
 				}
 				if (this.needsManifest) {
-					// A probe waiting on this mutex to store its manifest keeps the download alive.
 					this.reportManifestRefusal();
 					return;
 				}
@@ -821,7 +817,7 @@ export class Downloader {
 	}
 
 	private callForPeers(): Promise<void> {
-		return this.trackLifecycle(this.callForPeersInternal());
+		return this.trackManifestDiscovery(() => this.callForPeersInternal());
 	}
 
 	private async callForPeersInternal(): Promise<void> {
@@ -841,14 +837,18 @@ export class Downloader {
 		this.scheduleNextPeerDiscovery();
 	}
 
-	private probeTopicPeers(): Promise<void> {
-		this.manifestProbes++;
+	private trackManifestDiscovery(operation: () => Promise<void>): Promise<void> {
+		this.manifestDiscoveryInFlight++;
 		return this.trackLifecycle(
-			this.probeTopicPeersInternal().finally(() => {
-				this.manifestProbes--;
+			operation().finally(() => {
+				this.manifestDiscoveryInFlight--;
 				this.reportManifestRefusal();
 			})
 		);
+	}
+
+	private probeTopicPeers(): Promise<void> {
+		return this.trackManifestDiscovery(() => this.probeTopicPeersInternal());
 	}
 
 	private async probeTopicPeersInternal(): Promise<void> {
@@ -884,8 +884,8 @@ export class Downloader {
 					manifest = await withLISHClient(this.network, peerID, this.abortController.signal, client => client.requestManifest(this.lishID, undefined, this.expectedPublisher()));
 				} catch (error: any) {
 					// Any manifest error (unreachable, malformed, over-limit) → drop this peer and let
-					// another serve it. Over-limit and publisher refusals are remembered and reported only
-					// when no connected peer and no other probe pass is left (see reportManifestRefusal).
+					// another serve it. Keep over-limit and publisher refusals pending while any
+					// connected peer or discovery attempt remains (see reportManifestRefusal).
 					// Mid-download the probe is just a "do you have this LISH?" test, so it never fails
 					// the transfer there.
 					if (this.needsManifest) this.manifestRefusal = reportableRefusal(error) ?? this.manifestRefusal;
@@ -1072,7 +1072,7 @@ export class Downloader {
 	}
 
 	private runPeerDiscoveryCycle(): Promise<void> {
-		return this.trackLifecycle(this.runPeerDiscoveryCycleInternal());
+		return this.trackManifestDiscovery(() => this.runPeerDiscoveryCycleInternal());
 	}
 
 	private async runPeerDiscoveryCycleInternal(): Promise<void> {
@@ -1089,7 +1089,7 @@ export class Downloader {
 		this.lastExhaustedTime = 0;
 		// Broadcast want so all peers (including probe-only) respond with have + chunk availability.
 		await this.callForPeers().catch((err: any) => trace(`[DL] cycle callForPeers failed (will retry): ${err?.message ?? err}`));
-		if (this.destroyed) return;
+		if (this.wantsNoPeers()) return;
 		await this.probeTopicPeers();
 		if (!this.downloadActive && !this.destroyed && this.peerManager.size() > before)
 			this.doWork().catch(e => {
@@ -1099,7 +1099,7 @@ export class Downloader {
 	}
 
 	private onHaveAnnouncement(ann: HaveAnnouncement): Promise<void> {
-		return this.trackLifecycle(this.onHaveAnnouncementInternal(ann));
+		return this.trackManifestDiscovery(() => this.onHaveAnnouncementInternal(ann));
 	}
 
 	private async onHaveAnnouncementInternal(ann: HaveAnnouncement): Promise<void> {

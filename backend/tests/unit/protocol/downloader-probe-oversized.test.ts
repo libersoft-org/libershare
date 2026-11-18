@@ -167,3 +167,31 @@ test('an over-limit answer from the last connected peer does not fail the downlo
 	expect(priv(dl)['errorCode']).not.toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	expect(added.map(lish => lish.chunkSize)).toEqual([1024]);
 });
+
+test('a discovery cycle can still find a peer while its WANT broadcast is pending', async () => {
+	chunkLimit = CHUNK_LIMIT;
+	const added: IStoredLISH[] = [];
+	const dl = makeDownloader(new Map([['peer-probe-0002', validManifest]]), added);
+	priv(dl)['state'] = 'awaiting-manifest';
+	priv(dl)['needsManifest'] = true;
+	priv(dl)['lish'] = null;
+	priv(dl)['peerManager'].peers.set('peer-connected-01', {
+		async requestManifest(): Promise<IStoredLISH> {
+			throw new CodedError(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+		},
+		async close(): Promise<void> {},
+	});
+	const broadcast = Promise.withResolvers<void>();
+	priv(dl)['network'].broadcast = () => broadcast.promise;
+	const cycle = priv(dl)['runPeerDiscoveryCycle']();
+	try {
+		await dl.doWork();
+		expect(dl.getError()).toBeNull();
+		broadcast.resolve();
+		await cycle;
+		expect(added.map(lish => lish.chunkSize)).toEqual([1024]);
+	} finally {
+		broadcast.resolve();
+		await dl.destroy();
+	}
+});
