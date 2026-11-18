@@ -48,6 +48,12 @@ function downloadedHash(nodeIndex: number, name = 'payload.bin'): string {
 	return sha256(readFileSync(path));
 }
 
+/** Whether one of the node's finished downloads holds `path` as a folder. */
+function downloadedFolder(nodeIndex: number, ...path: string[]): boolean {
+	const finished = join(getNodeDataDir(nodeIndex), 'storage', 'finished');
+	return readdirSync(finished).some(root => statSync(join(finished, root, ...path), { throwIfNoEntry: false })?.isDirectory() === true);
+}
+
 async function downloadState(node: TestClient, id: string): Promise<ILISHDetail> {
 	const detail = await node.call<ILISHDetail | null>('lishs.get', { lishID: id });
 	if (!detail) throw new Error(`Missing LISH ${id}`);
@@ -257,6 +263,52 @@ describe('active transfers', () => {
 			await nodes[2]!.call('transfer.findPeers', { lishID: uploadID });
 			await complete;
 			expect(downloadedHash(2, 'upload.bin')).toBe(sha256(payload));
+		},
+		EVENT_TIMEOUT * 3
+	);
+});
+
+describe('a LISH that holds only folders', () => {
+	it(
+		'is created, shared and downloaded as complete without a chunk, also from a placeholder that has to ask for the manifest',
+		async () => {
+			const source = join(getNodeDataDir(0), 'folders-source');
+			mkdirSync(join(source, 'Saves'), { recursive: true });
+			mkdirSync(join(source, 'Mods', 'Maps'), { recursive: true });
+			const { lishID: foldersID } = await nodes[0]!.call('lishs.create', { dataPath: source, name: 'folders only', addToSharing: true, chunkSize: CHUNK_SIZE });
+			await waitFor(
+				'seeder verification',
+				() => nodes[0]!.call<ILISHListResult>('lishs.list'),
+				list => list.verifying !== foldersID && !list.pendingVerification.includes(foldersID) && list.uploadEnabled.includes(foldersID)
+			);
+
+			// node2 takes the manifest from the seeder's list first, as picking it in the UI does.
+			await nodes[2]!.call('lishnets.addPeerLish', { lishID: foldersID, peerID: seederPeerID, networkID: NETWORK_ID });
+			await waitForVerification(nodes[2]!, foldersID);
+			nodes[2]!.clearHistory();
+			const complete = nodes[2]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === foldersID, EVENT_TIMEOUT);
+			expect(await nodes[2]!.call<SuccessResponse>('transfer.enableDownload', { lishID: foldersID })).toEqual({ success: true });
+			await complete;
+			expect(downloadedFolder(2, 'Saves')).toBe(true);
+			expect(downloadedFolder(2, 'Mods', 'Maps')).toBe(true);
+			const detail = await downloadState(nodes[2]!, foldersID);
+			expect([detail.fileCount, detail.directoryCount, detail.totalChunks]).toEqual([0, 3, 0]);
+			// Complete on record now: enabling again starts nothing and reports no second completion.
+			nodes[2]!.clearHistory();
+			expect(await nodes[2]!.call<SuccessResponse>('transfer.enableDownload', { lishID: foldersID })).toEqual({ success: true });
+			await Bun.sleep(1000);
+			expect(nodes[2]!.getEventHistory('transfer.download:complete').filter(e => e.data.lishID === foldersID)).toEqual([]);
+
+			// node1 knows only the ID: it has to find a seeder and ask for the manifest, the case that used to ask forever.
+			const placeholder = { id: foldersID, name: 'folders only', created: new Date().toISOString(), chunkSize: CHUNK_SIZE, checksumAlgo: 'sha256' };
+			await nodes[1]!.call('lishs.importFromJSON', { json: JSON.stringify(placeholder), downloadPath: join(getNodeDataDir(1), 'storage', 'finished') });
+			await waitForVerification(nodes[1]!, foldersID);
+			nodes[1]!.clearHistory();
+			const fetched = nodes[1]!.waitForEvent('transfer.download:complete', (d: any) => d.lishID === foldersID, EVENT_TIMEOUT);
+			expect(await nodes[1]!.call<SuccessResponse>('transfer.enableDownload', { lishID: foldersID })).toEqual({ success: true });
+			await fetched;
+			expect(downloadedFolder(1, 'Saves')).toBe(true);
+			expect(downloadedFolder(1, 'Mods', 'Maps')).toBe(true);
 		},
 		EVENT_TIMEOUT * 3
 	);
