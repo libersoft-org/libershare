@@ -2,7 +2,7 @@ import { destroyAllDownloaders, TransferTeardownError } from './transfer-teardow
 export { destroyAllDownloaders, TransferTeardownError } from './transfer-teardown.ts';
 import { type Networks } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type DownloadResponse, CodedError, ErrorCodes } from '@shared';
+import { type DownloadResponse, CodedError, ErrorCodes, isMetadataOnly } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { storedDatasetFilesPresent } from '../lish/stored-dataset.ts';
@@ -752,8 +752,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	 * reconciliation cannot re-enable something there is nothing left to enable.
 	 */
 	function isStoredComplete(lishID: string): boolean {
-		if (!dataServer.get(lishID)) return false;
-		return dataServer.getAllChunkCount(lishID) > 0 && dataServer.getMissingChunks(lishID).length === 0;
+		const lish = dataServer.get(lishID);
+		if (!lish) return false;
+		// Without a single chunk only a real manifest (folders, empty files) is complete; a placeholder still waits for one.
+		return (dataServer.getAllChunkCount(lishID) > 0 || !isMetadataOnly(lish)) && dataServer.getMissingChunks(lishID).length === 0;
 	}
 
 	function settleManualIntent(lishID: string, result: { success: boolean }): { success: boolean } {
@@ -871,9 +873,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 		try {
 			const missing = dataServer.getMissingChunks(p.lishID);
-			if (missing.length === 0 && dataServer.getAllChunkCount(p.lishID) > 0) {
-				// DB says complete — but verify files actually exist on disk
-				if (lish.files && lish.directory) {
+			// Without a single chunk only a real manifest (folders, empty files) is complete; a placeholder still waits for one.
+			if (missing.length === 0 && (dataServer.getAllChunkCount(p.lishID) > 0 || !isMetadataOnly(lish))) {
+				// DB says complete — but verify files and folders actually exist on disk
+				if (lish.directory) {
 					const diskOk = await storedDatasetFilesPresent(dataServer, lish);
 					if (!diskOk) {
 						// Files missing on disk — reset ALL chunks and start fresh download

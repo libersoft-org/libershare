@@ -14,6 +14,8 @@ export async function storedDatasetFilesPresent(dataServer: DataServer, lish: IS
 			const info = await dataset.statFile(file.path);
 			if (!info || info.size !== file.size) return false;
 		}
+		// Folders are all a LISH without files has on disk.
+		if (!lish.files?.length) for (const directory of lish.directories ?? []) if (!(await dataset.statDirectory(directory.path))) return false;
 		return true;
 	} catch (error: any) {
 		if (error.code === 'ENOENT') return false;
