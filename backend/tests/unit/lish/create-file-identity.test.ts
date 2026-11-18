@@ -13,7 +13,7 @@ afterAll(async () => {
 /**
  * NTFS file IDs above 2^53 cannot be told apart once converted to a JS number: 2^53 and
  * 2^53 + 1 are the same number. A real filesystem cannot be made to hand out such IDs on
- * demand, so the stat call is wrapped to report two adjacent ones for two real files.
+ * demand, so lstat is wrapped to report two adjacent ones for two real directory entries.
  */
 describe('createLISH keeps files whose inode numbers differ only above 2^53', () => {
 	it('records both files with their own content, none as a hard link', async () => {
@@ -22,9 +22,9 @@ describe('createLISH keeps files whose inode numbers differ only above 2^53', ()
 		await writeFile(join(dir, 'a.bin'), 'first file');
 		await writeFile(join(dir, 'b.bin'), 'second file!');
 		const huge = 2n ** 53n;
-		const realStat = fsPromises.stat;
-		const spy = spyOn(fsPromises, 'stat').mockImplementation((async (path: any, opts?: any) => {
-			const real: any = await (realStat as any)(path, opts);
+		const realLstat = fsPromises.lstat;
+		const spy = spyOn(fsPromises, 'lstat').mockImplementation((async (path: any, opts?: any) => {
+			const real: any = await (realLstat as any)(path, opts);
 			if (!opts?.bigint || !real.isFile()) return real;
 			const ino = String(path).endsWith('a.bin') ? huge : huge + 1n;
 			return Object.assign(Object.create(Object.getPrototypeOf(real)), real, { ino, dev: 7n });
