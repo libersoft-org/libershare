@@ -55,6 +55,16 @@ const ALLOWED_TRANSITIONS: Record<State, readonly State[]> = {
 	error: ['downloading', 'preparing', 'awaiting-manifest', 'initialized'],
 };
 
+/**
+ * A manifest refusal worth showing the user once no peer is left to ask: an over-limit chunk
+ * size. Without it the download would wait for a manifest silently.
+ */
+function reportableRefusal(error: unknown): CodedError | null {
+	if (!(error instanceof CodedError)) return null;
+	if (error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) return error;
+	return null;
+}
+
 export class Downloader {
 	private lish!: IStoredLISH;
 	private readonly dataServer: DataServer;
@@ -91,6 +101,10 @@ export class Downloader {
 	private needsManifest = false;
 	private disabled = false;
 	private destroyed = false;
+	/** In-flight probes and HAVE attempts can still supply a manifest or another peer. */
+	private manifestDiscoveryInFlight = 0;
+	/** Last manifest refusal the user can act on; reported once no source of a manifest is left. */
+	private manifestRefusal: CodedError | null = null;
 	private lastExhaustedTime = 0;
 	private downloadActive = false; // true while downloadChunks is running inside workMutex
 	/** Async work that must settle before this downloader no longer owns runtime state. */
@@ -254,6 +268,7 @@ export class Downloader {
 		if (this.errorCode === ErrorCodes.LISH_UNSAFE_PATH) return;
 		this.transitionTo('error', `setError(${code})`, true);
 		this.disabled = true;
+		this.manifestRefusal = null;
 		this.errorCode = code;
 		this.errorDetail = detail;
 		this.clearRetryTimer();
@@ -272,6 +287,13 @@ export class Downloader {
 		this.downloadReject = undefined;
 		this.pauseController.notifyStateChange();
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
+	}
+
+	/** Report the refusal only when no connected or pending peer can supply a manifest. */
+	private reportManifestRefusal(): void {
+		if (this.destroyed || this.disabled || !this.needsManifest || !this.manifestRefusal) return;
+		if (this.peerManager.size() > 0 || this.manifestDiscoveryInFlight > 0) return;
+		this.setError(this.manifestRefusal.code, this.manifestRefusal.detail);
 	}
 
 	private scheduleRetry(): void {
@@ -575,16 +597,13 @@ export class Downloader {
 						manifest = await client.requestManifest(this.lishID);
 					} catch (error: any) {
 						if (this.destroyed) return;
+						this.manifestRefusal = reportableRefusal(error) ?? this.manifestRefusal;
 						if (error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
-							// The peer delivered a well-formed manifest for the LISH we asked for and it
-							// declares a chunk size above our limit. Chunk size is a property of the LISH
-							// itself, so every honest peer serves the same value — asking the rest only
-							// makes the user watch each peer fail in turn before the same error appears.
-							// Surface it now and stop — unless the download was torn down while we
-							// awaited the manifest, in which case there is no state left to fail.
+							// Any peer can claim an over-limit chunk size under this ID, so one answer
+							// must not end the download while another peer may serve the real manifest.
+							// It fails only once no connected peer is left to ask (see after the loop).
 							this.peerManager.remove(peerID, 'drop');
-							if (!this.destroyed) this.setError(error.code, error.detail);
-							return;
+							continue;
 						}
 						// A structurally malformed manifest (mapped to PEER_INVALID_REQUEST) is this
 						// peer's fault — keeping it would leave the download stuck asking the same
@@ -610,7 +629,10 @@ export class Downloader {
 						break;
 					}
 				}
-				if (this.needsManifest) return;
+				if (this.needsManifest) {
+					this.reportManifestRefusal();
+					return;
+				}
 			}
 			// Phase 2: create directory structure (skip if already has downloaded chunks — files already allocated)
 			if (this.state === 'preparing') {
@@ -737,7 +759,7 @@ export class Downloader {
 	}
 
 	private callForPeers(): Promise<void> {
-		return this.trackLifecycle(this.callForPeersInternal());
+		return this.trackManifestDiscovery(() => this.callForPeersInternal());
 	}
 
 	private async callForPeersInternal(): Promise<void> {
@@ -757,8 +779,18 @@ export class Downloader {
 		this.scheduleNextPeerDiscovery();
 	}
 
+	private trackManifestDiscovery(operation: () => Promise<void>): Promise<void> {
+		this.manifestDiscoveryInFlight++;
+		return this.trackLifecycle(
+			operation().finally(() => {
+				this.manifestDiscoveryInFlight--;
+				this.reportManifestRefusal();
+			})
+		);
+	}
+
 	private probeTopicPeers(): Promise<void> {
-		return this.trackLifecycle(this.probeTopicPeersInternal());
+		return this.trackManifestDiscovery(() => this.probeTopicPeersInternal());
 	}
 
 	private async probeTopicPeersInternal(): Promise<void> {
@@ -793,19 +825,12 @@ export class Downloader {
 				try {
 					manifest = await withLISHClient(this.network, peerID, this.abortController.signal, client => client.requestManifest(this.lishID));
 				} catch (error: any) {
-					// Any manifest error (unreachable, malformed) → drop this peer and let another
-					// serve it, except over-limit which is terminal for the whole LISH — but only
-					// while we are still looking for a manifest. Probing also runs mid-download
-					// purely to find more peers, and there requestManifest is just a "do you have
-					// this LISH?" test whose answer is discarded; failing the transfer on it would
-					// hand any peer on the topic a way to kill a healthy download.
-					if (this.needsManifest && error instanceof CodedError && error.code === ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) {
-						// Same reasoning as the connected-peer loop: a delivered manifest that is over
-						// the limit answers the question for the whole LISH, so stop probing the rest.
-						this.peerManager.remove(peerID, 'drop');
-						if (!this.destroyed) this.setError(error.code, error.detail);
-						return;
-					}
+					// Any manifest error (unreachable, malformed, over-limit) → drop this peer and let
+					// another serve it. An over-limit refusal is remembered and reported only when no
+					// connected peer or discovery attempt is left (see reportManifestRefusal).
+					// Mid-download the probe is just a "do you have this LISH?" test, so it never fails
+					// the transfer there.
+					if (this.needsManifest) this.manifestRefusal = reportableRefusal(error) ?? this.manifestRefusal;
 					console.debug(`[DL] probe ${peerID.slice(0, 12)}: manifest error ${error.code ?? error.message?.slice(0, 60) ?? error}`);
 					this.peerManager.remove(peerID, 'drop');
 				}
@@ -993,7 +1018,7 @@ export class Downloader {
 	}
 
 	private runPeerDiscoveryCycle(): Promise<void> {
-		return this.trackLifecycle(this.runPeerDiscoveryCycleInternal());
+		return this.trackManifestDiscovery(() => this.runPeerDiscoveryCycleInternal());
 	}
 
 	private async runPeerDiscoveryCycleInternal(): Promise<void> {
@@ -1010,7 +1035,7 @@ export class Downloader {
 		this.lastExhaustedTime = 0;
 		// Broadcast want so all peers (including probe-only) respond with have + chunk availability.
 		await this.callForPeers().catch((err: any) => trace(`[DL] cycle callForPeers failed (will retry): ${err?.message ?? err}`));
-		if (this.destroyed) return;
+		if (this.wantsNoPeers()) return;
 		await this.probeTopicPeers();
 		if (!this.downloadActive && !this.destroyed && this.peerManager.size() > before)
 			this.doWork().catch(e => {
@@ -1020,7 +1045,7 @@ export class Downloader {
 	}
 
 	private onHaveAnnouncement(ann: HaveAnnouncement): Promise<void> {
-		return this.trackLifecycle(this.onHaveAnnouncementInternal(ann));
+		return this.trackManifestDiscovery(() => this.onHaveAnnouncementInternal(ann));
 	}
 
 	private async onHaveAnnouncementInternal(ann: HaveAnnouncement): Promise<void> {

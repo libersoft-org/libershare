@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Downloader } from '../../../src/protocol/downloader.ts';
+import type { HaveAnnouncement } from '../../../src/protocol/lish-protocol.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
@@ -698,22 +699,84 @@ describe('Downloader – oversized manifest across peers', () => {
 		return c;
 	}
 
-	it('stops at the first over-limit manifest without asking the remaining peers', async () => {
+	it('drops a peer claiming an over-limit chunk size and takes the manifest from the next one', async () => {
 		const ds = new MockDataServer();
 		const dl = awaitingManifestDownloader(ds);
 		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
 		const second = new MockLISHClient();
 		second.requestManifestResult = makeLISH();
-		peers.set('peer-oversized-1', oversizedClient()); // first peer answers: chunk size over limit
-		peers.set('peer-valid-00001', second); // must never be asked
+		peers.set('peer-oversized-1', oversizedClient()); // answers first with an over-limit chunk size
+		peers.set('peer-valid-00001', second);
 
 		await dl.doWork();
 
-		expect(priv(dl)['state']).toBe('error');
-		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
-		expect(ds.addedLishs.length).toBe(0); // nothing imported
-		expect(peers.has('peer-oversized-1')).toBe(false); // the answering peer was dropped
-		expect(second.requestManifestCalls ?? 0).toBe(0); // the rest were left alone
+		expect(priv(dl)['errorCode']).toBeUndefined();
+		expect(ds.addedLishs.length).toBe(1); // imported from the second peer
+		expect(peers.has('peer-oversized-1')).toBe(false);
+	});
+
+	it('keeps waiting without an error while a peer it could not ask yet is still connected', async () => {
+		const ds = new MockDataServer();
+		const dl = awaitingManifestDownloader(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const unreachable = new MockLISHClient();
+		unreachable.requestManifestError = new CodedError(ErrorCodes.PEER_UNREACHABLE, 'timeout');
+		peers.set('peer-oversized-1', oversizedClient());
+		peers.set('peer-unreachab-1', unreachable);
+
+		await dl.doWork();
+
+		expect(priv(dl)['state']).toBe('awaiting-manifest');
+		expect(priv(dl)['errorCode']).toBeUndefined();
+	});
+
+	it.each([true, false])('waits for a pending HAVE connection before reporting the manifest refusal (connects: %p)', async connects => {
+		const ds = new MockDataServer();
+		const dl = awaitingManifestDownloader(ds);
+		const peerManager = priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient>; hasCapacity: () => boolean };
+		peerManager.hasCapacity = () => true;
+		const peers = peerManager.peers;
+		const dialStarted = Promise.withResolvers<void>();
+		const dialing = Promise.withResolvers<void>();
+		const peerID = 'peer-connecting';
+		const next = new MockLISHClient();
+		next.requestManifestResult = { ...makeLISH(), id: 'test-oversized-lish' };
+		priv(dl)['connectToPeer'] = async () => {
+			dialStarted.resolve();
+			await dialing.promise;
+			if (!connects) throw new Error('connection timed out');
+			peers.set(peerID, next);
+		};
+		const doWork = dl.doWork.bind(dl);
+		let announcedWork: Promise<void> | undefined;
+		dl.doWork = () => (announcedWork = doWork());
+		const announcements = priv(dl) as { onHaveAnnouncement(announcement: HaveAnnouncement): Promise<void> };
+		const have = announcements.onHaveAnnouncement({ lishID: 'test-oversized-lish', peerID, multiaddrs: [], chunks: 'all' });
+		try {
+			try {
+				await Promise.race([
+					dialStarted.promise,
+					have.then(() => {
+						throw new Error('HAVE finished without connecting');
+					}),
+				]);
+				peers.set('peer-oversized-1', oversizedClient());
+				await doWork();
+				expect(dl.getError()).toBeNull();
+			} finally {
+				dialing.resolve();
+				await have;
+				await announcedWork;
+			}
+			if (connects) {
+				expect(ds.addedLishs).toHaveLength(1);
+				expect(dl.getError()).toBeNull();
+			} else {
+				expect(dl.getError()?.code).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+			}
+		} finally {
+			await dl.destroy();
+		}
 	});
 
 	it('surfaces the terminal error when the only peer returns an over-limit manifest', async () => {
