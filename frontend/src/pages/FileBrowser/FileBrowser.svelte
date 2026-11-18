@@ -206,7 +206,11 @@
 
 	function scrollToSelected(): void {
 		if (!itemsEl || !rowHeight) return;
-		itemsEl.scrollTo({ top: selectedIndex * rowHeight - (itemsEl.clientHeight - rowHeight) / 2, behavior: 'smooth' });
+		// A glide over rows that are not drawn shows an empty list and takes seconds in a big folder, so a far row is jumped to.
+		const drawn = selectedIndex >= firstRow && selectedIndex < lastRow;
+		itemsEl.scrollTo({ top: selectedIndex * rowHeight - (itemsEl.clientHeight - rowHeight) / 2, behavior: drawn ? 'smooth' : 'instant' });
+		// Draw the rows at the landing place now, not a frame later when the scroll event arrives.
+		if (!drawn) listScrollTop = itemsEl.scrollTop;
 	}
 
 	// Keep a scroll under a stale cursor from stealing selection. While a panel is open,

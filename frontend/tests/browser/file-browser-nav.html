@@ -265,11 +265,20 @@
 				await press('home');
 				assert(await selects('..'), `Home selected ${selectedRowText()}`);
 			});
+			await test('a far row is jumped to at once, not glided to', async () => {
+				const items = root.querySelector('.items');
+				// No waiting here: a glide over thousands of rows that are not drawn would still be on its way.
+				await press('end');
+				assert(selectedRowText().includes('entry-19999.txt'), `End drew ${rows().length} rows and selected "${selectedRowText()}"`);
+				assert(items.scrollTop + items.clientHeight >= items.scrollHeight - 2, `End left the list at ${items.scrollTop} of ${items.scrollHeight}`);
+				await press('home');
+				assert(selectedRow() === 0 && items.scrollTop === 0, `Home left the list at ${items.scrollTop} with row ${selectedRow()} selected`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
