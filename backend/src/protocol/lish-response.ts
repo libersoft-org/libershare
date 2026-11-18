@@ -11,7 +11,7 @@ export type LISHOperation = 'getChunk' | 'getLish' | 'getLishs' | 'announceHave'
  */
 const REMOTE_ERRORS: Readonly<Record<LISHOperation, ReadonlySet<ErrorCode>>> = {
 	getChunk: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISH_NOT_SHARED, ErrorCodes.PEER_BUSY, ErrorCodes.PEER_CHUNK_NOT_FOUND, ErrorCodes.PEER_IO_ERROR]),
-	getLish: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISH_NOT_SHARED]),
+	getLish: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISH_NOT_SHARED, ErrorCodes.PEER_MANIFEST_TOO_LARGE]),
 	getLishs: new Set([ErrorCodes.PEER_INVALID_REQUEST, ErrorCodes.PEER_LISTING_NOT_AUTHORIZED, ErrorCodes.PEER_LIST_TOO_LARGE]),
 	announceHave: new Set([ErrorCodes.PEER_INVALID_REQUEST]),
 	searchResult: new Set([ErrorCodes.PEER_INVALID_REQUEST]),

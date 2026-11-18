@@ -669,8 +669,17 @@ export async function handleLISHProtocol(stream: Stream, dataServer: DataServer,
 						const response: LISHGetLishResponse = { error: ErrorCodes.PEER_LISH_NOT_SHARED };
 						await reply(codecEncode(response));
 					} else {
-						const response: LISHGetLishResponse = { manifest: toManifest(lish) };
-						await reply(codecEncode(response));
+						const encoded = codecEncode({ manifest: toManifest(lish) } satisfies LISHGetLishResponse);
+						const limit = getMaxMessageSize();
+						if (encoded.byteLength > limit) {
+							// Sending it would throw in the frame encoder and reset the stream, which the asking
+							// peer can only read as "unreachable". Say why instead, and tell this node's operator.
+							console.warn(`[PROTO] manifest ${request.lishID.slice(0, 8)} is ${encoded.byteLength} B, over network.maxMessageSize ${limit} B; refused to ${remotePeer}`);
+							const response: LISHGetLishResponse = { error: ErrorCodes.PEER_MANIFEST_TOO_LARGE };
+							await reply(codecEncode(response));
+						} else {
+							await reply(encoded);
+						}
 					}
 				}
 			} else if (request.type === 'getChunk' || request.type === undefined) {
