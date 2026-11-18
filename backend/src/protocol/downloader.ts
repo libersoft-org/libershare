@@ -1,16 +1,15 @@
 import { access, constants } from 'fs/promises';
 import { dirname } from 'path';
-import { type IStoredLISH, type LISHid, CodedError, ErrorCodes, validateLISHStructure } from '@shared';
-import { validateImportedLISH } from '../lish/lish.ts';
-import { verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { type IStoredLISH, type LISHid, CodedError, ErrorCodes } from '@shared';
+import type { ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { readLocalDownload, bindSignedDataset } from './local-download.ts';
 import { withLISHOwnership } from '../lish/lish-ownership.ts';
 import { type Network } from './network.ts';
 import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
-import { Utils } from '../utils.ts';
 import { multiaddr, type Multiaddr } from '@multiformats/multiaddr';
 import { Circuit } from '@multiformats/multiaddr-matcher';
-import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, getMaxChunkSize, registerHaveAnnouncementHandler } from './lish-protocol.ts';
+import { type HaveAnnouncement, type HaveChunks, LISH_PROTOCOL, LISHClient, registerHaveAnnouncementHandler } from './lish-protocol.ts';
 import { Mutex } from 'async-mutex';
 import { withLISHClient } from './lish-client-session.ts';
 import { DataServer, type MissingChunk } from '../lish/data-server.ts';
@@ -74,8 +73,8 @@ export class Downloader {
 	private lish!: IStoredLISH;
 	private readonly dataServer: DataServer;
 	private network: Network;
-	private readonly downloadDir: string;
-	private readonly datasetRoot: DatasetRoot;
+	private downloadDir: string;
+	private datasetRoot: DatasetRoot;
 	private networkIDs: string[];
 	// Immutable snapshot of the networks this download was created with. removeNetwork
 	// mutates networkIDs when a lishnet is left; addNetwork consults this to re-attach
@@ -88,7 +87,7 @@ export class Downloader {
 	private readonly peerManager = new PeerManager();
 	// File allocation (zero-fill + directory layout). Stateless — only config is downloadDir;
 	// it's assigned in the constructor once downloadDir is known.
-	private readonly fileAllocator: FileAllocator;
+	private fileAllocator: FileAllocator;
 	// Aborted in destroy(); passed to fileAllocator to stop in-progress zero-filling.
 	private readonly abortController = new AbortController();
 	private lastServingPeerCount = 0;
@@ -421,10 +420,7 @@ export class Downloader {
 		console.log(`[DL] Destroyed ${shortID}`);
 	}
 
-	/**
-	 * Register this downloader as the handler for unicast HAVE announcements for our lishID.
-	 * Called once per init/initFromManifest; unregistered in destroy/setError.
-	 */
+	/** Installs the unicast HAVE handler once the downloader owns its active slot. */
 	private registerAnnouncementHandler(): void {
 		this.haveAnnouncementDisposer?.();
 		this.haveAnnouncementDisposer = registerHaveAnnouncementHandler(this.lishID, ann => {
@@ -506,26 +502,26 @@ export class Downloader {
 		}
 	}
 
-	/**
-	 * A local `.lish` file never overrides who published an item this node already stores. The
-	 * caller repeats this under the LISH ownership lock right before activating the download.
-	 */
-	assertStoredPublisher(): void {
+	private assertStoredPublisher(): void {
 		const stored = this.dataServer.getPublisher(this.lishID);
 		if (stored !== undefined && stored !== this.localPublisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored ?? 'unsigned'}, file ${this.localPublisher ?? 'unsigned'}`);
 	}
 
 	async init(lishPath: string): Promise<void> {
 		this.transitionTo('initializing', 'init() start');
-		// Read and parse LISH
-		const content = await Bun.file(lishPath).text();
-		const lish = validateImportedLISH(Utils.safeJSONParse(content, `LISH file: ${lishPath}`));
-		validateLISHStructure(lish, getMaxChunkSize());
-		const signature = await verifyManifestSignature(lish);
-		this.lish = lish;
+		({ lish: this.lish, publisher: this.localPublisher } = await readLocalDownload(lishPath));
 		this.lishID = this.lish.id as LISHid;
-		this.localPublisher = signature.signed ? signature.publisher : null;
 		this.assertStoredPublisher();
+	}
+
+	/** Called with LISH ownership held, before claiming the active download. */
+	async prepareLocalDownload(): Promise<void> {
+		this.assertStoredPublisher();
+		if (this.localPublisher !== null) {
+			({ lish: this.lish, root: this.datasetRoot } = await bindSignedDataset(this.dataServer, this.lish, dirname(this.downloadDir)));
+			this.downloadDir = datasetRootPath(this.datasetRoot);
+			this.fileAllocator = new FileAllocator(this.datasetRoot, () => this.dataServer.getDatasetLinkBindings(this.lishID));
+		}
 		this.peerManager.setLishID(this.lishID);
 		this.chunkDownloader = this.createChunkDownloader();
 		console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.dataServer.getMissingChunks(this.lishID).length} chunks to download`);
@@ -711,9 +707,6 @@ export class Downloader {
 					return;
 				}
 				if (this.destroyed) return;
-				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
-				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
-				console.debug(`[DL] preparing ${this.lishID.slice(0, 8)}: ${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}`);
 				// Empty-manifest recovery: if the LISH has no file metadata and the DB has no chunks,
 				// we need a manifest re-fetch before we can do anything else. (Was the side-effect
 				// inside the former needsFileAllocation() — kept here to preserve control flow.)
@@ -724,6 +717,13 @@ export class Downloader {
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
+				if (this.localPublisher !== null && hasDownloadedChunks && missingBeforeAlloc.length > 0) {
+					for (const index of missingBeforeAlloc) this.dataServer.resetFileChunks(this.lishID, index);
+					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
+				}
+				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
+				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
+				console.debug(`[DL] preparing ${this.lishID.slice(0, 8)}: ${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}`);
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });

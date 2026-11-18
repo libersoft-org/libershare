@@ -261,6 +261,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	async function createWithController(p: CreateLISHParams, client: any, ac: AbortController): Promise<CreateLISHResponse> {
 		assert(p, ['dataPath']);
+		if (p.sign !== undefined && typeof p.sign !== 'boolean') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'sign must be a boolean');
 		const addToSharing = p.addToSharing ?? false;
 		const addToDownloading = p.addToDownloading ?? false;
 		const algorithm = p.algorithm ?? DEFAULT_ALGO;

@@ -346,7 +346,7 @@ export class LISHClient {
 				} catch (e) {
 					// A structurally malformed manifest is this peer's fault — surface it as a peer
 					// protocol error so fallback loops move on to the next peer.
-					if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`);
+					if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`, { cause: e });
 					// An over-limit chunk size is reported as a property of the LISH only when the
 					// manifest is not caught forging its publisher; a changed signed body is the peer's fault.
 					if (e instanceof CodedError) await checkPublisher();

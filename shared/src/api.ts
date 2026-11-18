@@ -1,4 +1,5 @@
 import { type NetworkStatus, type NetworkNodeInfo, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ILISHFileInspectionResult, type LishSearchResult, type Dataset, type FsInfo, type FsListResult, type IPathExistsResult, type IWriteResult, type ILISHListResult, type ISettingsImportResult, type SuccessResponse, type SetLISHNetworkEnabledResponse, type CreateLISHResponse, type ImportLISHResponse, type DownloadResponse, type FactoryResetResponse, type LISHNetworkConfig, type LISHNetworkDefinition, type IStoredLISH, type ILISHDetail, type ILISH, type LISHSortField, type SortOrder, type CompressionAlgorithm, type BootstrapStatus } from './index.ts';
+import { CodedError, ErrorCodes } from './errors.ts';
 import { toNetworkMutationResponse, type NetworkMutationResponse } from './network-mutation.ts';
 
 type EventCallback = (data: any) => void;
@@ -471,8 +472,8 @@ class LISHsAPI {
 		return this.client.call<IStoredLISH[]>('lishs.backup');
 	}
 
-	create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm, sign?: boolean): Promise<CreateLISHResponse> {
-		return this.client.call<CreateLISHResponse>('lishs.create', {
+	async create(dataPath: string, lishFile?: string, addToSharing?: boolean, addToDownloading?: boolean, name?: string, description?: string, algorithm?: string, chunkSize?: number, threads?: number, minifyJSON?: boolean, compress?: boolean, compressionAlgorithm?: CompressionAlgorithm, sign?: boolean): Promise<CreateLISHResponse> {
+		const params = {
 			name,
 			description,
 			dataPath,
@@ -486,7 +487,20 @@ class LISHsAPI {
 			compress,
 			compressionAlgorithm,
 			sign,
-		});
+		};
+		if (sign !== true) return this.client.call<CreateLISHResponse>('lishs.create', params);
+
+		// An older server must reject the method before it can create an unsigned LISH.
+		let result: CreateLISHResponse;
+		try {
+			result = await this.client.call<CreateLISHResponse>('lishs.createSigned', params);
+		} catch (error) {
+			const code = (error as { code?: unknown } | null)?.code ?? (error instanceof Error ? error.message : undefined);
+			if (code === ErrorCodes.UNKNOWN_METHOD) throw new CodedError(ErrorCodes.LISH_SIGNING_UNSUPPORTED_SERVER, 'Update the backend to create signed LISHs');
+			throw error;
+		}
+		if (typeof result?.publisher !== 'string' || !result.publisher.trim()) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'The backend did not confirm the publisher');
+		return result;
 	}
 
 	delete(lishID: string, deleteLISH: boolean, deleteData: boolean): Promise<boolean> {

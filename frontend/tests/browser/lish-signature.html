@@ -269,7 +269,7 @@
 				});
 
 				await test(`${lang}: signature errors are translated`, async () => {
-					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY']) {
+					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY', 'LISH_SIGNING_UNSUPPORTED_SERVER']) {
 						const message = translateError(Object.assign(new Error(code), { code, detail: 'x' }));
 						assert(!message.includes(code), `${code} is not translated: ${message}`);
 					}

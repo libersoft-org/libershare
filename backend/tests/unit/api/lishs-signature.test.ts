@@ -300,6 +300,13 @@ describe('create with sign', () => {
 		expect(await verifyManifestSignature(written)).toEqual({ signed: true, publisher: A });
 	});
 
+	it('rejects a non-boolean sign before creating a LISH', async () => {
+		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
+		await writeFile(source, 'payload');
+		await expect(handlers(signerA).create({ dataPath: source, addToSharing: true, sign: 'false' } as never, undefined)).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT_TYPE });
+		expect(dataServer.list()).toHaveLength(0);
+	});
+
 	it('refuses to sign without a running network and creates nothing', async () => {
 		const source = join(await tempDir('lish-sig-src-'), 'data.bin');
 		await writeFile(source, 'payload');
@@ -371,6 +378,12 @@ describe('add from a peer checks the expected publisher', () => {
 		await expect(lishnetsOver(forged).getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
 		await expect(lishnetsOver(forged).addPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
 		expect(dataServer.get(ID)).toBeFalsy();
+	});
+
+	it('reports a manifest version the requester cannot read', async () => {
+		const signed = await sign(manifest(), keyA);
+		const lishnets = lishnetsOver({ ...signed, version: 2 });
+		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST, detail: 'unsupported manifest version 2' });
 	});
 
 	it('without a picked row, expects the publisher already stored under the ID', async () => {

@@ -29,6 +29,7 @@ const errorCodes = [
 	'LISH_INVALID_SIGNATURE',
 	'LISH_PUBLISHER_MISMATCH',
 	'LISH_SIGNING_UNSUPPORTED_KEY',
+	'LISH_SIGNING_UNSUPPORTED_SERVER',
 	'PATH_ACCESS_DENIED',
 	'INVALID_FILE_INDEX',
 	// Longer than every responder will accept, so it is refused where the user can be told

@@ -484,14 +484,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	async function downloadAdmitted(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
 		const network = networks.getRunningNetwork();
-		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
-		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
+		const downloader = new Downloader(join(dataDir, 'downloads', Date.now().toString()), network, dataServer, p.networkID);
 		let claim: Awaited<ReturnType<typeof claimActiveDownloader<Downloader>>>;
 		try {
 			await downloader.init(p.lishPath);
-			// An import of the same ID may store another publisher while the file was being read.
-			claim = await withLISHOwnership(downloader.getLISHID(), () => {
-				downloader.assertStoredPublisher();
+			claim = await withLISHOwnership(downloader.getLISHID(), async () => {
+				await downloader.prepareLocalDownload();
 				return claimActiveDownloader(activeDownloaders, downloader.getLISHID(), downloader);
 			});
 		} catch (error) {
@@ -499,36 +497,10 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			throw error;
 		}
 		const lishID = downloader.getLISHID();
-		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
+		const downloadDir = claim.downloader.getDownloadDirectory();
+		if (!claim.claimed) return { downloadDir };
 
-		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-
-		downloader.setProgressCallback?.((info: ProgressInfo) => {
-			send('transfer.download:progress', buildDownloadProgressEvent(dataServer, lishID, info));
-		});
-		downloader.setRetryCallback?.(info => {
-			if (info.resolved) send('transfer.download:resumed', { lishID });
-			else send('transfer.download:retrying', { lishID, ...info });
-		});
-
-		const lifecycle = downloader
-			.download()
-			.then(() => {
-				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
-			})
-			.catch(err => {
-				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
-				const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
-				const detail = err instanceof CodedError ? err.detail : err.message;
-				dataServer.setError(lishID, code, detail);
-				downloadEnabledLishs.delete(lishID);
-				persistDownloadEnabled?.(lishID, false);
-				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
-				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
-			});
-		trackDownloadLifecycle(lifecycle);
+		launchClaimedDownloader(downloader, client, dataServer.getPublisher(lishID) != null);
 		return { downloadDir };
 	}
 
@@ -631,11 +603,18 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	/** No await between the final validity check and synchronous registration in claimActiveDownloader. */
 	async function launchPreparedDownloader(lishID: string, prepared: PreparedStoredDownloader, disabled: boolean, client?: any): Promise<Downloader> {
 		const downloader = prepared.downloader;
-		const downloadDir = downloader.getDownloadDirectory();
 		const refusal = storedStartRefusal(lishID, prepared, disabled);
 		if (refusal) return abandonStoredDownload(lishID, prepared, refusal);
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
+		if (disabled) downloader.disable();
+		launchClaimedDownloader(downloader, client, true);
+		return downloader;
+	}
+
+	function launchClaimedDownloader(downloader: Downloader, client: any, finalize: boolean): void {
+		const lishID = downloader.getLISHID();
+		const downloadDir = downloader.getDownloadDirectory();
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 		downloader.setProgressCallback?.((info: ProgressInfo) => {
 			send('transfer.download:progress', buildDownloadProgressEvent(dataServer, lishID, info));
@@ -644,13 +623,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (info.resolved) send('transfer.download:resumed', { lishID });
 			else send('transfer.download:retrying', { lishID, ...info });
 		});
-		if (disabled) downloader.disable();
 		const running = downloader.download();
 		const lifecycle = running
 			.then(async () => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
-				if (finalizeDownloadAdmitted) {
+				if (finalize && finalizeDownloadAdmitted) {
 					try {
 						await finalizeDownloadAdmitted(lishID);
 					} catch (err) {
@@ -670,7 +648,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 			});
 		trackDownloadLifecycle(lifecycle);
-		return downloader;
 	}
 
 	/**

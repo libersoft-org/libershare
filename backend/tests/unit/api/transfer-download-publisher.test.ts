@@ -196,3 +196,32 @@ test('a local download cannot activate while a real import holds the ID before w
 		db.close();
 	}
 });
+
+test('a direct download refuses another valid signed revision and keeps the stored dataset', async () => {
+	initDownloadState(new Set(), () => {});
+	initUploadState(new Set(), () => {});
+	const dataDir = await tempDir('lish-local-data-');
+	const db = openDatabase(dataDir);
+	const dataServer = new DataServer(db);
+	const directory = await tempDir('lish-local-dataset-');
+	const stored = await sign(manifest, keyA);
+	dataServer.addDataset({ ...stored, directory }, { kind: 'explicit', path: directory });
+	const lishPath = join(dataDir, 'revised.lish');
+	await writeFile(lishPath, JSON.stringify(await sign({ ...manifest, name: 'Revised item' }, keyA)));
+	const networks = { getRunningNetwork: () => new MockNetwork() } as unknown as Networks;
+	const handlers = initTransferHandlers(
+		networks,
+		dataServer,
+		dataDir,
+		() => {},
+		() => {}
+	);
+	try {
+		await expect(handlers.download({ networkID: 'net-a', lishPath }, undefined)).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+		expect(dataServer.get(ID)).toMatchObject({ signature: stored.signature, directory });
+		expect(dataServer.getMissingChunks(ID)).toHaveLength(1);
+		expect(handlers.getActiveTransfers()).toEqual([]);
+	} finally {
+		db.close();
+	}
+});

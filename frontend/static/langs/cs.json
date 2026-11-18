@@ -328,6 +328,7 @@
 		"errorInvalidSignature": "Podpis manifestu nesedí. Obsah se po podepsání změnil, nebo ho uvedený vydavatel nepodepsal.",
 		"errorPublisherMismatch": "Vydavatel tohoto LISHe není ten, kterého aplikace čekala.",
 		"errorSigningUnsupportedKey": "Identita tohoto uzlu neumí podepisovat (je potřeba klíč Ed25519)",
+		"errorSigningUnsupportedServer": "Tento server neumí vytvářet podepsané LISH. Pro podepisování server aktualizujte.",
 		"fileInfo": "Informace o LISHi",
 		"fileEmpty": "Soubor neobsahuje žádný LISH.",
 		"fileValid": "V pořádku",

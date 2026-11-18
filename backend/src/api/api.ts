@@ -499,6 +499,10 @@ export class APIServer {
 			'lishs.exportAllToFile': _lishs.exportAllToFile,
 			'lishs.backup': _lishs.backup,
 			'lishs.create': _lishs.create,
+			'lishs.createSigned': (p, client) => {
+				if (p.sign !== true) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'sign must be true');
+				return _lishs.create(p, client);
+			},
 			'lishs.delete': _lishs.delete,
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,

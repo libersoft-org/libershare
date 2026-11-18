@@ -328,6 +328,7 @@
 		"errorInvalidSignature": "The manifest signature does not match. The content changed after signing, or the stated publisher did not sign it.",
 		"errorPublisherMismatch": "The publisher of this LISH is not the one the app expected.",
 		"errorSigningUnsupportedKey": "This node identity cannot sign (an Ed25519 key is required)",
+		"errorSigningUnsupportedServer": "This backend cannot create signed LISHs. Update the backend to use signing.",
 		"fileInfo": "LISH info",
 		"fileEmpty": "The file contains no LISH.",
 		"fileValid": "Valid",

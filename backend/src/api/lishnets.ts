@@ -269,7 +269,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	}
 	/** A manifest this node refused over its signature or publisher: report that reason, not a generic peer fault. */
 	function refusalReason(error: CodedError): CodedError {
-		return error.code === ErrorCodes.PEER_INVALID_REQUEST && error.cause instanceof CodedError ? error.cause : error;
+		if (error.code !== ErrorCodes.PEER_INVALID_REQUEST || !(error.cause instanceof CodedError)) return error;
+		const cause = error.cause;
+		return cause.code === ErrorCodes.LISH_INVALID_SIGNATURE || cause.code === ErrorCodes.LISH_PUBLISHER_MISMATCH || cause.code === ErrorCodes.LISH_INVALID_MANIFEST ? cause : error;
 	}
 
 	async function getPeerLish(p: PeerLishParams): Promise<IPeerLishDetail> {
