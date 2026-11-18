@@ -340,7 +340,14 @@ export class APIServer {
 		const _datasets = initDatasetsHandlers(this.dataServer);
 		const _fs = initFsHandlers();
 		this._upload = initUploadHandlers(dataDir, {}, this.importLock);
-		const _lishs = initLISHsHandlers(this.dataServer, emitTo, broadcastFn, this.settings);
+		const _lishs = initLISHsHandlers(
+			this.dataServer,
+			emitTo,
+			broadcastFn,
+			this.settings,
+			lish => this.networks.getNetwork().signManifest(lish),
+			() => this.networks.getNetwork().assertCanSign()
+		);
 		const _lishnets = initLISHnetsHandlers(this.networks, this.dataServer, broadcastFn, this.settings, _lishs.importManifestAdmitted, _lishs.runMutation, this.peerReadAbort.signal);
 		const _identity = initIdentityHandlers(this.networks);
 		const _transfer = initTransferHandlers(this.networks, this.dataServer, this.dataDir, emitTo, broadcastFn, this.settings, _lishs.startVerification, _lishs.finalizeDownloadAdmitted);
@@ -492,6 +499,10 @@ export class APIServer {
 			'lishs.exportAllToFile': _lishs.exportAllToFile,
 			'lishs.backup': _lishs.backup,
 			'lishs.create': _lishs.create,
+			'lishs.createSigned': (p, client) => {
+				if (p.sign !== true) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'sign must be true');
+				return _lishs.create(p, client);
+			},
 			'lishs.delete': _lishs.delete,
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,

@@ -87,18 +87,20 @@
 		lishPeerListRow = null;
 		await lishPeerListSubPage.exit();
 	}
-	function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string): void {
+	function openPeerFromLishPeerList(peerID: string, networkID: string, lishID: string, publisher: string | null): void {
 		// Layer PeerDetail on top of the LISH peer-list (instead of closing the
 		// peer-list first). Back from PeerDetail returns to the peer-list — one
 		// level up — and a second back returns to the Network root. Closing the
 		// peer-list first would skip a level and confuse the user.
-		openPeerFromSearch(peerID, networkID, lishID);
+		openPeerFromSearch(peerID, networkID, lishID, publisher);
 	}
 
 	// =================== PeerDetail overlay ===================
 	let selectedPeer = $state<PeerListEntry | null>(null);
 	let selectedPeerNetworkID = $state('');
 	let highlightLishID = $state<string | undefined>(undefined);
+	// Publisher of the search row the user came from (`null` = unsigned row); undefined when not from search.
+	let highlightPublisher = $state<string | null | undefined>(undefined);
 	/**
 	 * Bumped after each PeerDetail exit so the embedded LishPeerList re-mounts
 	 * via `{#key}`. LishPeerList registers its own `createNavArea` with the
@@ -110,17 +112,18 @@
 	 */
 	let lishPeerListMountKey = $state(0);
 
-	function openPeerDetail(peer: PeerListEntry, networkID: string, lishID?: string): void {
+	function openPeerDetail(peer: PeerListEntry, networkID: string, lishID?: string, publisher?: string | null): void {
 		selectedPeer = peer;
 		selectedPeerNetworkID = networkID;
 		highlightLishID = lishID;
+		highlightPublisher = publisher;
 		detailSubPage.enter(peer.peerID.slice(0, 16) + '...');
 	}
 	function openPeerFromPeersTab(peer: PeerListEntry): void {
 		const netID = peer.networks[0]?.networkID ?? '';
 		openPeerDetail(peer, netID);
 	}
-	function openPeerFromSearch(peerID: string, networkID: string, lishID: string): void {
+	function openPeerFromSearch(peerID: string, networkID: string, lishID: string, publisher: string | null): void {
 		// Build a minimal PeerListEntry — we don't have direct/relay counts for a peer discovered via
 		// search. PeerDetail only uses peerID + networks for display; the LISH list is fetched fresh.
 		const networkConfig = networks.find(n => n.networkID === networkID);
@@ -131,11 +134,12 @@
 			direct: 0,
 			relay: 0,
 		};
-		openPeerDetail(peer, networkID, lishID);
+		openPeerDetail(peer, networkID, lishID, publisher);
 	}
 	async function handleDetailBack(): Promise<void> {
 		selectedPeer = null;
 		highlightLishID = undefined;
+		highlightPublisher = undefined;
 		await detailSubPage.exit();
 		// `detailSubPage.exit()` calls `navHandle.resume()` which re-registers
 		// the parent Network handler under the shared `areaID`, overwriting any
@@ -202,7 +206,7 @@
 </style>
 
 {#if detailSubPage.active && selectedPeer}
-	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} onBack={() => void handleDetailBack()} />
+	<PeerDetail {areaID} {position} peer={selectedPeer} networkID={selectedPeerNetworkID} {highlightLishID} {highlightPublisher} onBack={() => void handleDetailBack()} />
 {:else if lishPeerListSubPage.active && lishPeerListRow}
 	{#key lishPeerListMountKey}
 		<NetworkLishsPeerList {areaID} {position} row={lishPeerListRow} {networks} onBack={() => void handleLishPeerListBack()} onOpenPeer={openPeerFromLishPeerList} />

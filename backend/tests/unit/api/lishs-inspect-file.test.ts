@@ -181,6 +181,23 @@ describe('lishs.inspectFile', () => {
 		expect(await handlers.inspectFileChecksums({ filePath, version: reloaded.version, index: 0, path: 'x.bin' })).toEqual(['s1', 's2']);
 	});
 
+	it('refuses an unknown format version of an unsigned manifest in every preview, as the import does', async () => {
+		for (const version of [2, 0, 1.5, '1']) {
+			const filePath = write('unknown-version.lish', JSON.stringify({ ...valid, version }));
+			const [inspected] = (await handlers.inspectFile({ filePath })).items;
+			expect(inspected!.error).toBe(ErrorCodes.LISH_INVALID_MANIFEST);
+			expect(inspected!.errorDetail).toContain('unsupported manifest version');
+			await expect(handlers.parseFromFile({ filePath })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+			await expect(handlers.parseFromJSON({ json: JSON.stringify({ ...valid, version }) })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+		}
+		for (const manifest of [valid, { ...valid, version: 1 }]) {
+			const filePath = write('known-version.lish', JSON.stringify(manifest));
+			expect((await handlers.inspectFile({ filePath })).items[0]!.error).toBeUndefined();
+			expect(await handlers.parseFromFile({ filePath })).toHaveLength(1);
+			expect(await handlers.parseFromJSON({ json: JSON.stringify(manifest) })).toHaveLength(1);
+		}
+	});
+
 	it('imports nothing and writes nothing', async () => {
 		const before = readdirSync(filesDir).sort();
 		const dataBefore = readdirSync(dataDir).sort();

@@ -92,6 +92,10 @@ class MockDataServerForDownloader {
 	get(lishID: LISHid): IStoredLISH | null {
 		return this.storedLishs.get(lishID) ?? null;
 	}
+	getPublisher(lishID: LISHid): string | null | undefined {
+		const stored = this.storedLishs.get(lishID);
+		return stored ? (stored.publisher ?? null) : undefined;
+	}
 	isCompleteLISH(lish: IStoredLISH): boolean {
 		return this.completeLishs.has(lish.id);
 	}

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { startNodes, stopNodes, getNodeURL, getNodeDataDir, getNodeListenAddresses, nodeTransferProbe } from './helpers/node-manager.ts';
 import { TestClient } from './helpers/ws-test-client.ts';
-import type { ILISHDetail, ILISHListResult, SuccessResponse } from '@shared';
+import type { CreateLISHResponse, DownloadResponse, ILISHDetail, ILISHListResult, SuccessResponse } from '@shared';
 
 /**
  * Real transfers between three isolated backend processes over the public API: node0 creates
@@ -149,6 +149,35 @@ afterAll(async () => {
 }, 60_000);
 
 describe('download from one seeder', () => {
+	it(
+		'downloads bytes from a signed local manifest without a prior import, then reuses the completed dataset',
+		async () => {
+			const seeder = nodes[0]!;
+			const reader = nodes[1]!;
+			const filename = 'signed-payload.bin';
+			const source = join(getNodeDataDir(0), filename);
+			const payload = randomBytes(2 * CHUNK_SIZE + 1);
+			writeFileSync(source, payload);
+			const lishPath = join(getNodeDataDir(1), 'signed.lish');
+			const created = await seeder.call<CreateLISHResponse>('lishs.createSigned', { dataPath: source, lishFile: lishPath, addToSharing: true, chunkSize: CHUNK_SIZE, sign: true });
+			expect(created.publisher).toBe(seederPeerID);
+			const id = created.lishID;
+			await waitForVerification(seeder, id);
+			expect(await reader.call('lishs.get', { lishID: id })).toBeNull();
+			const complete = reader.waitForEvent('transfer.download:complete', (event: any) => event.lishID === id, EVENT_TIMEOUT);
+			const download = await reader.call<DownloadResponse>('transfer.download', { lishPath, networkID: NETWORK_ID });
+			await complete;
+			expect(readFileSync(join(download.downloadDir, filename))).toEqual(payload);
+			expect(await downloadState(reader, id)).toMatchObject({ publisher: seederPeerID, verifiedChunks: 3, totalChunks: 3 });
+
+			const completeAgain = reader.waitForEvent('transfer.download:complete', (event: any) => event.lishID === id, EVENT_TIMEOUT);
+			expect(await reader.call<DownloadResponse>('transfer.download', { lishPath, networkID: NETWORK_ID })).toEqual(download);
+			await completeAgain;
+			expect(readFileSync(join(download.downloadDir, filename))).toEqual(payload);
+		},
+		EVENT_TIMEOUT * 2
+	);
+
 	it(
 		'node1 downloads the whole LISH from node0 with progress, and the bytes match',
 		async () => {

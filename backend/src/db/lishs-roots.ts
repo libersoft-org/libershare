@@ -3,7 +3,7 @@ import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
 import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { isAbsolute } from 'node:path';
 import { datasetRootPath } from '../lish/dataset-root.ts';
-import { addLISH } from './lishs.ts';
+import { addLISH, type AddLISHOptions } from './lishs.ts';
 import { replaceDatasetLinkBindings, type DatasetLinkBinding } from './lishs-link-bindings.ts';
 
 function validatedRoot(value: unknown): DatasetRoot {
@@ -37,9 +37,9 @@ export function getDatasetRoot(db: Database, lishID: string, final = false): Dat
 	}
 }
 
-export function addDataset(db: Database, lish: IStoredLISH, root: DatasetRoot, finalRoot?: DatasetRoot): void {
+export function addDataset(db: Database, lish: IStoredLISH, root: DatasetRoot, finalRoot?: DatasetRoot, options: AddLISHOptions = {}): void {
 	db.transaction(() => {
-		addLISH(db, lish);
+		addLISH(db, lish, options);
 		replaceDatasetLinkBindings(db, lish.id, []);
 		setDatasetRoot(db, lish.id, root);
 		setDatasetRoot(db, lish.id, finalRoot ?? null, true);

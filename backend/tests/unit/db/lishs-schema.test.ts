@@ -45,6 +45,28 @@ describe('initLISHsTables migrates from the actual schema', () => {
 		}
 	});
 
+	it('a database from before signatures gets both columns and keeps its rows unsigned', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'lish-schema-'));
+		dirs.push(dir);
+		const path = join(dir, 'unsigned.db');
+		const old = new Database(path);
+		initLISHsTables(old);
+		old.run('ALTER TABLE lishs DROP COLUMN signature');
+		old.run('ALTER TABLE lishs DROP COLUMN publisher');
+		old.run("INSERT INTO lishs (lish_id, name, chunk_size, checksum_algo, verify_pending) VALUES ('L1', 'kept', 1024, 'sha256', 1)");
+		old.close();
+		const db = new Database(path);
+		try {
+			initLISHsTables(db);
+			// Appended after the existing migrations, in this order.
+			expect(columns(db).slice(-2)).toEqual(['publisher', 'signature']);
+			const row = db.query<{ name: string; verify_pending: number; publisher: string | null; signature: string | null }, []>('SELECT name, verify_pending, publisher, signature FROM lishs').get();
+			expect(row).toEqual({ name: 'kept', verify_pending: 1, publisher: null, signature: null });
+		} finally {
+			db.close();
+		}
+	});
+
 	it('a database it cannot write fails the start instead of passing as "column exists"', async () => {
 		const db = new Database(await olderDatabase(), { readonly: true });
 		try {
