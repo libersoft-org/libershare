@@ -243,11 +243,33 @@
 				await press('down');
 				assert(selectedAction() === label('fileBrowser.editFile'), `Down after the click: ${selectedAction()}`);
 			});
+			await test('a folder with thousands of entries draws only the rows near the viewport and the list keys still reach them', async () => {
+				await unmount(component);
+				// The list scrolls only inside a page of limited height, as in the app.
+				root.style.height = '600px';
+				listings['/home/user/big'] = Array.from({ length: 20000 }, (_, index) => ({ name: `entry-${String(index).padStart(5, '0')}.txt`, path: `/home/user/big/entry-${index}.txt`, type: 'file', size: 1 }));
+				component = await open({ initialPath: '/home/user/big' });
+				assert(rows().length > 1 && rows().length < 200, `Drew ${rows().length} rows of 20001`);
+				// The list scrolls smoothly, so the selected row is drawn a few frames after the key.
+				const selects = async text => {
+					for (let wait = 0; wait < 100 && !selectedRowText().includes(text); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+					return selectedRowText().includes(text);
+				};
+				await press('end');
+				assert(await selects('entry-19999.txt'), `End selected ${selectedRowText()}`);
+				assert(rows().length < 200, `Drew ${rows().length} rows at the end`);
+				await press('pageUp');
+				assert(await selects('entry-19989.txt'), `Page up selected ${selectedRowText()}`);
+				for (const char of 'entry-1') emitTypedChar(char);
+				assert(await selects('entry-10000.txt'), `Typing selected ${selectedRowText()}`);
+				await press('home');
+				assert(await selects('..'), `Home selected ${selectedRowText()}`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 13 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 14 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
