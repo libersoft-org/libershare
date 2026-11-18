@@ -162,8 +162,19 @@ export interface NavAreaOptions {
 	/** Initial selected position (defaults to top-left item) */
 	initialPosition?: NavPos | undefined;
 	onBack?: (() => void) | undefined;
-	/** Called when pressing down and no item below. Return area ID to navigate to, or false */
-	onDown?: (() => string | false) | undefined;
+	/**
+	 * Called when pressing down and no item below. Return the area ID to move to, true when the hook
+	 * handled the press itself (the selection stays), or false to let the area layout decide.
+	 */
+	onDown?: (() => string | boolean) | undefined;
+	/** Same as onDown, for pressing up with no item above. */
+	onUp?: (() => string | boolean) | undefined;
+	/** Same as onDown, for pressing left with no item to the left. */
+	onLeft?: (() => string | boolean) | undefined;
+	/** Same as onDown, for pressing right with no item to the right. */
+	onRight?: (() => string | boolean) | undefined;
+	/** Called with each character typed while the area is active, e.g. for type-ahead in a list. */
+	onTypedChar?: ((char: string) => void) | undefined;
 	/** Called when the area is activated */
 	onActivate?: (() => void) | undefined;
 	/** Called when selected item changes */
@@ -194,7 +205,7 @@ export interface NavAreaHandle {
  * @returns Handle with pause/resume for dynamic area management
  */
 export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
-	const { areaID, position, activate = false, trap = false, initialPosition, onBack, onDown, onActivate: onAreaActivate, onSelect } = getConfig();
+	const { areaID, position, activate = false, trap = false, initialPosition, onBack, onDown, onUp, onLeft, onRight, onTypedChar, onActivate: onAreaActivate, onSelect } = getConfig();
 
 	// Reactive state (runes work in .svelte.ts)
 	let items: NavItem[] = [];
@@ -273,22 +284,23 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		return currentItem()?.onNavigate?.(action) === true;
 	}
 
+	/** Moves within the area, else lets the hook for that direction say where the press goes. */
+	function move(direction: Direction, leave: (() => string | boolean) | undefined): boolean {
+		if (takenByItem(direction) || navigate(direction)) return true;
+		const target = leave?.();
+		if (typeof target === 'string') activateArea(target);
+		return target ? true : trap;
+	}
+
 	// Area handlers for useArea
 	const areaHandlers = {
-		up: (): boolean => takenByItem('up') || navigate('up'),
-		down(): boolean {
-			if (takenByItem('down') || navigate('down')) return true;
-			if (onDown) {
-				const target = onDown();
-				if (target) {
-					activateArea(target);
-					return true;
-				}
-			}
-			return trap;
+		up: (): boolean => move('up', onUp),
+		down: (): boolean => move('down', onDown),
+		left: (): boolean => move('left', onLeft),
+		right: (): boolean => move('right', onRight),
+		typedChar(char: string): void {
+			onTypedChar?.(char);
 		},
-		left: (): boolean => takenByItem('left') || navigate('left'),
-		right: (): boolean => takenByItem('right') || navigate('right'),
 		confirmDown(): void {
 			pressed = true;
 			currentItem()?.onPress?.();

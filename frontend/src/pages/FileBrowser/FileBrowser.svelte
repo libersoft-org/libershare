@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
+	import { activateArea, activeArea } from '../../scripts/areas.ts';
 	import { isMouseActive } from '../../scripts/input/mouse.ts';
+	import { type NavAction, type NavAreaOptions, type NavItem, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import NavScope from '../../components/NavArea/NavScope.svelte';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { CONTENT_OFFSETS } from '../../scripts/navigationLayout.ts';
 	import { t, withDetail, translateError } from '../../scripts/language.ts';
@@ -65,11 +67,11 @@
 	let listAreaID = $derived(`${areaID}-list`);
 	let active = $derived($activeArea === listAreaID);
 	let actionsActive = $derived($activeArea === `${areaID}-actions`);
-	let filterActive = $derived($activeArea === `${areaID}-filter`);
 	let selectedIndex = $state(0);
-	let selectedActionIndex = $state(0);
-	let selectedFilterIndex = $state(0);
+	// The filter the filter panel opens on.
+	let initialFilterIndex = $state(0);
 	let showActions = $state(false);
+	let actionsScope: ReturnType<typeof NavScope> | undefined = $state();
 	let showFilterPanel = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let currentPath = $state<string>('');
@@ -110,25 +112,16 @@
 	let pendingSavePath = $state('');
 	let saveErrorMessage = $state('');
 	const LARGE_FILE_THRESHOLD = 1024 * 1024; // 1 MB
-	let unregisterDirectoryActions: (() => void) | null = null;
-	let unregisterList: (() => void) | null = null;
-	let unregisterActions: (() => void) | null = null;
-	let unregisterFilter: (() => void) | null = null;
-	let unregisterSaveFileName: (() => void) | null = null;
-	let unregisterNameFilter: (() => void) | null = null;
 	// Save file name mode
 	function getInitialSaveFileName(): string {
 		return saveFileName ?? '';
 	}
 	let internalSaveFileName = $state(getInitialSaveFileName());
 	let saveFileNameInput: ReturnType<typeof Input> | undefined = $state();
-	let saveFileNameActive = $derived($activeArea === `${areaID}-save-filename`);
-	let saveFileNameColumn = $state(0); // 0 = input, 1 = button
 	// Name filter (FE-only): filters items in the current directory by substring match.
 	let nameFilter = $state('');
 	let showNameFilter = $state(false);
 	let nameFilterInput: ReturnType<typeof Input> | undefined = $state();
-	let nameFilterActive = $derived($activeArea === `${areaID}-name-filter`);
 	let filteredItems = $derived.by((): StorageItemData[] => {
 		const q = nameFilter.trim().toLowerCase();
 		if (!q) return items;
@@ -143,8 +136,6 @@
 	}
 	// Directory toolbar actions
 	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter, !!onShare));
-	let selectedDirectoryActionIndex = $state(0);
-	let directoryActionsActive = $derived($activeArea === `${areaID}-directory-actions`);
 	// Filter panel actions
 	let filterActions = $derived(buildFilterActions($t, fileFilter, fileFilterName, customFilter ?? undefined));
 	let showCustomFilterDialog = $state(false);
@@ -194,13 +185,8 @@
 		scrollToElement(itemElements, selectedIndex);
 	}
 
-	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
-	// While the actions panel is open, hover must not re-select at all: the panel derives from
-	// selectedItem, so a stray hover would re-target it — or unmount it entirely when the hover
-	// lands on a directory or "..". Selecting a different item is still possible by clicking,
-	// which closes the panel first (handleItemClick), matching the keyboard semantics.
-	// The filter panel gets the same guard: its area owns the arrows while open, and a stray
-	// hover would steal the active area back to the list without closing the panel.
+	// Keep a scroll under a stale cursor from stealing selection. While a panel is open,
+	// hovering must also leave its keyboard focus and target file alone.
 	function handleItemHover(index: number): void {
 		if (!isMouseActive() || showActions || showFilterPanel) return;
 		activateArea(listAreaID);
@@ -250,268 +236,143 @@
 
 	function openActions(): void {
 		showActions = true;
-		selectedActionIndex = 0;
+		actionsScope?.controller.select([0, 0]);
 		activateArea(`${areaID}-actions`);
 	}
 
 	const PAGE_SIZE = 10;
 
-	const areaHandlers = {
-		up(): boolean {
-			if (selectedIndex > 0) {
-				selectedIndex--;
-				showActions = false;
-				scrollToSelected();
+	function selectRow(index: number): void {
+		selectedIndex = index;
+		showActions = false;
+		scrollToSelected();
+	}
+
+	function backOrUp(): void {
+		if (parentPath !== null) navigateUp();
+		else onBack?.();
+	}
+
+	// Each part of the browser is a declarative NavArea (NavScope); a press that leaves one names
+	// the area it goes to, and false lets the area layout decide.
+	// The list is one item that walks its rows itself, like the rows before; mouse rows keep their own handlers.
+	const listItem: NavItem = {
+		pos: [0, 0],
+		onConfirm: (): void => activateItem(filteredItems[selectedIndex]),
+		onNavigate(action: NavAction): boolean {
+			if (action === 'left') return false;
+			// Only an open actions panel lies to the right of the list.
+			if (action === 'right') return !showActions;
+			const last = filteredItems.length - 1;
+			if (action === 'up' || action === 'down') {
+				const next = selectedIndex + (action === 'up' ? -1 : 1);
+				if (next < 0 || next > last) return false;
+				selectRow(next);
 				return true;
 			}
-			if (error) {
-				if (showPath) activateArea(`${areaID}-path`);
-				else return false;
-			} else if (showNameFilter) activateArea(`${areaID}-name-filter`);
-			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
-			else activateArea(`${areaID}-directory-actions`);
+			if (last < 0) return true;
+			if (action === 'pageUp') selectRow(Math.max(0, selectedIndex - PAGE_SIZE));
+			else if (action === 'pageDown') selectRow(Math.min(last, selectedIndex + PAGE_SIZE));
+			else if (action === 'home') selectRow(0);
+			else selectRow(last);
 			return true;
-		},
-		down(): boolean {
-			if (selectedIndex < filteredItems.length - 1) {
-				selectedIndex++;
-				showActions = false;
-				scrollToSelected();
-				return true;
-			}
-			if (onDownAtEnd) return onDownAtEnd();
-			return false;
-		},
-		pageUp(): void {
-			if (filteredItems.length === 0) return;
-			selectedIndex = Math.max(0, selectedIndex - PAGE_SIZE);
-			showActions = false;
-			scrollToSelected();
-		},
-		pageDown(): void {
-			if (filteredItems.length === 0) return;
-			selectedIndex = Math.min(filteredItems.length - 1, selectedIndex + PAGE_SIZE);
-			showActions = false;
-			scrollToSelected();
-		},
-		home(): void {
-			if (filteredItems.length === 0) return;
-			selectedIndex = 0;
-			showActions = false;
-			scrollToSelected();
-		},
-		end(): void {
-			if (filteredItems.length === 0) return;
-			selectedIndex = filteredItems.length - 1;
-			showActions = false;
-			scrollToSelected();
-		},
-		typedChar(char: string): void {
-			handleTypedChar(char);
-		},
-		left(): boolean {
-			return false;
-		}, // Allow navigation to other areas
-		right(): boolean {
-			return !showActions;
-		}, // Allow navigation to actions panel only when it's visible
-		confirmDown(): void {},
-		confirmUp(): void {
-			activateItem(filteredItems[selectedIndex]);
-		},
-		confirmCancel(): void {},
-		back(): void {
-			if (parentPath !== null) navigateUp();
-			else onBack?.();
 		},
 	};
 
-	const directoryActionsAreaHandlers = {
-		up(): boolean {
-			// Go to path breadcrumb if available
-			if (showPath) {
-				activateArea(`${areaID}-path`);
-				return true;
-			}
-			// Otherwise let areaNavigate handle it (go to global breadcrumb)
-			return false;
-		},
-		down(): boolean {
-			// If the name filter row is visible, descend into it; else skip to save-filename or list
-			if (showNameFilter) activateArea(`${areaID}-name-filter`);
-			else if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
-			else activateArea(listAreaID);
-			return true;
-		},
-		left(): boolean {
-			if (selectedDirectoryActionIndex > 0) {
-				selectedDirectoryActionIndex--;
-				return true;
-			}
-			return false;
-		},
-		right(): boolean {
-			if (selectedDirectoryActionIndex < directoryActions.length - 1) {
-				selectedDirectoryActionIndex++;
-				return true;
-			}
-			return false;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			const action = directoryActions[selectedDirectoryActionIndex];
-			if (action) handleDirectoryAction(action.id);
-		},
-		confirmCancel(): void {},
-		back(): void {
-			if (parentPath !== null) navigateUp();
-			else onBack?.();
-		},
-	};
+	function listOptions(): NavAreaOptions {
+		return {
+			areaID: listAreaID,
+			position: listPosition,
+			onBack: backOrUp,
+			onTypedChar: handleTypedChar,
+			onUp(): string | false {
+				if (error) return showPath ? `${areaID}-path` : false;
+				if (showNameFilter) return `${areaID}-name-filter`;
+				if (saveFileName !== undefined) return `${areaID}-save-filename`;
+				return `${areaID}-directory-actions`;
+			},
+			onDown: (): boolean => onDownAtEnd?.() ?? false,
+		};
+	}
+
+	function directoryActionsOptions(): NavAreaOptions {
+		return {
+			areaID: `${areaID}-directory-actions`,
+			position: directoryActionsPosition,
+			onBack: backOrUp,
+			// Without the path breadcrumb, up goes on to the page breadcrumb through the area layout.
+			onUp: (): string | false => (showPath ? `${areaID}-path` : false),
+			onDown(): string {
+				if (showNameFilter) return `${areaID}-name-filter`;
+				if (saveFileName !== undefined) return `${areaID}-save-filename`;
+				return listAreaID;
+			},
+		};
+	}
+
+	function nameFilterOptions(): NavAreaOptions {
+		return {
+			areaID: `${areaID}-name-filter`,
+			position: nameFilterPosition,
+			onBack(): void {
+				nameFilterInput?.blur();
+				backOrUp();
+			},
+			onUp(): string {
+				nameFilterInput?.blur();
+				return `${areaID}-directory-actions`;
+			},
+			onDown(): string {
+				nameFilterInput?.blur();
+				return saveFileName !== undefined ? `${areaID}-save-filename` : listAreaID;
+			},
+			// Left and right stay in the input, which handles the cursor.
+			onLeft: (): boolean => true,
+			onRight: (): boolean => true,
+		};
+	}
+
+	function saveFileNameOptions(): NavAreaOptions {
+		return {
+			areaID: `${areaID}-save-filename`,
+			position: directoryActionsPosition,
+			onBack(): void {
+				saveFileNameInput?.blur();
+				onBack?.();
+			},
+			onSelect(pos: NavPos): void {
+				if (pos[0] === 1) saveFileNameInput?.blur();
+			},
+			onUp(): string {
+				saveFileNameInput?.blur();
+				return showNameFilter ? `${areaID}-name-filter` : `${areaID}-directory-actions`;
+			},
+			onDown(): string {
+				saveFileNameInput?.blur();
+				return listAreaID;
+			},
+			// The input keeps left for its cursor and the Save button ends the row.
+			onLeft: (): boolean => true,
+			onRight: (): boolean => true,
+		};
+	}
+
+	function closeActions(): void {
+		showActions = false;
+		activateArea(listAreaID);
+	}
+
+	// The two side panels hold the keyboard until they are closed.
+	function actionsOptions(): NavAreaOptions {
+		return { areaID: `${areaID}-actions`, position: actionsPosition, activate: true, trap: true, onBack: closeActions };
+	}
+
+	function filterOptions(): NavAreaOptions {
+		return { areaID: `${areaID}-filter`, position: actionsPosition, activate: true, trap: true, initialPosition: [0, initialFilterIndex], onBack: closeFilterPanel };
+	}
 
 	// File actions from fileBrowser.ts
 	let fileActions = $derived(getFileActions($t, selectFileButton, !!onShare, selectedItem?.broken));
-
-	const actionsAreaHandlers = {
-		up(): boolean {
-			if (selectedActionIndex > 0) {
-				selectedActionIndex--;
-				return true;
-			}
-			return true; // Block navigation outside actions panel
-		},
-		down(): boolean {
-			if (selectedActionIndex < fileActions.length - 1) {
-				selectedActionIndex++;
-				return true;
-			}
-			return true; // Block navigation outside actions panel
-		},
-		left(): boolean {
-			return true;
-		}, // Block navigation outside actions panel
-		right(): boolean {
-			return true;
-		}, // Block navigation outside actions panel
-		confirmDown(): void {},
-		confirmUp(): void {
-			const action = fileActions[selectedActionIndex];
-			if (action) handleAction(action.id);
-		},
-		confirmCancel(): void {},
-		back(): void {
-			showActions = false;
-			activateArea(listAreaID);
-		},
-	};
-
-	const filterAreaHandlers = {
-		up(): boolean {
-			if (selectedFilterIndex > 0) {
-				selectedFilterIndex--;
-				return true;
-			}
-			return true; // Block navigation outside filter panel
-		},
-		down(): boolean {
-			if (selectedFilterIndex < filterActions.length - 1) {
-				selectedFilterIndex++;
-				return true;
-			}
-			return true; // Block navigation outside filter panel
-		},
-		left(): boolean {
-			return true;
-		}, // Block navigation outside filter panel
-		right(): boolean {
-			return true;
-		}, // Block navigation outside filter panel
-		confirmDown(): void {},
-		confirmUp(): void {
-			const action = filterActions[selectedFilterIndex];
-			if (action) handleFilterAction(action.id);
-		},
-		confirmCancel(): void {},
-		back(): void {
-			closeFilterPanel();
-		},
-	};
-
-	const nameFilterAreaHandlers = {
-		up(): boolean {
-			nameFilterInput?.blur();
-			activateArea(`${areaID}-directory-actions`);
-			return true;
-		},
-		down(): boolean {
-			nameFilterInput?.blur();
-			if (saveFileName !== undefined) activateArea(`${areaID}-save-filename`);
-			else activateArea(listAreaID);
-			return true;
-		},
-		left(): boolean {
-			return true; // stay in input, let it handle cursor
-		},
-		right(): boolean {
-			return true; // stay in input, let it handle cursor
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			nameFilterInput?.focus();
-		},
-		confirmCancel(): void {},
-		back(): void {
-			nameFilterInput?.blur();
-			if (parentPath !== null) navigateUp();
-			else onBack?.();
-		},
-	};
-
-	const saveFileNameAreaHandlers = {
-		up(): boolean {
-			// Go back to name-filter if visible, otherwise to directory actions
-			saveFileNameInput?.blur();
-			if (showNameFilter) activateArea(`${areaID}-name-filter`);
-			else activateArea(`${areaID}-directory-actions`);
-			return true;
-		},
-		down(): boolean {
-			// Go to file list
-			saveFileNameInput?.blur();
-			activateArea(listAreaID);
-			return true;
-		},
-		left(): boolean {
-			if (saveFileNameColumn > 0) {
-				saveFileNameColumn--;
-				return true;
-			}
-			return true; // Stay in input, let it handle cursor
-		},
-		right(): boolean {
-			if (saveFileNameColumn < 1) {
-				saveFileNameColumn++;
-				saveFileNameInput?.blur();
-				return true;
-			}
-			return true;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			if (saveFileNameColumn === 0) {
-				// Input is selected - focus it for editing
-				saveFileNameInput?.focus();
-			} else {
-				// Button is selected - confirm save
-				handleSave();
-			}
-		},
-		confirmCancel(): void {},
-		back(): void {
-			saveFileNameInput?.blur();
-			onBack?.();
-		},
-	};
 
 	function handleSaveFileNameChange(value: string): void {
 		internalSaveFileName = value;
@@ -590,23 +451,18 @@
 	}
 
 	function openFilterPanel(): void {
-		showFilterPanel = true;
-		selectedFilterIndex = 0;
+		initialFilterIndex = 0;
 		// Find current filter in the list to pre-select it
 		if (showAllFiles) {
 			const allIDx = filterActions.findIndex(a => a.id === '*');
-			if (allIDx >= 0) selectedFilterIndex = allIDx;
-		} else if (fileFilter && fileFilter.length > 0) selectedFilterIndex = 0; // Select first filter option
-		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
-		activateArea(`${areaID}-filter`);
+			if (allIDx >= 0) initialFilterIndex = allIDx;
+		} else if (fileFilter && fileFilter.length > 0) initialFilterIndex = 0; // Select first filter option
+		// The panel's NavArea activates itself when it mounts.
+		showFilterPanel = true;
 	}
 
 	function closeFilterPanel(): void {
 		showFilterPanel = false;
-		if (unregisterFilter) {
-			unregisterFilter();
-			unregisterFilter = null;
-		}
 		activateArea(`${areaID}-directory-actions`);
 	}
 
@@ -631,19 +487,15 @@
 		closeFilterPanel();
 	}
 
+	// Dialogs hold the keyboard in their own trapped NavArea, so the areas under them stay as they are.
 	function openCustomFilterDialog(): void {
 		showCustomFilterDialog = true;
-		if (unregisterFilter) {
-			unregisterFilter();
-			unregisterFilter = null;
-		}
 		pushBreadcrumb($t('fileBrowser.customFilter'));
 	}
 
 	function closeCustomFilterDialog(): void {
 		showCustomFilterDialog = false;
 		popBreadcrumb();
-		unregisterFilter = useArea(`${areaID}-filter`, filterAreaHandlers, actionsPosition);
 		tick().then(() => activateArea(`${areaID}-filter`));
 	}
 
@@ -658,19 +510,6 @@
 
 	function showDeleteConfirmDialog(): void {
 		showDeleteConfirm = true;
-		// Unregister areas so dialog can take over
-		if (unregisterDirectoryActions) {
-			unregisterDirectoryActions();
-			unregisterDirectoryActions = null;
-		}
-		if (unregisterList) {
-			unregisterList();
-			unregisterList = null;
-		}
-		if (unregisterActions) {
-			unregisterActions();
-			unregisterActions = null;
-		}
 		pushBreadcrumb($t('common.delete'));
 	}
 
@@ -688,29 +527,12 @@
 		showDeleteConfirm = false;
 		popBreadcrumb();
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(`${areaID}-directory-actions`);
 	}
 
 	function showNewDirectoryDialog(): void {
 		showNewDirectoryDialogState = true;
 		dialogError = undefined;
-		// Unregister areas so dialog can take over
-		if (unregisterDirectoryActions) {
-			unregisterDirectoryActions();
-			unregisterDirectoryActions = null;
-		}
-		if (unregisterList) {
-			unregisterList();
-			unregisterList = null;
-		}
-		if (unregisterActions) {
-			unregisterActions();
-			unregisterActions = null;
-		}
 		pushBreadcrumb($t('common.newDirectory'));
 	}
 
@@ -733,10 +555,6 @@
 		showNewDirectoryDialogState = false;
 		popBreadcrumb();
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		// Focus on list if directory was created successfully, otherwise on toolbar
 		if (focusList) activateArea(listAreaID);
 		else activateArea(`${areaID}-directory-actions`);
@@ -745,19 +563,6 @@
 	function showCreateFileDialog(): void {
 		showCreateFileDialogState = true;
 		dialogError = undefined;
-		// Unregister areas so dialog can take over
-		if (unregisterDirectoryActions) {
-			unregisterDirectoryActions();
-			unregisterDirectoryActions = null;
-		}
-		if (unregisterList) {
-			unregisterList();
-			unregisterList = null;
-		}
-		if (unregisterActions) {
-			unregisterActions();
-			unregisterActions = null;
-		}
 		pushBreadcrumb($t('fileBrowser.createFile'));
 	}
 
@@ -780,10 +585,6 @@
 		showCreateFileDialogState = false;
 		popBreadcrumb();
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		if (focusList) activateArea(listAreaID);
 		else activateArea(`${areaID}-directory-actions`);
 	}
@@ -812,19 +613,6 @@
 		fileToDelete = item;
 		showDeleteFileConfirm = true;
 		showActions = false;
-		// Unregister areas so dialog can take over
-		if (unregisterDirectoryActions) {
-			unregisterDirectoryActions();
-			unregisterDirectoryActions = null;
-		}
-		if (unregisterList) {
-			unregisterList();
-			unregisterList = null;
-		}
-		if (unregisterActions) {
-			unregisterActions();
-			unregisterActions = null;
-		}
 		pushBreadcrumb($t('fileBrowser.deleteFile'));
 	}
 
@@ -844,10 +632,6 @@
 		fileToDelete = null;
 		popBreadcrumb();
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
 	}
 
@@ -861,19 +645,6 @@
 		itemToRename = item;
 		showRenameDialogState = true;
 		showActions = false;
-		// Unregister areas so dialog can take over
-		if (unregisterDirectoryActions) {
-			unregisterDirectoryActions();
-			unregisterDirectoryActions = null;
-		}
-		if (unregisterList) {
-			unregisterList();
-			unregisterList = null;
-		}
-		if (unregisterActions) {
-			unregisterActions();
-			unregisterActions = null;
-		}
 		const breadcrumb = item.type === 'directory' ? $t('fileBrowser.renameDirectory') : $t('fileBrowser.renameFile');
 		pushBreadcrumb(breadcrumb);
 	}
@@ -902,10 +673,6 @@
 		itemToRename = null;
 		popBreadcrumb();
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
 	}
 
@@ -915,19 +682,6 @@
 			showLargeFileWarning = true;
 			pendingEditFile = item;
 			showActions = false;
-			// Unregister areas so dialog can take over
-			if (unregisterDirectoryActions) {
-				unregisterDirectoryActions();
-				unregisterDirectoryActions = null;
-			}
-			if (unregisterList) {
-				unregisterList();
-				unregisterList = null;
-			}
-			if (unregisterActions) {
-				unregisterActions();
-				unregisterActions = null;
-			}
 			pushBreadcrumb($t('fileBrowser.largeFileWarning'));
 			return;
 		}
@@ -938,19 +692,6 @@
 		fileToEdit = item;
 		showEditorState = true;
 		showActions = false;
-		// Unregister areas so editor can take over
-		if (unregisterDirectoryActions) {
-			unregisterDirectoryActions();
-			unregisterDirectoryActions = null;
-		}
-		if (unregisterList) {
-			unregisterList();
-			unregisterList = null;
-		}
-		if (unregisterActions) {
-			unregisterActions();
-			unregisterActions = null;
-		}
 	}
 
 	function confirmLargeFileEdit(): void {
@@ -967,10 +708,6 @@
 		pendingEditFile = null;
 		popBreadcrumb();
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
 		await tick();
 		scrollToSelected();
@@ -980,10 +717,6 @@
 		showEditorState = false;
 		fileToEdit = null;
 		await tick();
-		// Re-register all areas
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		activateArea(listAreaID);
 		await tick();
 		scrollToSelected();
@@ -1050,10 +783,6 @@
 			showEditorState = false;
 			fileToEdit = null;
 			await tick();
-			// Re-register all areas
-			unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-			unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-			unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
 		}
 		loadDirectory(path);
 	}
@@ -1067,12 +796,7 @@
 	}
 
 	onMount(() => {
-		// Register sub-areas with positions relative to content area
-		unregisterDirectoryActions = useArea(`${areaID}-directory-actions`, directoryActionsAreaHandlers, directoryActionsPosition);
-		unregisterNameFilter = useArea(`${areaID}-name-filter`, nameFilterAreaHandlers, nameFilterPosition);
-		if (saveFileName !== undefined) unregisterSaveFileName = useArea(`${areaID}-save-filename`, saveFileNameAreaHandlers, directoryActionsPosition);
-		unregisterList = useArea(`${areaID}-list`, areaHandlers, listPosition);
-		unregisterActions = useArea(`${areaID}-actions`, actionsAreaHandlers, actionsPosition);
+		// The sub-areas are NavScopes in the markup and registered themselves before this runs.
 		activateArea(`${areaID}-list`);
 		(async () => {
 			try {
@@ -1087,14 +811,6 @@
 				loading = false;
 			}
 		})();
-		return () => {
-			if (unregisterDirectoryActions) unregisterDirectoryActions();
-			if (unregisterNameFilter) unregisterNameFilter();
-			if (unregisterSaveFileName) unregisterSaveFileName();
-			if (unregisterList) unregisterList();
-			if (unregisterActions) unregisterActions();
-			if (unregisterFilter) unregisterFilter();
-		};
 	});
 </script>
 
@@ -1193,7 +909,7 @@
 
 <div class="browser">
 	{#if showPath}
-		<PathBreadcrumb areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor-toolbar` : error ? `${areaID}-list` : `${areaID}-directory-actions`)} />
+		<PathBreadcrumb areaID="{areaID}-path" position={pathBreadcrumbPosition} path={showEditorState && fileToEdit ? fileToEdit.path : currentPath} {separator} onNavigate={handleBreadcrumbNavigate} onDown={() => (showEditorState ? `${areaID}-editor` : error ? `${areaID}-list` : `${areaID}-directory-actions`)} />
 	{/if}
 	{#if showEditorState && fileToEdit}
 		<Editor areaID="{areaID}-editor" filePath={fileToEdit.path} fileName={fileToEdit.name} {position} onBack={closeEditor} onUp={() => activateArea(`${areaID}-path`)} />
@@ -1202,85 +918,79 @@
 			{#if error}
 				<Alert type="error" message={error} />
 			{:else}
-				<div class="directory-actions">
-					{#each directoryActions as action, index (action.id)}
-						<Button label={action.label} icon={action.icon} active={action.id === 'toggleNameFilter' && showNameFilter} selected={directoryActionsActive && selectedDirectoryActionIndex === index} onConfirm={() => handleDirectoryAction(action.id)} />
-					{/each}
-				</div>
-				{#if showNameFilter}
-					<div class="name-filter-row">
-						<Input bind:this={nameFilterInput} bind:value={nameFilter} placeholder={$t('fileBrowser.filterByNamePlaceholder')} fontSize="2vh" padding="1vh 1.5vh" selected={nameFilterActive} onchange={handleNameFilterChange} flex />
+				<NavScope options={directoryActionsOptions()}>
+					<div class="directory-actions">
+						{#each directoryActions as action, index (action.id)}
+							<Button label={action.label} icon={action.icon} active={action.id === 'toggleNameFilter' && showNameFilter} position={[index, 0]} onConfirm={() => handleDirectoryAction(action.id)} />
+						{/each}
 					</div>
+				</NavScope>
+				{#if showNameFilter}
+					<NavScope options={nameFilterOptions()}>
+						<div class="name-filter-row">
+							<Input bind:this={nameFilterInput} bind:value={nameFilter} placeholder={$t('fileBrowser.filterByNamePlaceholder')} fontSize="2vh" padding="1vh 1.5vh" position={[0, 0]} onchange={handleNameFilterChange} flex />
+						</div>
+					</NavScope>
 				{/if}
 			{/if}
 			{#if saveFileName !== undefined}
-				<div class="save-filename-row">
-					<Input bind:this={saveFileNameInput} label={$t('common.fileName')} value={internalSaveFileName} selected={saveFileNameActive && saveFileNameColumn === 0} onchange={handleSaveFileNameChange} />
-					<Button label={$t('common.save')} icon="/img/check.svg" selected={saveFileNameActive && saveFileNameColumn === 1} onConfirm={handleSave} />
-				</div>
+				<NavScope options={saveFileNameOptions()}>
+					<div class="save-filename-row">
+						<Input bind:this={saveFileNameInput} label={$t('common.fileName')} value={internalSaveFileName} position={[0, 0]} onchange={handleSaveFileNameChange} />
+						<Button label={$t('common.save')} icon="/img/check.svg" position={[1, 0]} onConfirm={handleSave} />
+					</div>
+				</NavScope>
 				{#if saveErrorMessage}
 					<Alert type="error" message={saveErrorMessage} />
 				{/if}
 			{/if}
 			<div class="table-row">
 				<div class="container">
-					<Table {columns} noBorder>
-						<Header>
-							<Cell>{$t('common.name')}</Cell>
-							<Cell align="right" desktopOnly>{$t('common.size')}</Cell>
-							<Cell align="right" desktopOnly>{$t('localStorage.modified')}</Cell>
-						</Header>
-						<div class="items">
-							{#if loading}
-								<div class="loading">
-									<Spinner size="8vh" />
-								</div>
-							{:else if error}
-								{#each filteredItems as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
-								{/each}
-							{:else}
-								{#each filteredItems as item, index (item.id)}
-									<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
-								{/each}
-							{/if}
-						</div>
-					</Table>
+					<NavScope options={listOptions()} item={listItem}>
+						<Table {columns} noBorder>
+							<Header>
+								<Cell>{$t('common.name')}</Cell>
+								<Cell align="right" desktopOnly>{$t('common.size')}</Cell>
+								<Cell align="right" desktopOnly>{$t('localStorage.modified')}</Cell>
+							</Header>
+							<div class="items">
+								{#if loading}
+									<div class="loading">
+										<Spinner size="8vh" />
+									</div>
+								{:else if error}
+									{#each filteredItems as item, index (item.id)}
+										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+									{/each}
+								{:else}
+									{#each filteredItems as item, index (item.id)}
+										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+									{/each}
+								{/if}
+							</div>
+						</Table>
+					</NavScope>
 					{#if typeAheadBuffer}
 						<div class="type-ahead-hint">{typeAheadBuffer}</div>
 					{/if}
 				</div>
 				{#if showActions && selectedItem?.type === 'file'}
-					<div class="actions">
-						{#each fileActions as action, index (action.id)}
-							<Button
-								icon={action.icon}
-								label={action.label}
-								selected={actionsActive && selectedActionIndex === index}
-								onConfirm={() => {
-									activateArea(`${areaID}-actions`);
-									selectedActionIndex = index;
-									handleAction(action.id);
-								}}
-							/>
-						{/each}
-					</div>
+					<NavScope bind:this={actionsScope} options={actionsOptions()}>
+						<div class="actions">
+							{#each fileActions as action, index (action.id)}
+								<Button icon={action.icon} label={action.label} position={[0, index]} onConfirm={() => handleAction(action.id)} />
+							{/each}
+						</div>
+					</NavScope>
 				{/if}
 				{#if showFilterPanel}
-					<div class="actions">
-						{#each filterActions as action, index (action.id)}
-							<Button
-								icon={action.icon}
-								label={action.label}
-								selected={filterActive && selectedFilterIndex === index}
-								onConfirm={() => {
-									activateArea(`${areaID}-filter`);
-									selectedFilterIndex = index;
-									handleFilterAction(action.id);
-								}}
-							/>
-						{/each}
-					</div>
+					<NavScope options={filterOptions()}>
+						<div class="actions">
+							{#each filterActions as action, index (action.id)}
+								<Button icon={action.icon} label={action.label} position={[0, index]} onConfirm={() => handleFilterAction(action.id)} />
+							{/each}
+						</div>
+					</NavScope>
 				{/if}
 			</div>
 		</div>
