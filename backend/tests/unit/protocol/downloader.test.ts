@@ -733,7 +733,9 @@ describe('Downloader – oversized manifest across peers', () => {
 	it.each([true, false])('waits for a pending HAVE connection before reporting the manifest refusal (connects: %p)', async connects => {
 		const ds = new MockDataServer();
 		const dl = awaitingManifestDownloader(ds);
-		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const peerManager = priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient>; hasCapacity: () => boolean };
+		peerManager.hasCapacity = () => true;
+		const peers = peerManager.peers;
 		const dialStarted = Promise.withResolvers<void>();
 		const dialing = Promise.withResolvers<void>();
 		const peerID = 'peer-connecting';
@@ -752,7 +754,12 @@ describe('Downloader – oversized manifest across peers', () => {
 		const have = announcements.onHaveAnnouncement({ lishID: 'test-oversized-lish', peerID, multiaddrs: [], chunks: 'all' });
 		try {
 			try {
-				await dialStarted.promise;
+				await Promise.race([
+					dialStarted.promise,
+					have.then(() => {
+						throw new Error('HAVE finished without connecting');
+					}),
+				]);
 				peers.set('peer-oversized-1', oversizedClient());
 				await doWork();
 				expect(dl.getError()).toBeNull();
