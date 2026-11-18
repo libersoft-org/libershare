@@ -734,12 +734,13 @@ describe('Downloader – oversized manifest across peers', () => {
 		const ds = new MockDataServer();
 		const dl = awaitingManifestDownloader(ds);
 		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const dialStarted = Promise.withResolvers<void>();
 		const dialing = Promise.withResolvers<void>();
 		const peerID = 'peer-connecting';
 		const next = new MockLISHClient();
 		next.requestManifestResult = { ...makeLISH(), id: 'test-oversized-lish' };
-		peers.set('peer-oversized-1', oversizedClient());
 		priv(dl)['connectToPeer'] = async () => {
+			dialStarted.resolve();
 			await dialing.promise;
 			if (!connects) throw new Error('connection timed out');
 			peers.set(peerID, next);
@@ -751,6 +752,8 @@ describe('Downloader – oversized manifest across peers', () => {
 		const have = announcements.onHaveAnnouncement({ lishID: 'test-oversized-lish', peerID, multiaddrs: [], chunks: 'all' });
 		try {
 			try {
+				await dialStarted.promise;
+				peers.set('peer-oversized-1', oversizedClient());
 				await doWork();
 				expect(dl.getError()).toBeNull();
 			} finally {
