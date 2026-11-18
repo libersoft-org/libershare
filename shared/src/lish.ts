@@ -137,6 +137,14 @@ export function expectedChunkLength(lish: ILISH, fileIndex: number, chunkIndex: 
 	return Math.min(lish.chunkSize, size - chunkIndex * lish.chunkSize);
 }
 
+/**
+ * True for a LISH that lists nothing: no files, directories or links. That is a placeholder
+ * still waiting for its real manifest; one holding only directories is complete as it stands.
+ */
+export function isMetadataOnly(lish: ILISH): boolean {
+	return !lish.files?.length && !lish.directories?.length && !lish.links?.length;
+}
+
 export interface ILISH {
 	id: string;
 	name?: string | undefined;
