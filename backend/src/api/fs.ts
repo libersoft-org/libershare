@@ -1,6 +1,6 @@
 import { NativeWorkerChannel, NativeWorkerFailure } from '../native/worker-host.ts';
 import { displayEnvironment } from '../native/linux/gio.ts';
-import { readdir, stat, access, unlink, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
+import { readdir, stat, lstat, access, unlink, mkdir as fsMkdirNode, rename as fsRenameNode } from 'fs/promises';
 import { join, sep, dirname, resolve } from 'path';
 import { homedir, platform } from 'os';
 import { Utils } from '../utils.ts';
@@ -119,17 +119,23 @@ export function initFsHandlers(containerCheck: () => Promise<boolean> = isContai
 		}
 		for (const dirent of dirents) {
 			const entryPath = join(path, dirent.name);
+			// Symlinks and Windows junctions report isDirectory() === false; their type comes from the stat below, which follows the link.
+			const isLink = dirent.isSymbolicLink();
 			const entry: any = {
 				name: dirent.name,
 				path: entryPath,
 				type: dirent.isDirectory() ? 'directory' : 'file',
 				hidden: dirent.name.startsWith('.'),
 			};
+			if (isLink) entry.link = true;
 			try {
 				const stats = await stat(entryPath);
+				if (isLink && stats.isDirectory()) entry.type = 'directory';
 				entry.size = stats.size;
 				entry.modified = stats.mtime.toISOString();
-			} catch {}
+			} catch {
+				if (isLink) entry.broken = true;
+			}
 			entries.push(entry);
 		}
 		entries.sort((a: any, b: any) => {
@@ -164,7 +170,7 @@ export function initFsHandlers(containerCheck: () => Promise<boolean> = isContai
 	async function del(p: { path: string }): Promise<void> {
 		assert(p, ['path']);
 		return fsCall(p.path, async () => {
-			const stats = await stat(p.path);
+			const stats = await lstat(p.path);
 			if (stats.isDirectory()) {
 				const { rm } = await import('fs/promises');
 				await rm(p.path, { recursive: true });

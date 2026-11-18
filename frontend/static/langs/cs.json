@@ -147,7 +147,8 @@
 		"errorInvalidRequest": "Účastník odmítl požadavek jako neplatný",
 		"errorSearchQueryTooLong": "Hledaný text je příliš dlouhý",
 		"errorListingNotAuthorized": "Seznam nelze zobrazit: nebylo potvrzeno členství ve společné síti",
-		"errorListTooLarge": "Seznam sdílených položek překračuje limit přenosu. Upřesněte hledání nebo aktualizujte protistranu na verzi podporující stránkování seznamu."
+		"errorListTooLarge": "Seznam sdílených položek překračuje limit přenosu. Upřesněte hledání nebo aktualizujte protistranu na verzi podporující stránkování seznamu.",
+		"errorManifestTooLarge": "Účastník nemůže poslat tento LISH: jeho manifest je větší než limit velikosti zprávy nastavený u účastníka"
 	},
 	"localStorage": {
 		"title": "Místní úložiště",
@@ -306,7 +307,6 @@
 		"errorChunkSizeTooLarge": "LISH odmítnut: velikost části přesahuje povolený limit ({detail})",
 		"errorInvalidManifest": "Neplatný manifest LISHe: {detail}",
 		"errorUnsafePath": "Do cílového souboru nelze bezpečně zapisovat: {detail}",
-		"errorFileChanged": "Soubor se od otevření změnil. Obnovte náhled, abyste viděli jeho aktuální obsah.",
 		"errorUnsupportedChecksum": "Neplatný LISH: nepodporovaný hashovací algoritmus: {detail}",
 		"errorUnexpectedArray": "Očekáván jeden LISH objekt, obdrženo pole",
 		"errorPathAccessDenied": "Nelze přistoupit k cestě: {detail}",
@@ -330,8 +330,6 @@
 		"entryPath": "Cesta",
 		"entryTarget": "Cíl",
 		"entryPermissions": "Oprávnění",
-		"entryChecksums": "Kontrolní součty částí",
-		"entryChecksumsLoading": "Načítám kontrolní součty …",
 		"entryInvalidValue": "Neplatná hodnota"
 	},
 	"import": {
