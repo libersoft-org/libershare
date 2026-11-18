@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
@@ -607,6 +611,7 @@ describe('Downloader – network peer:disconnect handling', () => {
 		expect(net.peerDisconnectHandlers.size).toBe(1);
 		// needsManifest path parks download() on its internal completion promise
 		// without touching the filesystem; resolve it to simulate a finished download.
+		priv(downloader)['needsManifest'] = true;
 		const done = downloader.download();
 		while (!priv(downloader)['downloadResolve']) await new Promise(r => setTimeout(r, 0));
 		priv(downloader)['state'] = 'downloaded';
@@ -734,7 +739,45 @@ describe('Downloader – oversized manifest across peers', () => {
 });
 
 describe('Downloader – manifest without files', () => {
-	it('drops the peer instead of asking it again on every pass, and takes the manifest from the next one', async () => {
+	it('takes a manifest that lists only folders, creates them and finishes without a chunk', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'dl-folders-only-'));
+		try {
+			const ds = new MockDataServer();
+			const dl = new Downloader(join(root, 'download'), new MockNetwork() as never, ds as never, 'net-001');
+			const p = priv(dl);
+			p['state'] = 'awaiting-manifest';
+			p['needsManifest'] = true;
+			p['lish'] = null;
+			p['lishID'] = 'test-folders-only-lish';
+			const peers = (p['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+			const seeder = new MockLISHClient();
+			const { files: _files, ...withoutFiles } = makeLISH();
+			seeder.requestManifestResult = { ...withoutFiles, directories: [{ path: 'Saves' }, { path: 'Mods/Maps' }] };
+			peers.set('peer-folders-0001', seeder);
+
+			await dl.doWork();
+
+			expect(ds.addedLishs.length).toBe(1);
+			expect(p['needsManifest']).toBe(false);
+			expect(p['state']).toBe('downloaded');
+			expect(existsSync(join(root, 'download', 'Saves'))).toBe(true);
+			expect(existsSync(join(root, 'download', 'Mods', 'Maps'))).toBe(true);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('starts a stored LISH that lists only folders without asking for a manifest, a placeholder still waits', async () => {
+		const { files: _files, ...withoutFiles } = makeLISH();
+		const stored = new Downloader('/tmp/dl-folders-stored', new MockNetwork() as never, new MockDataServer() as never, 'net-001');
+		await stored.initFromManifest({ ...withoutFiles, directories: [{ path: 'Saves' }] });
+		expect(priv(stored)['needsManifest']).toBe(false);
+		const placeholder = new Downloader('/tmp/dl-placeholder', new MockNetwork() as never, new MockDataServer() as never, 'net-001');
+		await placeholder.initFromManifest(withoutFiles);
+		expect(priv(placeholder)['needsManifest']).toBe(true);
+	});
+
+	it('drops a peer that holds only a placeholder instead of asking it again on every pass, and takes the manifest from the next one', async () => {
 		const ds = new MockDataServer();
 		const dl = new Downloader('/tmp/dl-no-files', new MockNetwork() as never, ds as never, 'net-001');
 		const p = priv(dl);
@@ -757,7 +800,7 @@ describe('Downloader – manifest without files', () => {
 		expect(ds.addedLishs.length).toBe(1);
 	});
 
-	it('drops a probed peer whose manifest has no files instead of opening a download stream to it', async () => {
+	it('drops a probed peer that holds only a placeholder instead of opening a download stream to it', async () => {
 		const { files: _files, ...withoutFiles } = makeLISH();
 		const frame = lpEncode.single(codecEncode({ manifest: withoutFiles })).subarray();
 		const dials: string[] = [];

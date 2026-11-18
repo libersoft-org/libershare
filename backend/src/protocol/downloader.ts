@@ -1,6 +1,6 @@
 import { access, constants } from 'fs/promises';
 import { dirname } from 'path';
-import { type IStoredLISH, type LISHid, CodedError, ErrorCodes } from '@shared';
+import { type IStoredLISH, type LISHid, CodedError, ErrorCodes, isMetadataOnly } from '@shared';
 import { type Network } from './network.ts';
 import { downloadLimiter } from './speed-limiter.ts';
 import { lishTopic } from './constants.ts';
@@ -455,9 +455,10 @@ export class Downloader {
 		this.lishID = this.lish.id as LISHid;
 		this.peerManager.setLishID(this.lishID);
 		this.chunkDownloader = this.createChunkDownloader();
-		// Check if we already have the full manifest in DB
+		// Check if we already have the full manifest in DB: chunks on record, or anything listed at
+		// all — a LISH with folders only has no chunk and is still the whole manifest.
 		const existingChunks = this.dataServer.getMissingChunks(this.lishID);
-		if (existingChunks.length > 0 || this.dataServer.isCompleteLISH(lish)) {
+		if (existingChunks.length > 0 || !isMetadataOnly(lish) || this.dataServer.isCompleteLISH(lish)) {
 			this.missingChunks = existingChunks;
 			console.log(`[DL] Loading LISH: ${this.lish.name} (${this.lishID.slice(0, 8)}), ${this.missingChunks.length} chunks to download`);
 		} else {
@@ -597,12 +598,12 @@ export class Downloader {
 						console.warn(`[DL] Manifest request failed: ${error.message?.slice(0, 120) ?? error}`);
 					}
 					if (this.destroyed) return;
-					if (manifest && !manifest.files?.length) {
-						// Nothing to download from it; asking it again on every pass never ends.
+					if (manifest && isMetadataOnly(manifest)) {
+						// The peer holds a placeholder itself; asking it again on every pass never ends.
 						this.peerManager.remove(peerID, 'drop');
 						continue;
 					}
-					if (manifest && manifest.files && manifest.files.length > 0) {
+					if (manifest) {
 						// The manifest is sanitized (no peer-supplied local paths). Keep our own
 						// local state: the download directory, and any post-download move target
 						// the LISH was created with — the incoming manifest never carries it.
@@ -611,7 +612,7 @@ export class Downloader {
 						this.onManifestImported?.(this.lishID);
 						this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 						this.needsManifest = false;
-						console.log(`[DL] Got manifest: ${manifest.files.length} files, ${this.missingChunks.length} chunks`);
+						console.log(`[DL] Got manifest: ${manifest.files?.length ?? 0} files, ${this.missingChunks.length} chunks`);
 						this.transitionTo('preparing', 'doWork() got manifest');
 						break;
 					}
@@ -636,17 +637,18 @@ export class Downloader {
 				const totalChunksForProgress = this.dataServer.getAllChunkCount(this.lishID) || this.missingChunks.length;
 				const downloadedForProgress = totalChunksForProgress - this.missingChunks.length;
 				console.debug(`[DL] preparing ${this.lishID.slice(0, 8)}: ${downloadedForProgress}/${totalChunksForProgress}, missing=${this.missingChunks.length}`);
-				// Empty-manifest recovery: if the LISH has no file metadata and the DB has no chunks,
-				// we need a manifest re-fetch before we can do anything else. (Was the side-effect
-				// inside the former needsFileAllocation() — kept here to preserve control flow.)
-				if ((!this.lish.files || this.lish.files.length === 0) && this.dataServer.getAllChunkCount(this.lishID) === 0) {
-					console.warn(`[DL] ${this.lishID.slice(0, 8)}: no files in manifest or DB, requesting manifest from peers`);
+				// Empty-manifest recovery: a LISH that lists nothing is a placeholder, so we need a
+				// manifest re-fetch before we can do anything else. (Was the side-effect inside the
+				// former needsFileAllocation() — kept here to preserve control flow.)
+				if (isMetadataOnly(this.lish)) {
+					console.warn(`[DL] ${this.lishID.slice(0, 8)}: nothing listed in the manifest, requesting manifest from peers`);
 					this.needsManifest = true;
 					this.transitionTo('awaiting-manifest', 'doWork phase 2: empty manifest, re-fetch');
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
-				if (missingBeforeAlloc.length > 0) {
+				// Folders are created only by an allocation, so a manifest without files always gets one.
+				if (missingBeforeAlloc.length > 0 || (!this.needsManifest && !this.lish.files?.length)) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
 					await this.fileAllocator.allocateStructure(this.lish, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunksForProgress), this.abortController.signal);
@@ -817,8 +819,8 @@ export class Downloader {
 				}
 				if (this.destroyed) return;
 
-				// A manifest without files has nothing to download; probing it again never ends.
-				if (!manifest || !manifest.files?.length) {
+				// A peer holding only a placeholder has nothing to give; probing it again never ends.
+				if (!manifest || isMetadataOnly(manifest)) {
 					this.peerManager.remove(peerID, 'drop');
 					continue;
 				}
