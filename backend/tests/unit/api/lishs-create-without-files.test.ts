@@ -1,14 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ErrorCodes } from '@shared';
 import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
 
-describe('lishs.create without files', () => {
+describe('lishs.create with folders only', () => {
 	let dataDir: string;
 	let sourceDir: string;
 	let db: ReturnType<typeof openDatabase>;
@@ -33,9 +32,12 @@ describe('lishs.create without files', () => {
 		for (const dir of [dataDir, sourceDir]) await rm(dir, { recursive: true, force: true });
 	});
 
-	it('refuses a folder holding only empty subfolders and stores nothing', async () => {
+	it('creates a LISH that lists the empty subfolders of a folder without files', async () => {
 		await mkdir(join(sourceDir, 'only', 'folders'), { recursive: true });
-		await expect(handlers.create({ dataPath: sourceDir, addToSharing: true } as never, undefined as never)).rejects.toMatchObject({ code: ErrorCodes.DIRECTORY_EMPTY });
-		expect(dataServer.list()).toHaveLength(0);
+		const lishFile = join(dataDir, 'folders.lish');
+		await handlers.create({ dataPath: sourceDir, lishFile } as never, undefined as never);
+		const lish = JSON.parse(await readFile(lishFile, 'utf8'));
+		expect(lish.directories.map((directory: { path: string }) => directory.path)).toEqual(['only', 'only/folders']);
+		expect(lish.files ?? []).toEqual([]);
 	});
 });

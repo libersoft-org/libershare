@@ -2,7 +2,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
-import { DEFAULT_CHUNK_SIZE } from '@shared';
+import { DEFAULT_CHUNK_SIZE, isMetadataOnly } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { setBusy, clearBusy, getBusyReason } from './busy.ts';
@@ -280,8 +280,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
 		const lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
-		// Only empty subfolders: no receiver could ever download such a LISH.
-		if (!lish.files?.length) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
+		// Nothing was listed at all: a receiver would take it for a placeholder and wait for a manifest forever.
+		if (isMetadataOnly(lish)) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		// 2. Export to .lish(.gz) file if requested
 		let resultLISHFile: string | undefined;
 		if (p.lishFile) {
