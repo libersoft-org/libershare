@@ -1,4 +1,5 @@
 import { CString, FFIType, JSCallback, ptr, read, type Pointer } from 'bun:ffi';
+import { productName } from '@shared';
 import { loadPulse, type PulseSymbols } from './pulse-native.ts';
 
 const sessions = new Set<PulseSession>();
@@ -29,7 +30,7 @@ export class PulseSession {
 		try {
 			this.loop = (Number(api.pa_mainloop_new()) as Pointer) || null;
 			if (!this.loop) throw new Error('Pulse mainloop unavailable');
-			const name = Buffer.from('LiberShare\0');
+			const name = Buffer.from(`${productName}\0`);
 			this.context = (Number(api.pa_context_new(api.pa_mainloop_get_api(this.loop), ptr(name))) as Pointer) || null;
 			// PA_CONTEXT_NOAUTOSPAWN keeps an absent server on the ALSA fallback path.
 			if (!this.context || api.pa_context_connect(this.context, null, 1, null) < 0) throw new Error('Pulse connection failed');

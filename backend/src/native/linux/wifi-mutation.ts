@@ -1,12 +1,16 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { isValidSSID, isValidWifiKey } from '../../../../shared/src/utils.ts';
 import { CodedError, ErrorCodes } from '../../../../shared/src/errors.ts';
+import { productName } from '../../../../shared/src/product.ts';
 import { variant, type DBusReply } from './dbus.ts';
 import { rollbackSettled, type NativeNetworkSettings } from './network-mutation.ts';
 import type { NativeMutationContext } from '../mutation-host.ts';
 import type { JournalValue } from '../mutation-journal.ts';
 import { WifiSession, WIFI_NM as NM, WIFI_NM_PATH as ROOT, wifiCall, wifiObjectPath, type WifiMutationDeps, type WifiMutationOptions } from './wifi-client.ts';
 import { decodeWifiAccessPoint, wifiDictionary, wifiNumber, wifiPaths, wifiPersonalSecurity, wifiProfileCompatible, wifiProfileFingerprint, wifiProfilePinsBssid, wifiSecretFingerprint, wifiString, wifiValue, type WifiAccessPoint, type WifiProperties } from './wifi-settings.ts';
+
+/** Connection id prefix of the temporary profile a password change is verified on; recovery accepts only this prefix. */
+export const WIFI_VERIFY_CLONE_PREFIX: string = `${productName.toLowerCase()}-verify-`;
 
 export interface WifiRecoveryData {
 	version: 1;
@@ -181,7 +185,7 @@ export async function connectNativeLinuxWifi(context: NativeMutationContext, dev
 					metadata.newSecretFingerprint = wifiSecretFingerprint(metadata.secretSalt, password);
 					originalWithSecret = structuredClone(selected);
 					originalWithSecret['802-11-wireless-security']!['psk'] = variant('s', oldSecret);
-					metadata.cloneId = `libershare-verify-${context.operationId}`;
+					metadata.cloneId = `${WIFI_VERIFY_CLONE_PREFIX}${context.operationId}`;
 				}
 			}
 		} else {
