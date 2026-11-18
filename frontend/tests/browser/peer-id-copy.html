@@ -16,6 +16,7 @@
 		import SettingsLISHNetworkPeersPeer from '/src/pages/Settings/SettingsLISHNetworkPeersPeer.svelte';
 		import Network from '/src/pages/Network/Network.svelte';
 		import SettingsLISHNetworkList from '/src/pages/Settings/SettingsLISHNetworkList.svelte';
+		import NetworkLishsPeerList from '/src/pages/Network/NetworkLishsPeerList.svelte';
 		import { copyToClipboard } from '/src/scripts/clipboard.ts';
 		import { notifications } from '/src/scripts/notifications.ts';
 
@@ -213,6 +214,30 @@
 			await unmount(component);
 			component = undefined;
 
+			const lishID = 'c0000000-0000-4000-8000-0000000000aa';
+			component = mount(NetworkLishsPeerList, { target: root, props: { areaID: 'peer-copy-search', row: { id: lishID, name: 'Found', peers: [{ peerID: remotePeerID, networkID: 'example' }] }, networks: [listedNetwork], onBack: () => {}, onOpenPeer: () => {} } });
+			await settle();
+			await test('search peer list copies the LISH ID by click and keyboard after Add to downloads', async () => {
+				const label = get(t)('common.copyLishID');
+				const copy = buttons(label);
+				assert(copy.length === 1, `Expected one LISH ID copy button, found ${copy.length}`);
+				const bar = [...copy[0].parentElement.children].map(item => item.textContent.trim());
+				assert(bar.indexOf(label) === bar.indexOf(get(t)('network.addToDownloads')) + 1, `The copy button is not right after Add to downloads: ${bar.join(' | ')}`);
+				copy[0].click();
+				await settle();
+				assert(lastCopied() === lishID, `Click copied ${lastCopied()}`);
+				const note = get(notifications).at(-1);
+				assert(note?.type === 'success' && note.text === get(t)('common.lishIDCopied'), `Copy reported ${JSON.stringify(note)}`);
+				for (let step = 0; step < 4 && !copy[0].classList.contains('selected'); step++) {
+					emit('right');
+					await settle();
+				}
+				assert(copy[0].classList.contains('selected'), 'Keyboard could not select the copy button');
+				await confirmCopies(lishID);
+			});
+			await unmount(component);
+			component = undefined;
+
 			await test('copying falls back to execCommand outside a secure context and reports a failure', async () => {
 				const originalExec = document.execCommand;
 				Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
@@ -239,7 +264,7 @@
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.peerIDCopyTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 8 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 9 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
