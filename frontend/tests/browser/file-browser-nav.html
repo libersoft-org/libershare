@@ -225,11 +225,29 @@
 				await settle();
 				assert(saved[0] === '/home/user/out.txt', `Save wrote ${JSON.stringify(saved)}`);
 			});
+			await test('clicking another file resets the open actions panel and keeps its keyboard selection', async () => {
+				await unmount(component);
+				component = await open();
+				rows()
+					.find(row => row.textContent.includes('alpha.txt'))
+					.click();
+				await settle();
+				await press('down');
+				assert(selectedAction() === label('fileBrowser.editFile'), `Before the click: ${selectedAction()}`);
+				rows()
+					.find(row => row.textContent.includes('beta.txt'))
+					.click();
+				await settle();
+				assert(selectedRowText().includes('beta.txt'), `The second click selected ${selectedRowText()}`);
+				assert(selectedAction() === label('fileBrowser.openFile'), `After the click: ${selectedAction()}`);
+				await press('down');
+				assert(selectedAction() === label('fileBrowser.editFile'), `Down after the click: ${selectedAction()}`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 12 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 13 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

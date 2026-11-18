@@ -88,6 +88,8 @@ export interface NavAreaController {
 	isYSelected(y: number): boolean;
 	/** Check if item at given position is currently pressed (confirmDown active) */
 	isPressed(pos: NavPos): boolean;
+	/** Selected position, including when the area is inactive. */
+	readonly selectedPosition: Readonly<NavPos> | null;
 	/** Programmatically set the selected position */
 	select(pos: NavPos): void;
 	/** Bring the selected item back into view, e.g. after content above it grew. */
@@ -369,6 +371,9 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		},
 		isYSelected(y: number): boolean {
 			return isAreaActive && selectedPos !== null && selectedPos[1] === y;
+		},
+		get selectedPosition(): Readonly<NavPos> | null {
+			return selectedPos;
 		},
 		select(pos: NavPos): void {
 			selectedPos = pos;

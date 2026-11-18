@@ -10,6 +10,7 @@
 		import { get } from 'svelte/store';
 		import { translations, t } from '/src/scripts/language.ts';
 		import { emit } from '/src/scripts/areas.ts';
+		import { getMouseManager } from '/src/scripts/input/mouse.ts';
 		import { wsClient } from '/src/scripts/ws-client.ts';
 		import { downloads, peerDetails, peerSnapshotReceived } from '/src/scripts/downloads.ts';
 		import DownloadDetail from '/src/pages/Download/DownloadDetail.svelte';
@@ -17,6 +18,7 @@
 		const lishID = 'example-lish-id';
 		const root = document.querySelector('#page');
 		const results = [];
+		const mouseManager = getMouseManager();
 		const originalCall = wsClient.call;
 		wsClient.call = async () => true;
 		const files = ['alpha.bin', 'beta.bin', 'gamma.bin', 'delta.bin'].map((name, index) => ({ id: index + 1, name, type: 'file', progress: 50, size: '1.00 MB', rawSize: 1048576, totalChunks: 1, verifiedChunks: 0 }));
@@ -77,6 +79,7 @@
 				});
 			});
 			const label = key => get(t)(key);
+			mouseManager.start();
 			downloads.set([download]);
 			component = mount(DownloadDetail, { target: root, props: { areaID: 'detail', lishID } });
 			await settle();
@@ -141,9 +144,10 @@
 				await press('left', 'end', 'down');
 				assert(selectedTab() === label('common.files') && activeTab() === label('common.files'), `On the tab row: selected ${selectedTab()}, active ${activeTab()}`);
 			});
-			await test('after the export page the info table and the files work again', async () => {
-				await press('down', 'down');
-				assert(selectedListRow() === 1, `Before the export page the files are on row ${selectedListRow()}`);
+			await test('after the export page the files return to the row clicked by mouse', async () => {
+				listRows()[2].click();
+				await settle();
+				assert(selectedListRow() === 2, `Before the export page the files are on row ${selectedListRow()}`);
 				await press('left', 'home', 'up');
 				for (let step = 0; step < toolbar().length; step++) await press('right');
 				for (let step = 0; step < toolbar().length && root.querySelector('.toolbar .button.selected')?.textContent.trim() !== label('common.export'); step++) await press('left');
@@ -154,13 +158,31 @@
 				await press('down');
 				assert(selectedInfoRow() === 0, `Down after returning selected info row ${selectedInfoRow()}`);
 				await press('right');
-				assert(selectedListRow() === 1, `Right after returning selected file row ${selectedListRow()}`);
+				assert(selectedListRow() === 2, `Right after returning selected file row ${selectedListRow()}`);
+			});
+			await test('the peer clicked by mouse stays selected after switching tabs', async () => {
+				function clickTab(name) {
+					[...root.querySelectorAll('.container .tab')].find(tab => tab.textContent.trim() === label(name)).click();
+				}
+				clickTab('common.connections');
+				await settle();
+				listRows()[2].click();
+				await settle();
+				assert(root.querySelector('.peer-detail .peer-id-value')?.textContent.trim() === peers[2].peerID, 'The dialog of the third peer did not open');
+				await press('back');
+				clickTab('common.files');
+				await settle();
+				clickTab('common.connections');
+				await settle();
+				await press('down');
+				assert(selectedListRow() === 2, `Returning to the peers selected row ${selectedListRow()}`);
 			});
 		} finally {
+			mouseManager.stop();
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 9 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 10 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

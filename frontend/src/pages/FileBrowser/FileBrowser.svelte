@@ -71,6 +71,7 @@
 	// The filter the filter panel opens on.
 	let initialFilterIndex = $state(0);
 	let showActions = $state(false);
+	let actionsScope: ReturnType<typeof NavScope> | undefined = $state();
 	let showFilterPanel = $state(false);
 	let itemElements: HTMLElement[] = $state([]);
 	let currentPath = $state<string>('');
@@ -184,13 +185,8 @@
 		scrollToElement(itemElements, selectedIndex);
 	}
 
-	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
-	// While the actions panel is open, hover must not re-select at all: the panel derives from
-	// selectedItem, so a stray hover would re-target it — or unmount it entirely when the hover
-	// lands on a directory or "..". Selecting a different item is still possible by clicking,
-	// which closes the panel first (handleItemClick), matching the keyboard semantics.
-	// The filter panel gets the same guard: its area owns the arrows while open, and a stray
-	// hover would steal the active area back to the list without closing the panel.
+	// Keep a scroll under a stale cursor from stealing selection. While a panel is open,
+	// hovering must also leave its keyboard focus and target file alone.
 	function handleItemHover(index: number): void {
 		if (!isMouseActive() || showActions || showFilterPanel) return;
 		activateArea(listAreaID);
@@ -233,8 +229,9 @@
 	}
 
 	function openActions(): void {
-		// The panel's NavArea activates itself when it mounts.
 		showActions = true;
+		actionsScope?.controller.select([0, 0]);
+		activateArea(`${areaID}-actions`);
 	}
 
 	const PAGE_SIZE = 10;
@@ -987,7 +984,7 @@
 					{/if}
 				</div>
 				{#if showActions && selectedItem?.type === 'file'}
-					<NavScope options={actionsOptions()}>
+					<NavScope bind:this={actionsScope} options={actionsOptions()}>
 						<div class="actions">
 							{#each fileActions as action, index (action.id)}
 								<Button icon={action.icon} label={action.label} position={[0, index]} onConfirm={() => handleAction(action.id)} />

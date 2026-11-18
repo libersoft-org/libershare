@@ -11,7 +11,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
-	import { createNavArea, type NavAreaOptions, type NavPos } from '../../scripts/navArea.svelte.ts';
+	import { createNavArea, type NavAreaOptions } from '../../scripts/navArea.svelte.ts';
 	import NavScope from '../../components/NavArea/NavScope.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -48,10 +48,17 @@
 	// The info table, the tab row and the two lists are declarative NavAreas of their own (NavScope).
 	let infoScope: ReturnType<typeof NavScope> | undefined = $state();
 	let tabScope: ReturnType<typeof NavScope> | undefined = $state();
+	let fileScope: ReturnType<typeof NavScope> | undefined = $state();
 	let peerScope: ReturnType<typeof NavScope> | undefined = $state();
 	// Rows the lists come back to after a tab switch or a sub-page, which re-create them.
 	let selectedFileIndex = $state(0);
 	let selectedPeerIndex = $state(0);
+	$effect(() => {
+		const filePosition = fileScope?.controller.selectedPosition;
+		const peerPosition = peerScope?.controller.selectedPosition;
+		if (filePosition) selectedFileIndex = filePosition[1];
+		if (peerPosition) selectedPeerIndex = peerPosition[1];
+	});
 	let activeTab = $state<string>('files');
 	let tabDefs = $derived<TabDef[]>([
 		{ id: 'files', icon: '/img/file.svg', label: $t('common.files') },
@@ -223,9 +230,6 @@
 			onBack: handleBack,
 			initialPosition: [0, selectedFileIndex],
 			listRange: (): [number, number] => [0, (download?.files.length ?? 0) - 1],
-			onSelect(pos: NavPos): void {
-				selectedFileIndex = pos[1];
-			},
 			onUp: (): string => tabAreaID,
 			onLeft: (): string => infoAreaID,
 		};
@@ -238,9 +242,6 @@
 			onBack: handleBack,
 			initialPosition: [0, Math.min(selectedPeerIndex, Math.max(0, currentPeers.length - 1))],
 			listRange: (): [number, number] => [0, currentPeers.length - 1],
-			onSelect(pos: NavPos): void {
-				selectedPeerIndex = pos[1];
-			},
 			onUp: (): string => tabAreaID,
 			onLeft: (): string => infoAreaID,
 		};
@@ -626,7 +627,7 @@
 						<Tabs tabs={tabDefs} bind:activeID={activeTab} position={[0, 0]} compact onChange={handleTabChange} />
 					</NavScope>
 					{#if activeTab === 'files'}
-						<NavScope options={fileListOptions()}>
+						<NavScope bind:this={fileScope} options={fileListOptions()}>
 							<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
 								<Header fontSize="1.4vh">
 									<Cell>{$t('common.name')}</Cell>
