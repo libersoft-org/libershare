@@ -6,6 +6,9 @@ import { get } from 'svelte/store';
 // Types for declarative navigation items
 export type NavPos = [x: number, y: number];
 
+/** A move the selection can make within an area. */
+export type NavAction = Direction | 'pageUp' | 'pageDown' | 'home' | 'end';
+
 export interface NavItem {
 	pos: NavPos;
 	el?: HTMLElement | undefined;
@@ -13,6 +16,11 @@ export interface NavItem {
 	onPress?: (() => void) | undefined;
 	onRelease?: (() => void) | undefined;
 	onActivate?: (() => void) | undefined;
+	/**
+	 * Offered every move while the item is selected, before the area moves the selection. Returns
+	 * true when the item used the move itself, e.g. to scroll a long list it shows as one element.
+	 */
+	onNavigate?: ((action: NavAction) => boolean) | undefined;
 	/**
 	 * When false, MouseManager delegation skips this item. The component then
 	 * owns its own onclick/onmouseenter logic (e.g. ButtonsGroup index pick,
@@ -80,6 +88,8 @@ export interface NavAreaController {
 	isYSelected(y: number): boolean;
 	/** Check if item at given position is currently pressed (confirmDown active) */
 	isPressed(pos: NavPos): boolean;
+	/** Selected position, including when the area is inactive. */
+	readonly selectedPosition: Readonly<NavPos> | null;
 	/** Programmatically set the selected position */
 	select(pos: NavPos): void;
 	/** Bring the selected item back into view, e.g. after content above it grew. */
@@ -230,14 +240,16 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		return items.filter(i => i.pos[0] === selectedPos![0] && i.pos[1] >= minY && i.pos[1] <= maxY).sort((a, b) => a.pos[1] - b.pos[1]);
 	}
 
+	/** Moves by whole rows: an item placed between rows (a fractional y, such as an expanded detail) is not counted as one. */
 	function jumpBy(delta: number): void {
-		const col = listColumnItems();
-		if (col.length === 0) return;
-		const idx = col.findIndex(i => i.pos[1] === selectedPos![1]);
+		const rows = listColumnItems().filter(i => Number.isInteger(i.pos[1]));
+		const y = selectedPos?.[1];
+		if (rows.length === 0 || y === undefined) return;
+		// From an in-between item, count from the row it hangs under.
+		const idx = rows.findLastIndex(i => i.pos[1] <= y);
 		if (idx < 0) return;
-		const targetIdx = Math.max(0, Math.min(col.length - 1, idx + delta));
-		const target = col[targetIdx];
-		if (target && target !== col[idx]) selectItem(target);
+		const target = rows[Math.max(0, Math.min(rows.length - 1, idx + delta))];
+		if (target && Math.sign(target.pos[1] - y) === Math.sign(delta)) selectItem(target);
 	}
 
 	function jumpEdge(edge: 'first' | 'last'): void {
@@ -257,11 +269,15 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		return trap; // trap: block navigation from leaving
 	}
 
+	function takenByItem(action: NavAction): boolean {
+		return currentItem()?.onNavigate?.(action) === true;
+	}
+
 	// Area handlers for useArea
 	const areaHandlers = {
-		up: (): boolean => navigate('up'),
+		up: (): boolean => takenByItem('up') || navigate('up'),
 		down(): boolean {
-			if (navigate('down')) return true;
+			if (takenByItem('down') || navigate('down')) return true;
 			if (onDown) {
 				const target = onDown();
 				if (target) {
@@ -271,8 +287,8 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			}
 			return trap;
 		},
-		left: (): boolean => navigate('left'),
-		right: (): boolean => navigate('right'),
+		left: (): boolean => takenByItem('left') || navigate('left'),
+		right: (): boolean => takenByItem('right') || navigate('right'),
 		confirmDown(): void {
 			pressed = true;
 			currentItem()?.onPress?.();
@@ -289,16 +305,16 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 			onBack?.();
 		},
 		pageUp(): void {
-			jumpBy(-PAGE_SIZE);
+			if (!takenByItem('pageUp')) jumpBy(-PAGE_SIZE);
 		},
 		pageDown(): void {
-			jumpBy(PAGE_SIZE);
+			if (!takenByItem('pageDown')) jumpBy(PAGE_SIZE);
 		},
 		home(): void {
-			jumpEdge('first');
+			if (!takenByItem('home')) jumpEdge('first');
 		},
 		end(): void {
-			jumpEdge('last');
+			if (!takenByItem('end')) jumpEdge('last');
 		},
 		onActivate(): void {
 			onAreaActivate?.();
@@ -343,6 +359,9 @@ export function createNavArea(getConfig: () => NavAreaOptions): NavAreaHandle {
 		},
 		isYSelected(y: number): boolean {
 			return isAreaActive && selectedPos !== null && selectedPos[1] === y;
+		},
+		get selectedPosition(): Readonly<NavPos> | null {
+			return selectedPos;
 		},
 		select(pos: NavPos): void {
 			selectedPos = pos;

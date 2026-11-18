@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { api } from '../../scripts/api.ts';
@@ -119,12 +119,22 @@
 		if (busy || row.peers.length === 0) return;
 		loadingDetail = true;
 		try {
-			detail = await tryPeers(async (peerID, networkID) => {
+			const loadedDetail = await tryPeers(async (peerID, networkID) => {
 				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
 				// A null answer means this peer had nothing for us — flag it so the next peer is tried.
 				if (!d) throw Object.assign(new Error($t('network.peerDeclined')), { tryNextPeer: true });
 				return d;
 			});
+			const { controller } = nav;
+			const selectedY = controller.selectedPosition?.[1] ?? 0;
+			const peerIndex = selectedY - peerRowsBaseY;
+			detail = loadedDetail;
+			if (peerIndex >= 0 && peerIndex < row.peers.length) {
+				const position: NavPos = [0, peerRowsBaseY + peerIndex];
+				controller.select(position);
+				await tick();
+				if (controller.isSelected(position)) controller.scrollToSelected();
+			}
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		} finally {
@@ -134,7 +144,7 @@
 
 	// y=0 — top bar (Back, Add to sharing, Details)
 	// y=1.. — LISH detail rows once loaded, then the peer rows from peerRowsBaseY
-	createNavArea(() => ({
+	const nav = createNavArea(() => ({
 		areaID,
 		position,
 		onBack,

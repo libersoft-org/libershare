@@ -27,7 +27,7 @@
 		let inspection;
 		api.lishs.inspectFile = async () => {
 			if (inspection instanceof Error) throw inspection;
-			return structuredClone(inspection);
+			return { version: 'legacy-preview-version', items: structuredClone(inspection) };
 		};
 		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [] });
 		const valid = { detail: detail('c0000000-0000-4000-8000-000000000001', 'First LISH', 3) };
@@ -341,6 +341,42 @@
 					api.lishnets.getPeerLish = original;
 				}
 			});
+			await test('a delayed search detail keeps the selected peer and Confirm still opens it', async () => {
+				if (component) await unmount(component);
+				component = undefined;
+				const original = api.lishnets.getPeerLish;
+				const { promise, resolve } = Promise.withResolvers();
+				api.lishnets.getPeerLish = () => promise;
+				const peers = [
+					{ peerID: 'first-peer', networkID: 'net-1' },
+					{ peerID: 'second-peer', networkID: 'net-1' },
+				];
+				let openedPeer;
+				const page = mount(NetworkLishsPeerList, {
+					target: root,
+					props: { areaID: 'lish-info-late-detail', row: { id: peerDetail.id, name: peerDetail.name, peers }, networks: [], onBack: () => {}, onOpenPeer: peerID => (openedPeer = peerID) },
+				});
+				const selected = () => root.querySelector('.row.selected')?.textContent ?? '';
+				try {
+					await settle();
+					button(tr('network.details')).click();
+					emit('down');
+					await settle();
+					emit('end');
+					await settle();
+					assert(selected().includes('second-peer'), `Before the reply: ${selected()}`);
+					resolve(structuredClone(peerDetail));
+					await settle();
+					assert(root.textContent.includes(tr('lish.entryDetailsHint')), 'The delayed detail did not load');
+					assert(selected().includes('second-peer'), `After the reply: ${selected()}`);
+					emit('confirmDown');
+					emit('confirmUp');
+					assert(openedPeer === 'second-peer', `Confirm opened ${openedPeer}`);
+				} finally {
+					await unmount(page);
+					api.lishnets.getPeerLish = original;
+				}
+			});
 			await test('the search peer list pages through the peers before a detail is loaded', async () => {
 				if (component) await unmount(component);
 				component = undefined;
@@ -383,7 +419,7 @@
 			api.lishs.inspectFile = originalInspect;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishFileInfoTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 15 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 16 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

@@ -62,6 +62,7 @@ describe('import serialisation', () => {
 		expect(imports).toContain('lishs.importFromURL');
 		// Parses a whole .lish file just to show it, so it must not run beside an import either.
 		expect(imports).toContain('lishs.inspectFile');
+		expect(imports).toContain('lishs.inspectFileChecksums');
 
 		const table = overlapTable(imports);
 		// Every entry at once, so the queue allowance is raised out of the way — what

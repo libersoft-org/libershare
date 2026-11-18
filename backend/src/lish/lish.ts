@@ -462,12 +462,14 @@ export function validateImportedLISH(data: unknown): ILISH {
 }
 
 /**
- * Read a .lish/.lishs (or compressed) file as its manifests, not validated yet:
- * the items of a .lishs array, or the one object of a .lish.
+ * Read a .lish/.lishs (or compressed) file as its manifests, not validated yet: the items of a
+ * .lishs array, or the one object of a .lish. `version` names this exact content, so a later
+ * read can tell that the file was rewritten in between.
  */
-export async function readLISHFile(filePath: string): Promise<unknown[]> {
-	const data = Utils.safeJSONParse(await Utils.readFileCompressed(filePath), filePath);
-	return Array.isArray(data) ? data : [data];
+export async function readLISHFile(filePath: string): Promise<{ manifests: unknown[]; version: string }> {
+	const content = await Utils.readFileCompressed(filePath);
+	const data = Utils.safeJSONParse(content, filePath);
+	return { manifests: Array.isArray(data) ? data : [data], version: new Bun.CryptoHasher('sha256').update(content).digest('hex') };
 }
 
 /**
@@ -475,7 +477,7 @@ export async function readLISHFile(filePath: string): Promise<unknown[]> {
  * Handles both single objects and arrays.
  */
 export async function importLISHFromFile(filePath: string): Promise<ILISH[]> {
-	return (await readLISHFile(filePath)).map(item => validateImportedLISH(item));
+	return (await readLISHFile(filePath)).manifests.map(item => validateImportedLISH(item));
 }
 
 /**

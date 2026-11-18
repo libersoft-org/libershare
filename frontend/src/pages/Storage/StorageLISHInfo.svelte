@@ -45,7 +45,7 @@
 		loading = true;
 		error = '';
 		try {
-			items = await api.lishs.inspectFile(filePath);
+			items = (await api.lishs.inspectFile(filePath)).items;
 		} catch (e: any) {
 			error = translateError(e);
 			items = [];

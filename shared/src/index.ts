@@ -192,6 +192,14 @@ export interface IInvalidEntryFields {
 	invalidFields?: string[] | undefined;
 }
 
+/** What a .lish / .lishs file holds, see `lishs.inspectFile`. */
+export interface ILISHFileInspectionResult {
+	/** Names the file content read; parts asked for later must come from the same content. */
+	version: string;
+	/** Each manifest of the file, in file order. */
+	items: ILISHFileInspection[];
+}
+
 /** One manifest from a .lish / .lishs file, with the outcome of checking it. */
 export interface ILISHFileInspection {
 	/** Summary of the manifest; absent when its structure is invalid. */
