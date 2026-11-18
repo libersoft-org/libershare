@@ -12,6 +12,7 @@
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createNavArea } from '../../scripts/navArea.svelte.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -43,12 +44,10 @@
 	let tabAreaID = $derived(`${areaID}-tabs`);
 	let listAreaID = $derived(`${areaID}-list`);
 	let peerListAreaID = $derived(`${areaID}-peerlist`);
-	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let infoActive = $derived($activeArea === infoAreaID);
 	let tabActive = $derived($activeArea === tabAreaID);
 	let listActive = $derived($activeArea === listAreaID);
 	let peerListActive = $derived($activeArea === peerListAreaID);
-	let selectedToolbarIndex = $state(0);
 	let selectedFileIndex = $state(0);
 	let selectedTabIndex = $state(0); // 0=files, 1=peers
 	let activeTab = $state<string>('files');
@@ -119,14 +118,26 @@
 	let showFileBrowser = $state(false);
 	let removeFileBrowserBackHandler: (() => void) | null = null;
 
-	let unregisterToolbar: (() => void) | null = null;
+	// The toolbar is a declarative NavArea: its buttons register themselves by [x, y].
+	// The action that opened a sub-page; remembered on confirm, so a mouse click counts too.
+	let openedByAction: DownloadToolbarActionID = 'back';
+	const toolbarNav = createNavArea(() => ({
+		areaID: `${areaID}-toolbar`,
+		position,
+		onBack: handleBack,
+		onDown(): string | false {
+			if (!download) return false;
+			selectedInfoIndex = 0;
+			scrollToSelectedInfoRow();
+			return infoAreaID;
+		},
+	}));
 	let unregisterInfo: (() => void) | null = null;
 	let unregisterTab: (() => void) | null = null;
 	let unregisterList: (() => void) | null = null;
 	let unregisterPeerList: (() => void) | null = null;
 
 	function registerDetailAreas(): void {
-		unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
 		unregisterInfo = useArea(infoAreaID, infoHandlers, position);
 		unregisterTab = useArea(tabAreaID, tabHandlers, position);
 		unregisterList = useArea(listAreaID, listHandlers, position);
@@ -135,27 +146,40 @@
 	}
 
 	function unregisterDetailAreas(): void {
-		unregisterToolbar?.();
+		toolbarNav.pause();
 		unregisterInfo?.();
 		unregisterTab?.();
 		unregisterList?.();
 		unregisterPeerList?.();
-		unregisterToolbar = null;
 		unregisterInfo = null;
 		unregisterTab = null;
 		unregisterList = null;
 		unregisterPeerList = null;
 	}
 
+	/** Bring the areas back after a sub-page closes, with the toolbar on the button that opened it. */
+	function restoreDetailAreas(): void {
+		toolbarNav.resume();
+		// By action, not by slot: the sub-page may have changed which buttons the toolbar shows.
+		toolbarNav.controller.select([
+			Math.max(
+				0,
+				toolbarActions.findIndex(action => action.id === openedByAction)
+			),
+			0,
+		]);
+		registerDetailAreas();
+	}
+
 	function handleExportBack(): void {
 		showExport = false;
-		registerDetailAreas();
+		restoreDetailAreas();
 	}
 
 	function handleMoveBack(): void {
 		popBreadcrumb();
 		showMove = false;
-		registerDetailAreas();
+		restoreDetailAreas();
 	}
 
 	function handleFileBrowserBack(): void {
@@ -163,7 +187,7 @@
 		removeFileBrowserBackHandler = null;
 		popBreadcrumb();
 		showFileBrowser = false;
-		registerDetailAreas();
+		restoreDetailAreas();
 	}
 	function scrollToSelected(): void {
 		scrollToElement(itemElements, selectedFileIndex);
@@ -239,6 +263,11 @@
 
 	function handleBack(): void {
 		onBack?.();
+	}
+
+	function confirmToolbarAction(actionID: DownloadToolbarActionID): void {
+		openedByAction = actionID;
+		handleToolbarAction(actionID);
 	}
 
 	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
@@ -326,43 +355,6 @@
 		selectedPeerSnapshot = null;
 		activateArea(peerListAreaID);
 	}
-
-	const toolbarHandlers = {
-		up(): boolean {
-			return false;
-		},
-		down(): boolean {
-			if (download) {
-				selectedInfoIndex = 0;
-				activateInfoPanel();
-				return true;
-			}
-			return false;
-		},
-		left(): boolean {
-			if (selectedToolbarIndex > 0) {
-				selectedToolbarIndex--;
-				return true;
-			}
-			return false;
-		},
-		right(): boolean {
-			if (selectedToolbarIndex < toolbarActions.length - 1) {
-				selectedToolbarIndex++;
-				return true;
-			}
-			return false;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			const action = toolbarActions[selectedToolbarIndex];
-			if (action) handleToolbarAction(action.id);
-		},
-		confirmCancel(): void {},
-		back(): void {
-			handleBack();
-		},
-	};
 
 	const infoHandlers = {
 		up(): boolean {
@@ -821,8 +813,8 @@
 {:else}
 	<div class="detail">
 		<div class="toolbar">
-			{#each toolbarActions as action, index (action.id)}
-				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
+			{#each toolbarActions as action, index (index)}
+				<Button icon={action.icon} label={action.label} position={[index, 0]} onConfirm={() => confirmToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
 			{/each}
 		</div>
 		{#if deleteError}
