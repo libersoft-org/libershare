@@ -7,7 +7,9 @@
 	<script type="module">
 		import '/src/app.css';
 		import { mount, unmount, tick } from 'svelte';
-		import '/src/scripts/language.ts';
+		import { get } from 'svelte/store';
+		import { t } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
 		import { wsClient } from '/src/scripts/ws-client.ts';
 		import FileBrowser from '/src/pages/FileBrowser/FileBrowser.svelte';
 
@@ -44,7 +46,7 @@
 		}
 		let component;
 		try {
-			component = mount(FileBrowser, { target: root, props: { areaID: 'links', position: { x: 0, y: 0 }, initialPath: '/data' } });
+			component = mount(FileBrowser, { target: root, props: { areaID: 'links', position: { x: 0, y: 0 }, initialPath: '/data', selectFileButton: true, onShare: () => {} } });
 			for (let i = 0; i < 20 && !row('dangling'); i++) await settle();
 			await test('a broken link is dimmed and working entries are not', async () => {
 				const broken = row('dangling');
@@ -52,11 +54,44 @@
 				if (!broken.classList.contains('dimmed')) throw new Error('The broken link is not dimmed');
 				for (const name of ['linked-dir', 'plain.txt']) if (row(name)?.classList.contains('dimmed')) throw new Error(`${name} is dimmed`);
 			});
+			await test('a broken link offers rename and delete to the mouse and keyboard', async () => {
+				const labels = () => [...root.querySelectorAll('.actions .button')].map(button => button.textContent.trim());
+				const expected = ['fileBrowser.renameFile', 'fileBrowser.deleteFile', 'common.back'].map(key => get(t)(key));
+				function checkActions() {
+					if (JSON.stringify(labels()) !== JSON.stringify(expected)) throw new Error(`Unexpected broken-link actions: ${labels().join(', ')}`);
+				}
+				row('dangling').click();
+				await settle();
+				checkActions();
+				emit('back');
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				checkActions();
+				const selected = root.querySelector('.actions .button.selected');
+				if (selected?.textContent.trim() !== expected[0]) throw new Error('Rename is not selected');
+			});
+			await unmount(component);
+			component = undefined;
+			await test('a broken link cannot be picked in the file selector', async () => {
+				const selections = [];
+				component = mount(FileBrowser, { target: root, props: { areaID: 'picker', position: { x: 0, y: 0 }, initialPath: '/data', filesOnly: true, onSelect: path => selections.push(path) } });
+				for (let i = 0; i < 20 && !row('dangling'); i++) await settle();
+				row('dangling').click();
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				if (selections.length !== 0) throw new Error('The broken link was selected');
+				row('plain.txt').click();
+				if (selections.length !== 1 || selections[0] !== '/data/plain.txt') throw new Error('The regular file was not selected');
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 1 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

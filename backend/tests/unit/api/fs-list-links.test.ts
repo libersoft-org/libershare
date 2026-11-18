@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { existsSync } from 'fs';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { FsEntry } from '@shared';
@@ -70,6 +70,16 @@ describe('fs.list and fs.delete with links', () => {
 	it.skipIf(fileLinkDenied)('reports a linked file as a file', () => {
 		expect(entries.get('file-link.txt')).toMatchObject({ type: 'file', link: true, size: 5 });
 		expect(entries.get('file-link.txt')?.broken).toBeUndefined();
+	});
+
+	it('renames and deletes a dangling directory link without following it', async () => {
+		const dangling = join(root, 'broken-link');
+		const renamed = join(root, 'renamed-broken-link');
+		const fs = initFsHandlers();
+		await fs.rename({ path: dangling, newName: 'renamed-broken-link' });
+		expect((await lstat(renamed)).isSymbolicLink()).toBe(true);
+		await fs.delete({ path: renamed });
+		await expect(lstat(renamed)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
 	// A linked folder now opens like any other, so "Delete directory" can be run on the link path itself.
