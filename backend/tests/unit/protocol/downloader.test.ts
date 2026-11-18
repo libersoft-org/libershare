@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Downloader } from '../../../src/protocol/downloader.ts';
+import type { HaveAnnouncement } from '../../../src/protocol/lish-protocol.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
@@ -727,6 +728,45 @@ describe('Downloader – oversized manifest across peers', () => {
 
 		expect(priv(dl)['state']).toBe('awaiting-manifest');
 		expect(priv(dl)['errorCode']).toBeUndefined();
+	});
+
+	it.each([true, false])('waits for a pending HAVE connection before reporting the manifest refusal (connects: %p)', async connects => {
+		const ds = new MockDataServer();
+		const dl = awaitingManifestDownloader(ds);
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const dialing = Promise.withResolvers<void>();
+		const peerID = 'peer-connecting';
+		const next = new MockLISHClient();
+		next.requestManifestResult = { ...makeLISH(), id: 'test-oversized-lish' };
+		peers.set('peer-oversized-1', oversizedClient());
+		priv(dl)['connectToPeer'] = async () => {
+			await dialing.promise;
+			if (!connects) throw new Error('connection timed out');
+			peers.set(peerID, next);
+		};
+		const doWork = dl.doWork.bind(dl);
+		let announcedWork: Promise<void> | undefined;
+		dl.doWork = () => (announcedWork = doWork());
+		const announcements = priv(dl) as { onHaveAnnouncement(announcement: HaveAnnouncement): Promise<void> };
+		const have = announcements.onHaveAnnouncement({ lishID: 'test-oversized-lish', peerID, multiaddrs: [], chunks: 'all' });
+		try {
+			try {
+				await doWork();
+				expect(dl.getError()).toBeNull();
+			} finally {
+				dialing.resolve();
+				await have;
+				await announcedWork;
+			}
+			if (connects) {
+				expect(ds.addedLishs).toHaveLength(1);
+				expect(dl.getError()).toBeNull();
+			} else {
+				expect(dl.getError()?.code).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
+			}
+		} finally {
+			await dl.destroy();
+		}
 	});
 
 	it('surfaces the terminal error when the only peer returns an over-limit manifest', async () => {
