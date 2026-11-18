@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { writeFileSync } from 'node:fs';
 import { link, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +40,42 @@ describe('createLISH symlinks', () => {
 			expect(JSON.stringify(lish.links ?? [])).not.toContain(base.replaceAll('\\', '/'));
 			// The receiver's own rule: every link must resolve to a file of the manifest.
 			expect(() => datasetCopyBytes(lish, { kind: 'explicit', path: shared })).not.toThrow();
+		} finally {
+			await rm(base, { recursive: true, force: true });
+		}
+	});
+
+	it('skips a dangling directory link and keeps sharing the existing files', async () => {
+		const base = await mkdtemp(join(tmpdir(), 'create-links-'));
+		try {
+			await writeFile(join(base, 'keep.bin'), 'data');
+			await symlink(join(base, 'missing'), join(base, 'dangling'), dirLinkType);
+
+			const lish = await createLISH(base, 'links', 1024, 'sha256');
+
+			expect(lish.files?.map(file => file.path)).toEqual(['keep.bin']);
+			expect(lish.links).toBeUndefined();
+		} finally {
+			await rm(base, { recursive: true, force: true });
+		}
+	});
+
+	it('omits a link whose target appeared after its directory was scanned', async () => {
+		const base = await mkdtemp(join(tmpdir(), 'create-links-'));
+		try {
+			const sub = join(base, 'sub');
+			const lateTarget = join(sub, 'late.bin');
+			await mkdir(sub);
+			await writeFile(join(sub, 'keep.bin'), 'data');
+			if (!(await fileSymlink(lateTarget, join(base, 'z-link.bin')))) return;
+
+			const lish = await createLISH(base, 'links', 1024, 'sha256', 1, undefined, info => {
+				if (info.type === 'file' && info.path === 'sub/keep.bin') writeFileSync(lateTarget, 'late');
+			});
+
+			expect(lish.files?.map(file => file.path)).toEqual(['sub/keep.bin']);
+			expect(lish.links).toBeUndefined();
+			expect(() => datasetCopyBytes(lish, { kind: 'explicit', path: base })).not.toThrow();
 		} finally {
 			await rm(base, { recursive: true, force: true });
 		}

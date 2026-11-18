@@ -57,6 +57,7 @@ function getPermissions(mode: number): string {
 interface FileStats {
 	isFile(): boolean;
 	isDirectory(): boolean;
+	isSymbolicLink(): boolean;
 	size: number;
 	mode: number;
 	mtime: Date;
@@ -71,16 +72,17 @@ function exactSize(size: bigint, fullPath: string): number {
 }
 
 // Helper to get file/directory stats
-async function getStats(fullPath: string): Promise<FileStats> {
+async function getStats(fullPath: string, followLinks = true): Promise<FileStats> {
 	let stat: import('node:fs').BigIntStats;
 	try {
-		stat = await fsPromises.stat(fullPath, { bigint: true });
+		stat = await (followLinks ? fsPromises.stat(fullPath, { bigint: true }) : fsPromises.lstat(fullPath, { bigint: true }));
 	} catch (e) {
 		throw new CodedError(ErrorCodes.PATH_ACCESS_DENIED, fullPath);
 	}
 	return {
 		isFile: () => stat.isFile(),
 		isDirectory: () => stat.isDirectory(),
+		isSymbolicLink: () => stat.isSymbolicLink(),
 		size: stat.isFile() ? exactSize(stat.size, fullPath) : 0,
 		mode: Number(stat.mode & 0o7777n),
 		mtime: stat.mtime,
@@ -220,18 +222,12 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 		const fullPath = `${dirPath}/${entry}`;
 		let stat: FileStats;
 		try {
-			stat = await getStats(fullPath);
+			stat = await getStats(fullPath, false);
 		} catch {
 			continue;
 		}
-		// Check symlink
-		let isSymlink = false;
-		try {
-			const lstat = await fsPromises.lstat(fullPath);
-			isSymlink = lstat.isSymbolicLink();
-		} catch {}
-		if (isSymlink) continue;
-		else if (stat.isDirectory()) {
+		if (stat.isSymbolicLink()) continue;
+		if (stat.isDirectory()) {
 			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap, signal);
 			result.push(...subFiles);
 		} else if (stat.isFile()) {
@@ -279,36 +275,28 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	for (const entry of scannedPaths) {
 		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
-		const stat = await getStats(fullPath);
-		// Check if it's a symlink using lstat (lstat does NOT follow symlinks, stat does)
-		let isSymlink = false;
-		try {
-			const lstat = await fsPromises.lstat(fullPath);
-			isSymlink = lstat.isSymbolicLink();
-		} catch (e) {
-			// Can't determine, treat as not a symlink
-		}
-		if (isSymlink) {
-			// Handle symbolic link - read the link target
+		const stat = await getStats(fullPath, false);
+		if (stat.isSymbolicLink()) {
 			try {
-				// Stored relative to the dataset, like a hardlink target: the resolved absolute path
-				// would publish the author's local folders in the manifest, and a target outside the
-				// shared folder is nothing a receiver can resolve anyway.
-				const target = relative(await fsPromises.realpath(basePath), await fsPromises.realpath(fullPath));
+				// Resolve within the dataset so the exported manifest carries no absolute target.
+				const resolvedTarget = await fsPromises.realpath(fullPath);
+				const target = relative(await fsPromises.realpath(basePath), resolvedTarget);
 				if (!target || isAbsolute(target) || target === '..' || target.startsWith('..' + sep)) {
 					console.warn(`Warning: skipping symlink ${fullPath}, its target is outside the shared folder`);
-				} else if (!(await fsPromises.stat(fullPath)).isFile()) {
-					// A receiver recreates a link only to a file of the manifest, so a folder target would fail its import.
-					console.warn(`Warning: skipping symlink ${fullPath}, its target is not a file`);
-				} else {
-					links.push({
-						path: getRelativePath(fullPath, basePath),
-						target: normalizePath(target),
-						modified: formatTimestamp(new Date(stat.mtime)),
-						created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
-					});
+					continue;
 				}
-			} catch (e) {
+				const targetStats = await fsPromises.stat(resolvedTarget);
+				if (!targetStats.isFile()) {
+					console.warn(`Warning: skipping symlink ${fullPath}, its target is not a file`);
+					continue;
+				}
+				links.push({
+					path: getRelativePath(fullPath, basePath),
+					target: normalizePath(target),
+					modified: formatTimestamp(targetStats.mtime),
+					created: formatTimestamp(targetStats.birthtime || targetStats.mtime),
+				});
+			} catch {
 				console.warn(`Warning: Could not read symlink ${fullPath}`);
 			}
 		} else if (stat.isDirectory()) {
@@ -432,17 +420,22 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
 		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
-		// A symlink to a hardlinked copy would name a link entry, which a receiver cannot resolve: point it at the file both names share.
-		const hardlinkTargets = new Map(links.filter(link => link.hardlink).map(link => [link.path, link.target]));
-		for (const link of links) if (!link.hardlink) link.target = hardlinkTargets.get(link.target) ?? link.target;
-		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));
 		files.sort((a, b) => a.path.localeCompare(b.path));
-		links.sort((a, b) => a.path.localeCompare(b.path));
-		// Only add arrays if they have content
 		if (directories.length > 0) lish.directories = directories;
 		if (files.length > 0) lish.files = files;
-		if (links.length > 0) lish.links = links;
+		if (links.length > 0) {
+			// A symlink to a hardlinked copy must point to the file both names share.
+			const hardlinkTargets = new Map(links.filter(link => link.hardlink).map(link => [link.path, link.target]));
+			const filePaths = new Set(files.map(file => file.path));
+			const includedLinks = links.filter(link => {
+				if (!link.hardlink) link.target = hardlinkTargets.get(link.target) ?? link.target;
+				if (filePaths.has(link.target)) return true;
+				console.warn(`Warning: skipping link ${link.path}, its target is absent from the manifest`);
+				return false;
+			});
+			if (includedLinks.length > 0) lish.links = includedLinks.sort((a, b) => a.path.localeCompare(b.path));
+		}
 	} else throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE);
 	return lish;
 }

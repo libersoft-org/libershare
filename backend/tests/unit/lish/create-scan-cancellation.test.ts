@@ -125,12 +125,11 @@ describe('cancelling a creation during its directory scan', () => {
 		}) as never);
 		// Cancelled inside the metadata read for the subdirectory: the moment right before the
 		// recursion that would list it.
-		let lstats = 0;
-		const lstatSpy = spyOn(fsPromises, 'lstat').mockImplementation(((): any => {
-			lstats++;
-			if (lstats === 1) controller.abort();
-			return Promise.resolve({ isSymbolicLink: () => false });
-		}) as any);
+		const realLstat = fsPromises.lstat;
+		const lstatSpy = spyOn(fsPromises, 'lstat').mockImplementation(((...args: Parameters<typeof realLstat>) => {
+			controller.abort();
+			return realLstat(...args);
+		}) as typeof realLstat);
 
 		try {
 			await expect(createLISH(root, undefined, 1024, 'sha256', 1, undefined, undefined, undefined, controller.signal)).rejects.toThrow('LISH_CREATE_CANCELLED');
@@ -164,14 +163,11 @@ describe('cancelling a creation during its directory scan', () => {
 		// The subdirectory is lstat'ed once per pass. Cancelling on the SECOND one lands inside
 		// the hashing pass, right after it decided to recurse and before it opens the directory.
 		let subStats = 0;
-		const lstatSpy = spyOn(fsPromises, 'lstat');
-		lstatSpy.mockImplementation(((path: string): any => {
-			if (String(path).endsWith('sub')) {
-				subStats++;
-				if (subStats === 2) controller.abort();
-			}
-			return Promise.resolve({ isSymbolicLink: () => false });
-		}) as never);
+		const realLstat = fsPromises.lstat;
+		const lstatSpy = spyOn(fsPromises, 'lstat').mockImplementation(((...args: Parameters<typeof realLstat>) => {
+			if (String(args[0]).endsWith('sub') && ++subStats === 2) controller.abort();
+			return realLstat(...args);
+		}) as typeof realLstat);
 
 		try {
 			await expect(createLISH(root, undefined, 1024, 'sha256', 1, undefined, undefined, undefined, controller.signal)).rejects.toThrow('LISH_CREATE_CANCELLED');
