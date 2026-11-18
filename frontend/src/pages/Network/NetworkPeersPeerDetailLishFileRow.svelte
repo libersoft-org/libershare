@@ -25,9 +25,7 @@
 	let iconColor = $derived(isSelected ? '--primary-background' : '--secondary-foreground');
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
 	let el = $state<HTMLElement | undefined>();
-	// Opened details (and checksums arriving later) grow the row past the spot the selection scrolled to.
-	// What has to stay in view is whatever is selected now: a late answer for a row the user has left
-	// must not take the view away from where they went, nor push it down out of sight.
+	// Opened details grow the row past the spot the selection scrolled to; keep what is selected in view.
 	$effect(() => {
 		if (!expanded || !el) return;
 		const row = el;

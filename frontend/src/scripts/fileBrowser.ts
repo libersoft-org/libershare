@@ -12,6 +12,8 @@ export interface FsEntry {
 	size?: number;
 	modified?: string;
 	hidden?: boolean;
+	link?: boolean;
+	broken?: boolean;
 }
 
 /** A path split into its directory and (optional) file-name parts. */
@@ -114,6 +116,8 @@ export function transformFsEntry(entry: FsEntry, index: number): StorageItemData
 		size: entry.size,
 		modified: formatDate(entry.modified),
 		hidden: entry.hidden,
+		link: entry.link,
+		broken: entry.broken,
 	};
 }
 
@@ -212,12 +216,14 @@ export interface FileBrowserAction {
 /**
  * Get file actions for action panel
  */
-export function getFileActions(t: (key: string) => string, selectFileButton?: boolean, canShare?: boolean): FileBrowserAction[] {
+export function getFileActions(t: (key: string) => string, selectFileButton?: boolean, canShare?: boolean, broken = false): FileBrowserAction[] {
 	const actions: FileBrowserAction[] = [];
-	if (selectFileButton) actions.push({ id: 'select', label: t('fileBrowser.selectFile'), icon: '/img/check.svg' });
-	actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/directory.svg' });
-	if (canShare) actions.push({ id: 'share', label: t('fileBrowser.shareFile'), icon: '/img/share.svg' });
-	actions.push({ id: 'edit', label: t('fileBrowser.editFile'), icon: '/img/edit.svg' });
+	if (!broken) {
+		if (selectFileButton) actions.push({ id: 'select', label: t('fileBrowser.selectFile'), icon: '/img/check.svg' });
+		actions.push({ id: 'open', label: t('fileBrowser.openFile'), icon: '/img/directory.svg' });
+		if (canShare) actions.push({ id: 'share', label: t('fileBrowser.shareFile'), icon: '/img/share.svg' });
+		actions.push({ id: 'edit', label: t('fileBrowser.editFile'), icon: '/img/edit.svg' });
+	}
 	actions.push({ id: 'rename', label: t('fileBrowser.renameFile'), icon: '/img/edit.svg' });
 	actions.push({ id: 'delete', label: t('fileBrowser.deleteFile'), icon: '/img/del.svg' });
 	actions.push({ id: 'back', label: t('common.back'), icon: '/img/back.svg' });

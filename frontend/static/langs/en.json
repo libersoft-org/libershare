@@ -147,7 +147,8 @@
 		"errorInvalidRequest": "Peer rejected the request as invalid",
 		"errorSearchQueryTooLong": "The search text is too long",
 		"errorListingNotAuthorized": "Listing unavailable: membership of a shared network was not confirmed",
-		"errorListTooLarge": "The shared-item list exceeds the transfer limit. Narrow your search or update the peer to a version that supports list pages."
+		"errorListTooLarge": "The shared-item list exceeds the transfer limit. Narrow your search or update the peer to a version that supports list pages.",
+		"errorManifestTooLarge": "The peer cannot send this LISH: its manifest is larger than the message size limit set on that peer"
 	},
 	"localStorage": {
 		"title": "Local storage",
@@ -306,7 +307,6 @@
 		"errorChunkSizeTooLarge": "LISH rejected: chunk size exceeds the configured limit ({detail})",
 		"errorInvalidManifest": "Invalid LISH manifest: {detail}",
 		"errorUnsafePath": "The target file cannot be safely modified: {detail}",
-		"errorFileChanged": "The file has changed since it was opened. Refresh to see what it holds now.",
 		"errorUnsupportedChecksum": "Invalid LISH: unsupported checksum algorithm: {detail}",
 		"errorUnexpectedArray": "Expected a single LISH object, got an array",
 		"errorPathAccessDenied": "Cannot access path: {detail}",
@@ -330,8 +330,6 @@
 		"entryPath": "Path",
 		"entryTarget": "Target",
 		"entryPermissions": "Permissions",
-		"entryChecksums": "Chunk checksums",
-		"entryChecksumsLoading": "Loading checksums …",
 		"entryInvalidValue": "Invalid value"
 	},
 	"import": {

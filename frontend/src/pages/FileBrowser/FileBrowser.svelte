@@ -198,15 +198,21 @@
 		selectedIndex = index;
 		showActions = false;
 		scrollToSelected();
-		const item = filteredItems[index];
-		if (item && (item.type === 'directory' || item.type === 'drive')) navigateInto(item);
-		else if (item?.type === 'file') {
-			if (saveFileName !== undefined) {
-				internalSaveFileName = item.name;
-				onSaveFileNameChange?.(item.name);
-				handleSave();
-			} else if (filesOnly) onSelect?.(item.path);
-			else openActions();
+		activateItem(filteredItems[index]);
+	}
+
+	function activateItem(item: StorageItemData | undefined): void {
+		if (!item) return;
+		if (item.type === 'directory' || item.type === 'drive') navigateInto(item);
+		else if (item.type === 'file') {
+			if (saveFileName === undefined && !filesOnly) openActions();
+			else if (!item.broken) {
+				if (saveFileName !== undefined) {
+					internalSaveFileName = item.name;
+					onSaveFileNameChange?.(item.name);
+					handleSave();
+				} else onSelect?.(item.path);
+			}
 		}
 	}
 
@@ -242,21 +248,6 @@
 		scrollToSelected();
 	}
 
-	function confirmSelectedItem(): void {
-		const item = filteredItems[selectedIndex];
-		if (item && (item.type === 'directory' || item.type === 'drive'))
-			navigateInto(item); // Directories/drives - navigate into them
-		else if (item?.type === 'file') {
-			if (saveFileName !== undefined) {
-				// In save mode, selecting a file sets the filename and triggers save (with overwrite check)
-				internalSaveFileName = item.name;
-				onSaveFileNameChange?.(item.name);
-				handleSave();
-			} else if (filesOnly) onSelect?.(item.path);
-			else openActions(); // Otherwise show actions panel
-		}
-	}
-
 	function backOrUp(): void {
 		if (parentPath !== null) navigateUp();
 		else onBack?.();
@@ -267,7 +258,7 @@
 	// The list is one item that walks its rows itself, like the rows before; mouse rows keep their own handlers.
 	const listItem: NavItem = {
 		pos: [0, 0],
-		onConfirm: confirmSelectedItem,
+		onConfirm: (): void => activateItem(filteredItems[selectedIndex]),
 		onNavigate(action: NavAction): boolean {
 			if (action === 'left') return false;
 			// Only an open actions panel lies to the right of the list.
@@ -381,7 +372,7 @@
 	}
 
 	// File actions from fileBrowser.ts
-	let fileActions = $derived(getFileActions($t, selectFileButton, !!onShare));
+	let fileActions = $derived(getFileActions($t, selectFileButton, !!onShare, selectedItem?.broken));
 
 	function handleSaveFileNameChange(value: string): void {
 		internalSaveFileName = value;
@@ -969,11 +960,11 @@
 									</div>
 								{:else if error}
 									{#each filteredItems as item, index (item.id)}
-										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 									{/each}
 								{:else}
 									{#each filteredItems as item, index (item.id)}
-										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
 									{/each}
 								{/if}
 							</div>

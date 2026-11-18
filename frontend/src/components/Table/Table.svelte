@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { type Snippet } from 'svelte';
+	import { type Snippet, setContext } from 'svelte';
 	interface Props {
 		children: Snippet;
 		columns?: string;
@@ -7,8 +7,11 @@
 		gap?: string;
 		noBorder?: boolean;
 		oddEven?: boolean;
+		/** Dense rows without dividers, e.g. for a label / value info box. */
+		compact?: boolean;
 	}
-	let { children, columns = '1fr', columnsMobile = '1fr', gap = '2vh', noBorder = false, oddEven = true }: Props = $props();
+	let { children, columns = '1fr', columnsMobile = '1fr', gap = '2vh', noBorder = false, oddEven = true, compact = false }: Props = $props();
+	setContext('tableCompact', () => compact);
 </script>
 
 <style>
