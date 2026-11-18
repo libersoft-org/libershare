@@ -157,6 +157,8 @@
 		// nameFilter is bound; just reset selection on filter change
 		selectedIndex = 0;
 		showActions = false;
+		// A shorter list is otherwise left scrolled to where the longer one was cut.
+		tick().then(scrollToSelected);
 	}
 	// Directory toolbar actions
 	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter, !!onShare));

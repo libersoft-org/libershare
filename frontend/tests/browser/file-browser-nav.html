@@ -294,11 +294,27 @@
 				root.style.height = '600px';
 				assert(shown, `After the resize the list starts at "${firstDrawn}" and the selected row is not in view`);
 			});
+			await test('typing in the name filter shows the top of the shorter list', async () => {
+				const items = root.querySelector('.items');
+				// The last test gave the rows their own height back; the list measures them in the next frame.
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				await press('home', 'up');
+				await walkToolbarTo(label('fileBrowser.showNameFilter'));
+				await press('confirmDown', 'confirmUp');
+				const input = root.querySelector('.name-filter-row input');
+				input.blur();
+				await press('down', 'end');
+				assert(selectedRowText().includes('entry-19999.txt'), `End selected "${selectedRowText()}"`);
+				input.value = 'entry-1';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				for (let wait = 0; wait < 40 && items.scrollTop !== 0; wait++) await new Promise(resolve => setTimeout(resolve, 50));
+				assert(rows().length > 1 && items.scrollTop === 0, `The filtered list of ${rows().length} drawn rows is scrolled to ${items.scrollTop}`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 16 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 17 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
