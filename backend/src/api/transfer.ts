@@ -453,8 +453,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				if (!result.success && budgetRefused.has(lishID)) {
 					// The disk is back; the download was refused for the in-flight budget. That is not
 					// a recovery that failed: another attempt would repeat the refusal, and the next
-					// start is the user's once the limit is raised. Sharing is brought back as usual.
-					if (uploadWasEnabled && isCurrentAttempt()) resumeUpload(lishID, isCurrentAttempt);
+					// start is the user's once the limit is raised. Sharing stays off as well: a LISH
+					// has one error to show, and switching sharing back on clears it, which would
+					// take away the reason the download stopped and what to do about it.
 					recovery.stop(lishID);
 					return false;
 				}

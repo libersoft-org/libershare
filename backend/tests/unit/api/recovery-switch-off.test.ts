@@ -153,6 +153,11 @@ describe('error recovery and a switch-off during the attempt', () => {
 		initDownloadState(new Set([LISH]), () => {});
 		const defaults = (await Settings.create(dir)).getDefaults().network;
 		const events: string[] = [];
+		// What the store is told about the LISH's error, in order.
+		const stored: string[] = [];
+		const { setError, clearError } = unfinishedServer;
+		unfinishedServer.setError = (_lishID?: string, code?: string): void => void stored.push(`set ${code}`);
+		unfinishedServer.clearError = (): void => void stored.push('clear');
 		activeHandlers = initTransferHandlers(
 			networks,
 			unfinishedServer as unknown as DataServer,
@@ -174,10 +179,12 @@ describe('error recovery and a switch-off during the attempt', () => {
 			const sinceAttempt = events.slice(events.indexOf('transfer.recovery:attempting'));
 			expect(sinceAttempt.filter(e => e === 'transfer.download:error')).toHaveLength(1);
 			expect(sinceAttempt).not.toContain('transfer.recovery:scheduled');
-			// Sharing had nothing to do with the limit and comes back.
-			expect(getEnabledUploads().has(LISH)).toBe(true);
+			// The refusal stays stored: it is what the user has to see and act on. Bringing sharing
+			// back as a recovery does would clear the LISH's one error.
+			expect(stored[stored.length - 1]).toBe('set DOWNLOAD_CHUNK_EXCEEDS_BUDGET');
 		} finally {
 			useNetworkSettings(() => defaults);
+			Object.assign(unfinishedServer, { setError, clearError });
 		}
 	}, 20_000);
 });
