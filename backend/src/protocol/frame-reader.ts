@@ -9,9 +9,11 @@ export class FrameEndedError extends Error {
 const MAX_PREFIX_BYTES = 8;
 
 /**
- * Reads varint-length-prefixed frames off a byte stream, each into one buffer allocated at its
- * announced length. Incoming pieces are copied in as they arrive and dropped at once, so a frame
- * costs its own size while it is received and nothing once it is handed over.
+ * Reads varint-length-prefixed frames off a byte stream. A frame that spans several incoming
+ * pieces is assembled in one buffer allocated at its announced length: the pieces are copied in
+ * as they arrive and dropped at once, so the frame costs its own size while it is received and
+ * nothing once it is handed over. A frame that arrives whole inside one piece is handed out as a
+ * view of that piece, without a copy.
  *
  * Not `it-length-prefixed`'s decoder: that one collects the pieces of a frame in a list, the caller
  * then copies the list into one array, and its suspended generator keeps the list until the next
@@ -65,14 +67,26 @@ export class FrameReader {
 				if (prefixBytes === MAX_PREFIX_BYTES) throw new Error('frame length prefix too long');
 			}
 			onLength(length);
-			const frame = new Uint8Array(length);
-			for (let filled = 0; filled < length;) {
-				const part = await this.part();
-				if (!part) throw new FrameEndedError(`stream ended ${length - filled} bytes short of a frame`);
-				const take = Math.min(length - filled, part.length - this.offset);
-				frame.set(part.subarray(this.offset, this.offset + take), filled);
-				filled += take;
-				this.offset += take;
+			const first = length > 0 ? await this.part() : undefined;
+			let frame: Uint8Array;
+			if (first && first.length - this.offset >= length) {
+				frame = first.subarray(this.offset, this.offset + length);
+				this.offset += length;
+			} else {
+				frame = new Uint8Array(length);
+				for (let filled = 0; filled < length;) {
+					const part = await this.part();
+					if (!part) throw new FrameEndedError(`stream ended ${length - filled} bytes short of a frame`);
+					const take = Math.min(length - filled, part.length - this.offset);
+					frame.set(part.subarray(this.offset, this.offset + take), filled);
+					filled += take;
+					this.offset += take;
+				}
+			}
+			// A piece read to its end is let go now, not at the next read, which may be far away.
+			if (this.parts[0] && this.offset >= this.parts[0].length) {
+				this.parts.shift();
+				this.offset = 0;
 			}
 			return frame;
 		} catch (error) {

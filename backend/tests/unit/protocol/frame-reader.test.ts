@@ -54,6 +54,19 @@ describe('FrameReader', () => {
 		expect(frame.buffer.byteLength).toBe(64);
 	});
 
+	it('hands out a frame that arrived whole in one piece as a view of it, without a copy', async () => {
+		const a = payload(64, 6);
+		const b = payload(64, 7);
+		const piece = wire(a, b);
+		const reader = new FrameReader(pieces(piece));
+		const first = (await reader.next(accept))!;
+		const second = (await reader.next(accept))!;
+		expect(first).toEqual(a);
+		expect(second).toEqual(b);
+		expect(first.buffer).toBe(piece.buffer);
+		expect(second.buffer).toBe(piece.buffer);
+	});
+
 	it('is finished after a refused frame: its body is never taken for the next frame', async () => {
 		// The body of the refused frame is itself a well-formed frame.
 		const inner = wire(payload(5, 11));
