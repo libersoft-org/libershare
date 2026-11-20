@@ -932,6 +932,13 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(reads).toBe(1);
 	});
 
+	it('sizes a chunk the manifest does not place as the request for it would: by the chunk size', async () => {
+		const { missing } = makeChunks(2);
+		// The manifest's file has one 100 B chunk; the second missing chunk lies outside it.
+		const cd = makeDownloader(new FakeDataServer(missing), new PeerManager(), 2, { inflightBudget: new ByteBudget(() => 100), fileSize: 100 });
+		expect(cd.oversizedChunk()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET, detail: '1 kB > 100 B' });
+	});
+
 	it('does not hold a chunk already stored against the budget', async () => {
 		const { missing } = makeChunks(2);
 		const ds = new FakeDataServer(missing);

@@ -16,6 +16,16 @@ import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { DatasetWriteScope } from '../lish/dataset-write-scope.ts';
 import { checksumBytes } from '../lish/checksum.ts';
 /**
+ * Bytes the in-flight budget holds for a chunk: its exact length from the manifest, or a whole
+ * chunk size for one the manifest does not place. Shared by the request and by the check made
+ * before any request, so the two cannot disagree about what fits.
+ */
+function reservedLength(lish: IStoredLISH, chunk: MissingChunk): number {
+	const length = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
+	return length >= 0 ? length : lish.chunkSize;
+}
+
+/**
  * Chunk requests to pipeline to one peer: as many chunks as fit in `network.chunkWindowBytes`,
  * at least one and at most {@link CHUNK_WINDOW_MAX_REQUESTS}.
  */
@@ -134,7 +144,7 @@ export class ChunkDownloader {
 		let largest = 0;
 		// A file's first chunk is its largest.
 		for (const fileIndex of lostFiles) largest = Math.max(largest, expectedChunkLength(lish, fileIndex, 0));
-		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex));
+		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, reservedLength(lish, chunk));
 		return budget.tooLarge(largest);
 	}
 
@@ -559,7 +569,7 @@ export class ChunkDownloader {
 
 					// The manifest fixes each chunk's exact byte length; a file's last chunk may be shorter than chunkSize.
 					const expectedLen = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
-					const chunkBytes = expectedLen >= 0 ? expectedLen : lish.chunkSize;
+					const chunkBytes = reservedLength(lish, chunk);
 					const budget = this.deps.inflightBudget ?? chunkInflightBudget;
 					let releaseBudget: (() => void) | undefined;
 					try {
