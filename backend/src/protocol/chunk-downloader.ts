@@ -579,6 +579,11 @@ export class ChunkDownloader {
 						// A slow limit can hold a request back for hours. If the budget is lowered meanwhile, the
 						// wait ends at once: its reservation would otherwise keep every other download out.
 						const lowered = budget.loweredSignal;
+						// Lowered already, between the grant and this signal: the signal will not say so.
+						if (!budget.withinCapacity) {
+							await requeueChunk(chunk, claim);
+							continue;
+						}
 						const limiterReservation = await downloadLimiter.throttle(lish.chunkSize, downloadLimiter.getLimit() > 0 ? AbortSignal.any([waitSignal, lowered]) : waitSignal);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 						if (waitSignal.aborted) {

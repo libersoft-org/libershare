@@ -847,6 +847,42 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(client.requests).toEqual([]);
 	}, 15000);
 
+	it('gives a reservation back when the budget was lowered between its grant and the limiter', async () => {
+		const { missing, data } = makeChunks(1);
+		let capacity = CHUNK_SIZE;
+		// Lowers the budget as the reservation is handed over, before its holder runs on.
+		class LoweredOnGrant extends ByteBudget {
+			override reserve(bytes: number, signal?: AbortSignal): Promise<() => void> {
+				return super.reserve(bytes, signal).then(release => {
+					capacity = CHUNK_SIZE / 2;
+					this.refresh();
+					return release;
+				});
+			}
+		}
+		const budget = new LoweredOnGrant(() => capacity);
+		const errors: string[] = [];
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 1, { inflightBudget: budget, isDisabled: () => errors.length > 0, onSetError: code => errors.push(code) });
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])));
+		pm.tryAdd('peer-lowered-grant', client as never, 'DIRECT');
+		downloadLimiter.setLimit(0.25); // one 1 KiB chunk every four seconds
+		try {
+			// The limiter's free slot is taken, so the request would wait there for seconds.
+			await downloadLimiter.throttle(CHUNK_SIZE);
+			const run = cd.run();
+			await Bun.sleep(200);
+			expect(budget.reservedBytes).toBe(0);
+			expect(client.requests).toEqual([]);
+			await run;
+			expect(errors).toEqual([ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET]);
+		} finally {
+			downloadLimiter.setLimit(0);
+			downloadLimiter.reset();
+		}
+	}, 15000);
+
 	it('names the chunk no budget can hold from the manifest alone, by its real length', async () => {
 		const { missing } = makeChunks(3);
 		const pm = new PeerManager();
