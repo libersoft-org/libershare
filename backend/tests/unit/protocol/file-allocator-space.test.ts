@@ -85,7 +85,9 @@ describe('Downloader with a dataset larger than the free space', () => {
 			ds.missingChunks = [makeMissingChunk('c0' as never)];
 			ds.allChunkCount = 1;
 			const dl = new Downloader(join(base, 'target'), new MockNetwork() as never, ds as never, 'net-001');
-			await dl.initFromManifest(makeLISH({ chunkSize: 2 ** 40, files: [{ path: 'huge.bin', size: 2 ** 50, checksums: Array.from({ length: 1024 }, (_, i) => `c${i}`) }] }));
+			// Chunks small enough for the in-flight budget: this test is about the disk, and a chunk no
+			// budget can hold is refused before any file is prepared.
+			await dl.initFromManifest(makeLISH({ chunkSize: 2 ** 20, files: [{ path: 'huge.bin', size: 2 ** 50, checksums: Array.from({ length: 1024 }, (_, i) => `c${i}`) }] }));
 			const outcome = await Promise.race([
 				dl.download().then(
 					() => 'resolved',

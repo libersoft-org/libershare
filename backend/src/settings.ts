@@ -11,7 +11,7 @@ export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
 // Default bytes of chunk requests kept in flight to one peer (settings: network.chunkWindowBytes).
 export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
 // Default bytes of chunk requests in flight across every download (network.chunkInflightBudgetBytes).
-export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 64 * 1024 * 1024;
+export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 256 * 1024 * 1024;
 
 export interface SettingsData {
 	language: string;
@@ -50,7 +50,11 @@ export interface SettingsData {
 		chunkWindowBytes: number;
 		/**
 		 * Bytes of chunk requests in flight across every download in the process, including
-		 * verified chunks waiting for a write retry. Applies to running downloads.
+		 * verified chunks waiting for a write retry. A chunk is requested only when its length fits
+		 * beside the bytes already in flight, and a chunk larger than the whole budget stops its
+		 * download with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET`. Applies to running downloads: after it is
+		 * lowered, chunks already requested may stay above it until they are written, and nothing
+		 * more is requested meanwhile.
 		 */
 		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;

@@ -16,6 +16,16 @@ import type { DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { DatasetWriteScope } from '../lish/dataset-write-scope.ts';
 import { checksumBytes } from '../lish/checksum.ts';
 /**
+ * Bytes the in-flight budget holds for a chunk: its exact length from the manifest, or a whole
+ * chunk size for one the manifest does not place. Shared by the request and by the check made
+ * before any request, so the two cannot disagree about what fits.
+ */
+function reservedLength(lish: IStoredLISH, chunk: MissingChunk): number {
+	const length = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
+	return length >= 0 ? length : lish.chunkSize;
+}
+
+/**
  * Chunk requests to pipeline to one peer: as many chunks as fit in `network.chunkWindowBytes`,
  * at least one and at most {@link CHUNK_WINDOW_MAX_REQUESTS}.
  */
@@ -116,6 +126,26 @@ export class ChunkDownloader {
 	notifyPeerHave(peerID: string, chunks: HaveChunks): void {
 		const version = (this.peerHaveUpdates.get(peerID)?.version ?? 0) + 1;
 		this.peerHaveUpdates.set(peerID, { version, chunks: chunks === 'all' ? 'all' : [...chunks] });
+	}
+
+	/**
+	 * The refusal for the largest chunk still missing when it can never fit the in-flight budget, so
+	 * the download can stop before it looks for a peer: a search uses up the one answer a seeder gives
+	 * per minute, and the user's next start, after raising the limit, would wait for the next one.
+	 * Chunks already stored are not asked for again and do not count, except those of `lostFiles`:
+	 * files found gone from the disk, whose chunks are about to be marked missing again.
+	 */
+	oversizedChunk(lostFiles: readonly number[] = []): CodedError | undefined {
+		const lish = this.deps.getLish();
+		const budget = this.deps.inflightBudget ?? chunkInflightBudget;
+		// No chunk is longer than the chunk size. When that fits, which is the usual case, the
+		// store is not read: the list of missing chunks costs a query per file.
+		if (!budget.tooLarge(lish.chunkSize)) return undefined;
+		let largest = 0;
+		// A file's first chunk is its largest.
+		for (const fileIndex of lostFiles) largest = Math.max(largest, expectedChunkLength(lish, fileIndex, 0));
+		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, reservedLength(lish, chunk));
+		return budget.tooLarge(largest);
 	}
 
 	/**
@@ -226,6 +256,11 @@ export class ChunkDownloader {
 		// the new run must not overwrite — or be cleared together with — the old one.
 		const peerLoopPromises = new Map<string, Promise<void>>();
 		let peerLoopRuns = 0;
+		// A chunk the in-flight budget can no longer hold. Nothing more is requested from then on,
+		// replies already on their way are still written, and the download fails once they are:
+		// failing at once would close the streams and throw those replies away.
+		let budgetRefusal: CodedError | undefined;
+		const refused = new AbortController();
 
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		// Diagnostic only (skip trace log). The former `globalNotAvailable > queue.length`
@@ -445,14 +480,18 @@ export class ChunkDownloader {
 			// Requests pipelined to this peer: enough to keep chunkWindowBytes in flight, at least one.
 			// Read at every decision, so a settings change applies to running downloads.
 			const depth = (): number => pipelineDepth(lish.chunkSize);
-			// Ends every wait of this run: the download stopping (disable, error, destroy) or this peer being stopped.
-			const waitSignal = AbortSignal.any([this.deps.abortSignal, pauseController.stopSignal(), peerAbort.signal]);
+			// Ends every wait of this run: the download stopping (disable, error, destroy, a refused chunk) or this peer being stopped.
+			const waitSignal = AbortSignal.any([this.deps.abortSignal, pauseController.stopSignal(), peerAbort.signal, refused.signal]);
+			// Nothing more is to be asked of this peer in this run. One test for the workers and for
+			// whoever starts them: a worker that leaves at once must never be started again, or
+			// topping up the pipeline would spin without ever yielding.
+			const ending = (): boolean => stopped || refused.signal.aborted || this.deps.isDestroyed() || this.deps.isDisabled();
 			// Workers of this run that have not decided to leave; see the idle exit below.
 			let activeWorkers = 0;
 			/** One request at a time; up to `depth` of these share the peer state above and pipeline on its stream. */
 			const worker = async (): Promise<void> => {
 				while (true) {
-					if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) break;
+					if (ending()) break;
 					// The window was made smaller: this worker's slot is gone.
 					if (activeWorkers > depth()) break;
 					await pauseController.waitIfDisabled();
@@ -462,19 +501,7 @@ export class ChunkDownloader {
 					// otherwise a memory-pressure requeue can be downloaded repeatedly while a
 					// slow retained write still occupies the budget.
 					await waitForRetainedWritesToDrain();
-					if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) break;
-					// Reserve the chunk's bytes before taking a chunk, so a peer waiting for budget holds no
-					// chunk another peer could fetch meanwhile.
-					let releaseBudget: () => void;
-					try {
-						releaseBudget = await (this.deps.inflightBudget ?? chunkInflightBudget).reserve(lish.chunkSize, waitSignal);
-					} catch {
-						break;
-					}
-					if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) {
-						releaseBudget();
-						break;
-					}
+					if (ending()) break;
 					let chunk: MissingChunk | undefined;
 					const claim = {};
 					let onlyNotFoundLeft = false;
@@ -513,7 +540,6 @@ export class ChunkDownloader {
 					// Work is back: refill the pipeline that idle workers left.
 					if (chunk) topUpWorkers();
 					if (!chunk) {
-						releaseBudget();
 						// One idle worker per peer is enough to wait for work and to decide whether the peer
 						// is still useful. Every extra one would rescan the whole queue on each requeue.
 						if (activeWorkers > 1) {
@@ -541,17 +567,55 @@ export class ChunkDownloader {
 						break;
 					}
 
+					// The manifest fixes each chunk's exact byte length; a file's last chunk may be shorter than chunkSize.
+					const expectedLen = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
+					const chunkBytes = reservedLength(lish, chunk);
+					const budget = this.deps.inflightBudget ?? chunkInflightBudget;
+					let releaseBudget: (() => void) | undefined;
 					try {
+						// Reserve the chunk's own length before asking for it. The reservation is held until the
+						// data is written or dropped, also while a failed write is retried from memory.
+						try {
+							releaseBudget = await budget.reserve(chunkBytes, waitSignal);
+						} catch (err) {
+							// Either the wait ended (this peer or the download stopped), or the chunk is larger
+							// than the whole budget and no peer can ever be asked for it.
+							if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET) {
+								budgetRefusal ??= err;
+								refused.abort();
+							}
+							await requeueChunk(chunk, claim);
+							break;
+						}
+						if (ending()) {
+							await requeueChunk(chunk, claim);
+							break;
+						}
 						// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
 						touchPeer(lishID, peerID, 'download');
-						const limiterReservation = await downloadLimiter.throttle(lish.chunkSize, waitSignal);
+						// A slow limit can hold a request back for hours. If the budget is lowered meanwhile, the
+						// wait ends at once: its reservation would otherwise keep every other download out.
+						const lowered = budget.loweredSignal;
+						// Lowered already, between the grant and this signal: the signal will not say so.
+						if (!budget.withinCapacity) {
+							await requeueChunk(chunk, claim);
+							continue;
+						}
+						const limiterReservation = await downloadLimiter.throttle(lish.chunkSize, downloadLimiter.getLimit() > 0 ? AbortSignal.any([waitSignal, lowered]) : waitSignal);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 						if (waitSignal.aborted) {
 							downloadLimiter.refund(limiterReservation);
 							await requeueChunk(chunk, claim);
 							break;
 						}
-						const result = await this.downloadChunk(client, chunk.chunkID, peerID, () => !answered);
+						// Nothing was sent yet, so the request has to fit the budget as it is now: hand the chunk
+						// back and take a fresh place in the queue, which also asks the limiter again.
+						if (lowered.aborted || !budget.withinCapacity) {
+							downloadLimiter.refund(limiterReservation);
+							await requeueChunk(chunk, claim);
+							continue;
+						}
+						const result = await this.downloadChunk(client, chunk.chunkID, peerID, () => !answered, chunkBytes);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 						if (result !== 'peer-lost' && result !== 'drop-peer') answered = true;
 						// A sibling stopped the peer while this request was in flight: a non-data answer, or
@@ -614,12 +678,9 @@ export class ChunkDownloader {
 							}
 							continue;
 						}
-						// Reject bad chunk data before writing. The manifest fixes each chunk's exact byte
-						// length (a file's last chunk may be shorter than chunkSize); checking length before
-						// the O(n) hash stops a peer from forcing us to hash oversized payloads (bounded only
-						// by maxMessageSize) and rejects malformed data early.
+						// Reject bad chunk data before writing. Checking the length before the O(n) hash
+						// rejects malformed data early, without hashing a payload of the wrong size.
 						const data = result.data;
-						const expectedLen = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
 						let rejectReason: string | null = expectedLen >= 0 && data.length !== expectedLen ? `wrong length: expected ${expectedLen}B, got ${data.length}B` : null;
 						if (!rejectReason) {
 							const actualHash = await checksumBytes(data, lish.checksumAlgo);
@@ -719,6 +780,18 @@ export class ChunkDownloader {
 
 									// Step 2: Find and re-allocate missing files with progress
 									const missingFiles = await fileAllocator.findMissingFiles(lish);
+									// The limit may have been lowered since these files were written: creating
+									// them again would fill the disk for chunks that can no longer be asked for.
+									const refusal = this.oversizedChunk(missingFiles);
+									if (refusal) {
+										// Stopping here skips the verification that would mark the lost files'
+										// chunks as missing. Left recorded as stored, they would not be fetched by a
+										// later start, which would create the files empty and call the download complete.
+										for (const fileIndex of missingFiles) dataServer.resetFileChunks(lishID, fileIndex);
+										this.deps.onSetError(refusal.code, refusal.detail);
+										aborted = true;
+										break;
+									}
 									if (missingFiles.length > 0) {
 										const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (lish.files?.[fi]?.size ?? 0), 0);
 										console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
@@ -829,7 +902,7 @@ export class ChunkDownloader {
 						// the in-flight claim so idle peers can make their exit/drop decision.
 						inFlight--;
 						releaseClaim(chunk, claim);
-						releaseBudget();
+						releaseBudget?.();
 						if (retainedWriteDrainPending) notifyRetainedWriteDrain();
 					}
 				}
@@ -849,7 +922,7 @@ export class ChunkDownloader {
 				void run.finally(() => running.delete(run));
 			};
 			const topUpWorkers = (): void => {
-				while (activeWorkers < depth() && !stopped && !crashed) spawnWorker();
+				while (activeWorkers < depth() && !ending() && !crashed) spawnWorker();
 			};
 			topUpWorkers();
 			while (running.size > 0) await Promise.all([...running]);
@@ -882,6 +955,9 @@ export class ChunkDownloader {
 				await Promise.all(current.map(([, p]) => p));
 				for (const [id] of current) peerLoopPromises.delete(id);
 			}
+			// Unless the download has stopped meanwhile: a write that failed while its reply was let
+			// through has set its own error, and that one says what went wrong first.
+			if (budgetRefusal && !this.deps.isDestroyed() && !this.deps.isDisabled()) this.deps.onSetError(budgetRefusal.code, budgetRefusal.detail);
 			console.debug(`[DL] downloadChunks done: ${downloadedCount}/${totalChunks}`);
 			if (downloadedCount < totalChunks) {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);
@@ -913,11 +989,12 @@ export class ChunkDownloader {
 	 *                          ~5min cyclic reset). Never bans the peer permanently.
 	 * Permanent bans (bannedPeers) are reserved for actively malicious behavior
 	 * (corrupt chunks) and are handled by the caller above.
+	 * `maxChunkBytes` is the length reserved for the chunk; a longer reply is refused unread.
 	 */
-	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string, unproven: () => boolean = () => false): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'peer-lost' | 'drop-peer'> {
+	private async downloadChunk(client: LISHClient, chunkID: ChunkID, peerID?: string, unproven: () => boolean = () => false, maxChunkBytes: number = this.deps.getLish().chunkSize): Promise<{ data: Uint8Array } | 'skip-chunk' | 'chunk-not-found' | 'peer-lost' | 'drop-peer'> {
 		if (this.deps.isDisabled() || this.deps.isDestroyed()) return 'drop-peer';
 		try {
-			const data = await client.requestChunk(this.deps.lishID, chunkID, this.deps.getLish().chunkSize);
+			const data = await client.requestChunk(this.deps.lishID, chunkID, maxChunkBytes);
 			return { data };
 		} catch (err) {
 			const code = (err as { code?: string }).code;
