@@ -448,7 +448,16 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			if (isBusy(lishID)) return 'deferred';
 			let ok = true;
 			if (downloadWasEnabled) {
+				budgetRefused.delete(lishID);
 				const result = await enableDownload({ lishID }, undefined, false, isCurrentAttempt);
+				if (!result.success && budgetRefused.has(lishID)) {
+					// The disk is back; the download was refused for the in-flight budget. That is not
+					// a recovery that failed: another attempt would repeat the refusal, and the next
+					// start is the user's once the limit is raised. Sharing is brought back as usual.
+					if (uploadWasEnabled && isCurrentAttempt()) resumeUpload(lishID, isCurrentAttempt);
+					recovery.stop(lishID);
+					return false;
+				}
 				if (!result.success) ok = false;
 			}
 			// A switch-off that landed while the download was restarting is the user's last word.
@@ -470,6 +479,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		recovery.start(lishID, errorCode, prev);
 	}
 
+	/** LISHs whose latest start was refused for the in-flight budget; read by the error recovery. */
+	const budgetRefused = new Set<string>();
 	const failedDownloaders = new WeakSet<Downloader>();
 	/**
 	 * Record and announce that a download ended with an error, once per downloader. An error
@@ -484,8 +495,12 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		downloadEnabledLishs.delete(lishID);
 		persistDownloadEnabled?.(lishID, false);
 		// Raising the limit is the user's move, and so is the next start: a claim left from a start
-		// that waited for a lishnet would start the download again at every join.
-		if (code === ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET) networkSuspended.delete(lishID);
+		// that waited for a lishnet would start the download again at every join, and so would
+		// the recovery from a disk error that was restarting it.
+		if (code === ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET) {
+			networkSuspended.delete(lishID);
+			budgetRefused.add(lishID);
+		}
 		send('transfer.download:error', { error: code, errorDetail: detail, lishID });
 		startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 	}
@@ -951,9 +966,15 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			}
 			const launched = await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true, scheduledAt);
 			// A download that failed at once is disabled too, but it is not waiting for a lishnet:
-			// failDownload reports the error and stores it as switched off, and the next start is
-			// the user's to make. A resume claim would start it again at the next join.
-			if (launched.getError?.()) return { success: false };
+			// the error is reported and it is stored as switched off, and the next start is the
+			// user's to make. A resume claim would start it again at the next join. Reported here
+			// and not only by the handler waiting on the download, so the caller of this start
+			// already finds the failure recorded.
+			const failure = launched.getError?.();
+			if (failure) {
+				failDownload(p.lishID, launched, failure.code, failure.detail, broadcast ?? ((event: string, data: any) => emit(client, event, data)));
+				return { success: false };
+			}
 			// The start registers the downloader and then keeps awaiting, so a leave landing
 			// after the registration reaches it through onNetworkLeft: the downloader is
 			// disabled and a FRESH suspension claim is filed. Clearing that claim here — it was
