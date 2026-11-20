@@ -339,6 +339,7 @@ export class Downloader {
 			this.setError(code, this.downloadDir);
 			return;
 		}
+		if (this.failOnOversizedChunk()) return;
 		this.disabled = false;
 		if (this.state === 'error') this.transitionTo(this.missingChunks.length > 0 ? 'downloading' : 'preparing', 'enable() retry from error');
 		this.errorCode = undefined;
