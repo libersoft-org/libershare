@@ -483,6 +483,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		dataServer.setError(lishID, code, detail);
 		downloadEnabledLishs.delete(lishID);
 		persistDownloadEnabled?.(lishID, false);
+		// Raising the limit is the user's move, and so is the next start: a claim left from a start
+		// that waited for a lishnet would start the download again at every join.
+		if (code === ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET) networkSuspended.delete(lishID);
 		send('transfer.download:error', { error: code, errorDetail: detail, lishID });
 		startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 	}

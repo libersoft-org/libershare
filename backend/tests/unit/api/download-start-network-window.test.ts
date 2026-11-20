@@ -614,6 +614,39 @@ describe('download start — the lishnet window', () => {
 		expect(events).toEqual([]);
 	});
 
+	it('drops the resume claim of a start that was refused for a chunk no budget can hold', async () => {
+		// Switched on with no lishnet joined, the download waits with a resume claim. The first
+		// join starts it and it is refused; left in place, the claim would start it again at
+		// every later join, although it is stored as switched off.
+		const net = makeNetworks([NET_A], []);
+		const events: Array<{ event: string; data: any }> = [];
+		const dataServer = makeDataServer();
+		const HUGE = 300 * 1024 * 1024; // above the default budget
+		const store = dataServer as unknown as { get: () => unknown; getMissingChunks: () => unknown[] };
+		store.get = () => ({ id: LISH_ID, name: 'x', directory: null, chunkSize: HUGE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: HUGE, checksums: ['chunk-0'] }] });
+		store.getMissingChunks = () => [{ chunkID: 'chunk-0', fileIndex: 0, chunkIndex: 0 }];
+		const handlers = initTransferHandlers(
+			net.networks,
+			dataServer,
+			tmpdir(),
+			() => {},
+			(event: string, data: any) => void (event !== 'transfer.download:progress' && events.push({ event, data })),
+			settings
+		);
+		expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: false });
+		expect(events).toEqual([]);
+
+		net.announceJoin(NET_A);
+		await new Promise(resolve => setTimeout(resolve, 40));
+		expect(events.map(e => e.event)).toEqual(['transfer.download:error']);
+
+		events.length = 0;
+		net.announceLeave(NET_A);
+		net.announceJoin(NET_A);
+		await new Promise(resolve => setTimeout(resolve, 40));
+		expect(events).toEqual([]);
+	});
+
 	it('reports once a refusal that reaches a suspended download as its lishnet comes back', async () => {
 		// The downloader is kept while its lishnet is away. Refused on the way back, the failure
 		// ends both the download it was running and the resume that caused it: two handlers see
