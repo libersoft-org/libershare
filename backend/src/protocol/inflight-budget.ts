@@ -9,10 +9,12 @@ interface Waiter {
 
 /**
  * A FIFO budget of bytes shared by concurrent work. A reservation is granted only while the
- * bytes already reserved plus its own stay within the capacity, so the reserved total never
- * passes it. A reservation that does not fit yet holds every later one behind it, so a large
- * item cannot be starved by a stream of small ones. One larger than the whole capacity can
- * never fit: it is refused with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET` instead of waiting forever.
+ * bytes already reserved plus its own stay within the capacity, so the reserved total passes it
+ * only when the capacity is lowered under reservations already granted; nothing is granted then
+ * until enough of them are released. A reservation that does not fit yet holds every later one
+ * behind it, so a large item cannot be starved by a stream of small ones. One larger than the
+ * whole capacity can never fit: it is refused with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET` instead of
+ * waiting forever.
  *
  * Not `async-mutex`'s Semaphore: its release walks every unit of free capacity, which for a
  * budget counted in bytes is tens of millions of steps per release, and a queued acquire there
