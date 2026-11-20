@@ -780,6 +780,14 @@ export class ChunkDownloader {
 
 									// Step 2: Find and re-allocate missing files with progress
 									const missingFiles = await fileAllocator.findMissingFiles(lish);
+									// The limit may have been lowered since these files were written: creating
+									// them again would fill the disk for chunks that can no longer be asked for.
+									const refusal = this.oversizedChunk(missingFiles);
+									if (refusal) {
+										this.deps.onSetError(refusal.code, refusal.detail);
+										aborted = true;
+										break;
+									}
 									if (missingFiles.length > 0) {
 										const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (lish.files?.[fi]?.size ?? 0), 0);
 										console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);

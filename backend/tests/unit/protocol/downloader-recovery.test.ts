@@ -470,6 +470,31 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(h.pauseController.progressPaused).toBe(false);
 	});
 
+	it('does not create a lost file again when its chunks no longer fit the in-flight budget', async () => {
+		const h = harness(0);
+		h.ds.writeChunkOutcomes = [Object.assign(new Error('ENOENT'), { code: 'ENOENT' }), null];
+		(h.ds as unknown as { getFilesForVerification: () => null }).getFilesForVerification = () => null;
+		let capacity = 4096;
+		(h.deps as { inflightBudget?: ByteBudget }).inflightBudget = new ByteBudget(() => capacity);
+		let created = 0;
+		(h.deps as unknown as { fileAllocator: unknown }).fileAllocator = {
+			// The limit drops below the file's 2048-byte chunk while the recovery waits and scans.
+			findMissingFiles: async () => {
+				capacity = 1000;
+				return [0];
+			},
+			allocateFiles: async () => {
+				created++;
+			},
+		} as never;
+
+		await h.cd.run();
+
+		expect(created).toBe(0);
+		expect(h.errors.map(e => e.code)).toEqual([ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET]);
+		expect(h.pauseController.writePaused).toBe(false);
+	});
+
 	it('does not lose the recovering chunk to a sibling that scans the rebuilt queue before its claim is released', async () => {
 		// A sibling worker waits for budget while recovery rebuilds the queue; the budget frees up a few
 		// microtasks later. One of these offsets lands its queue scan right after the rebuild.
