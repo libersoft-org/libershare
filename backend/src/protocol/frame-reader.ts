@@ -103,6 +103,8 @@ export class FrameReader {
 		this.ended = true;
 		this.parts = [];
 		this.offset = 0;
+		// Nothing more will be pulled: let the source clean up, as leaving a `for await` early would.
+		void Promise.resolve(this.source.return?.()).catch(() => {});
 	}
 
 	/** The part being read, with at least one unread byte left; undefined at the end of the stream. */

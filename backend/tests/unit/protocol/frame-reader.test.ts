@@ -80,6 +80,26 @@ describe('FrameReader', () => {
 		expect(await reader.next(accept)).toBeUndefined();
 	});
 
+	it('closes its source once a frame was refused', async () => {
+		let closed = false;
+		async function* source(): AsyncGenerator<Uint8Array> {
+			try {
+				yield wire(payload(5000, 17));
+				await new Promise(() => {});
+			} finally {
+				closed = true;
+			}
+		}
+		const reader = new FrameReader(source());
+		await expect(
+			reader.next(() => {
+				throw new Error('refused');
+			})
+		).rejects.toThrow('refused');
+		await Bun.sleep(0);
+		expect(closed).toBe(true);
+	});
+
 	it('keeps no reference to a frame it has handed over', async () => {
 		const bytes = wire(payload(70_000, 16));
 		const reader = new FrameReader(pieces(bytes.subarray(0, 1000), bytes.subarray(1000)));
