@@ -119,14 +119,15 @@ export class ChunkDownloader {
 	}
 
 	/**
-	 * The refusal for the largest of `missing` when it can never fit the in-flight budget, so the
-	 * download can stop before it looks for a peer: a search uses up the one answer a seeder gives
+	 * The refusal for the largest chunk still missing when it can never fit the in-flight budget, so
+	 * the download can stop before it looks for a peer: a search uses up the one answer a seeder gives
 	 * per minute, and the user's next start, after raising the limit, would wait for the next one.
+	 * Chunks already stored are not asked for again and do not count.
 	 */
-	oversizedChunk(missing: readonly MissingChunk[]): CodedError | undefined {
+	oversizedChunk(): CodedError | undefined {
 		const lish = this.deps.getLish();
 		let largest = 0;
-		for (const chunk of missing) largest = Math.max(largest, expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex));
+		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex));
 		return (this.deps.inflightBudget ?? chunkInflightBudget).tooLarge(largest);
 	}
 

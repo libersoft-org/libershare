@@ -823,12 +823,21 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 	it('names the chunk no budget can hold from the manifest alone, by its real length', async () => {
 		const { missing } = makeChunks(3);
 		const pm = new PeerManager();
-		const refusal = makeDownloader(new FakeDataServer(missing), pm, 3, { inflightBudget: new ByteBudget(() => CHUNK_SIZE - 1) }).oversizedChunk(missing);
+		const refusal = makeDownloader(new FakeDataServer(missing), pm, 3, { inflightBudget: new ByteBudget(() => CHUNK_SIZE - 1) }).oversizedChunk();
 		expect(refusal).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET, detail: '1 kB > 1023 B' });
-		expect(makeDownloader(new FakeDataServer(missing), pm, 3, { inflightBudget: new ByteBudget(() => CHUNK_SIZE) }).oversizedChunk(missing)).toBeUndefined();
+		expect(makeDownloader(new FakeDataServer(missing), pm, 3, { inflightBudget: new ByteBudget(() => CHUNK_SIZE) }).oversizedChunk()).toBeUndefined();
 		// A file shorter than the chunk size has one short chunk; that length is what must fit.
-		const short = [missing[0]!];
-		expect(makeDownloader(new FakeDataServer(short), pm, 1, { inflightBudget: new ByteBudget(() => 100), fileSize: 100 }).oversizedChunk(short)).toBeUndefined();
+		expect(makeDownloader(new FakeDataServer([missing[0]!]), pm, 1, { inflightBudget: new ByteBudget(() => 100), fileSize: 100 }).oversizedChunk()).toBeUndefined();
+	});
+
+	it('does not hold a chunk already stored against the budget', async () => {
+		const { missing } = makeChunks(2);
+		const ds = new FakeDataServer(missing);
+		// A full chunk and a 100 B tail, with room for the tail only.
+		const cd = makeDownloader(ds, new PeerManager(), 2, { inflightBudget: new ByteBudget(() => 100), fileSize: CHUNK_SIZE + 100 });
+		expect(cd.oversizedChunk()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		ds.downloadedChunks.add(missing[0]!.chunkID);
+		expect(cd.oversizedChunk()).toBeUndefined();
 	});
 
 	it('ends a disabled download even while another download holds the whole budget', async () => {

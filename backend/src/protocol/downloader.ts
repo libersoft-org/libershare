@@ -675,7 +675,7 @@ export class Downloader {
 					// Continue downloading the reset chunks
 				}
 				// A chunk no budget can hold ends the download here, before any peer is looked for.
-				const oversized = this.chunkDownloader!.oversizedChunk(this.missingChunks);
+				const oversized = this.chunkDownloader!.oversizedChunk();
 				if (oversized) {
 					this.setError(oversized.code, oversized.detail);
 					return;

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
@@ -729,6 +732,55 @@ describe('Downloader – oversized manifest across peers', () => {
 		expect(priv(dl)['state']).toBe('error');
 		expect(priv(dl)['errorCode']).toBe(ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE);
 	});
+});
+
+describe('Downloader – chunk larger than the in-flight budget', () => {
+	// One chunk above the default 256 MiB budget and a 100 B tail. Sizes only: no data is moved.
+	const HUGE = 300 * 1024 * 1024;
+	const big = makeMissingChunk('big-chunk' as ChunkID, 0, 0);
+	const tail = makeMissingChunk('tail-chunk' as ChunkID, 0, 1);
+	let dir: string;
+	let wants = 0;
+	let allocations = 0;
+	let dl: Downloader;
+	let ds: MockDataServer;
+
+	beforeEach(async () => {
+		dir = mkdtempSync(join(tmpdir(), 'dl-budget-'));
+		wants = 0;
+		allocations = 0;
+		const net = new MockNetwork();
+		net.broadcast = async (): Promise<void> => {
+			wants++;
+		};
+		ds = new MockDataServer();
+		ds.missingChunks = [big, tail];
+		ds.allChunkCount = 2;
+		dl = new Downloader(join(dir, 'data'), net as never, ds as never, 'net-001');
+		priv(dl)['fileAllocator'] = {
+			findMissingFiles: async (): Promise<number[]> => [0],
+			allocateStructure: async (): Promise<void> => {
+				allocations++;
+			},
+		};
+		await dl.initFromManifest(makeLISH({ chunkSize: HUGE, files: [{ path: 'file.bin', size: HUGE + 100, checksums: ['big-chunk', 'tail-chunk'] }] }));
+	});
+
+	afterEach(async () => {
+		await dl.destroy();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('goes on when the oversized chunk is already stored and only a small one is missing', async () => {
+		// The list taken at the start still names the stored chunk; the store does not.
+		ds.missingChunks = [tail];
+		priv(dl)['state'] = 'downloading';
+
+		await dl.doWork();
+
+		expect(dl.getError()).toBeNull();
+		expect(wants).toBe(1);
+	}, 10000);
 });
 
 describe('Downloader – malformed manifest peer handling', () => {
