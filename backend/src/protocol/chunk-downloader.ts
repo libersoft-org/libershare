@@ -465,12 +465,16 @@ export class ChunkDownloader {
 			const depth = (): number => pipelineDepth(lish.chunkSize);
 			// Ends every wait of this run: the download stopping (disable, error, destroy, a refused chunk) or this peer being stopped.
 			const waitSignal = AbortSignal.any([this.deps.abortSignal, pauseController.stopSignal(), peerAbort.signal, refused.signal]);
+			// Nothing more is to be asked of this peer in this run. One test for the workers and for
+			// whoever starts them: a worker that leaves at once must never be started again, or
+			// topping up the pipeline would spin without ever yielding.
+			const ending = (): boolean => stopped || refused.signal.aborted || this.deps.isDestroyed() || this.deps.isDisabled();
 			// Workers of this run that have not decided to leave; see the idle exit below.
 			let activeWorkers = 0;
 			/** One request at a time; up to `depth` of these share the peer state above and pipeline on its stream. */
 			const worker = async (): Promise<void> => {
 				while (true) {
-					if (stopped || refused.signal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
+					if (ending()) break;
 					// The window was made smaller: this worker's slot is gone.
 					if (activeWorkers > depth()) break;
 					await pauseController.waitIfDisabled();
@@ -480,7 +484,7 @@ export class ChunkDownloader {
 					// otherwise a memory-pressure requeue can be downloaded repeatedly while a
 					// slow retained write still occupies the budget.
 					await waitForRetainedWritesToDrain();
-					if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) break;
+					if (ending()) break;
 					let chunk: MissingChunk | undefined;
 					const claim = {};
 					let onlyNotFoundLeft = false;
@@ -566,7 +570,7 @@ export class ChunkDownloader {
 							await requeueChunk(chunk, claim);
 							break;
 						}
-						if (stopped || refused.signal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) {
+						if (ending()) {
 							await requeueChunk(chunk, claim);
 							break;
 						}
@@ -884,7 +888,7 @@ export class ChunkDownloader {
 				void run.finally(() => running.delete(run));
 			};
 			const topUpWorkers = (): void => {
-				while (activeWorkers < depth() && !stopped && !crashed) spawnWorker();
+				while (activeWorkers < depth() && !ending() && !crashed) spawnWorker();
 			};
 			topUpWorkers();
 			while (running.size > 0) await Promise.all([...running]);

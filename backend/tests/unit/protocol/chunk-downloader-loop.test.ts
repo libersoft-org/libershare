@@ -820,6 +820,33 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		}
 	}, 15000);
 
+	it('ends the run when a chunk is refused while sibling requests are still starting', async () => {
+		const { missing, data } = makeChunks(1);
+		let capacity = CHUNK_SIZE;
+		// Lowers the budget as the reservation is handed over: the chunk goes back to the queue, is
+		// picked again, which starts the sibling workers, and is then refused under them.
+		class LoweredOnGrant extends ByteBudget {
+			override reserve(bytes: number, signal?: AbortSignal): Promise<() => void> {
+				return super.reserve(bytes, signal).then(release => {
+					capacity = CHUNK_SIZE / 2;
+					this.refresh();
+					return release;
+				});
+			}
+		}
+		const errors: string[] = [];
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 1, { inflightBudget: new LoweredOnGrant(() => capacity), isDisabled: () => errors.length > 0, onSetError: code => errors.push(code) });
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])));
+		pm.tryAdd('peer-refused-start', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(errors).toEqual([ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET]);
+		expect(client.requests).toEqual([]);
+	}, 15000);
+
 	it('names the chunk no budget can hold from the manifest alone, by its real length', async () => {
 		const { missing } = makeChunks(3);
 		const pm = new PeerManager();
