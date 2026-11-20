@@ -84,6 +84,8 @@ export class FrameReader {
 				frame = first.subarray(this.offset, this.offset + length);
 				this.offset += length;
 			} else {
+				// Nothing of the body came: no buffer is taken for a frame that is already lost.
+				if (length > 0 && !first) throw new FrameEndedError(`stream ended ${length} bytes short of a frame`);
 				frame = new Uint8Array(Math.min(length, roomMade + FIRST_BUFFER_BYTES));
 				for (let filled = 0; filled < length;) {
 					const part = await this.part();

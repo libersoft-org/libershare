@@ -66,6 +66,12 @@ describe('FrameReader', () => {
 		await expect(new FrameReader(pieces(announced)).next(accept, 1000)).rejects.toBeInstanceOf(FrameEndedError);
 	});
 
+	it('takes no buffer for a frame whose stream ends right after the length', async () => {
+		// A terabyte announced with room made for all of it, and not one byte of it sent.
+		const announced = Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x20);
+		await expect(new FrameReader(pieces(announced)).next(accept, 2 ** 40)).rejects.toBeInstanceOf(FrameEndedError);
+	});
+
 	it('assembles a large frame the same whether its buffer grows or is taken at once', async () => {
 		const a = payload(200_000, 8);
 		const bytes = wire(a);
