@@ -280,8 +280,8 @@ export class Downloader {
 	 * fill the disk for data that cannot arrive, and a search for peers uses up the one answer a
 	 * seeder gives per minute, so the next start, after the limit is raised, would wait for another.
 	 */
-	private failOnOversizedChunk(): boolean {
-		const oversized = this.chunkDownloader?.oversizedChunk();
+	private failOnOversizedChunk(lostFiles?: readonly number[]): boolean {
+		const oversized = this.chunkDownloader?.oversizedChunk(lostFiles);
 		if (!oversized) return false;
 		this.setError(oversized.code, oversized.detail);
 		return true;
@@ -683,6 +683,8 @@ export class Downloader {
 					}
 					// Reset only the missing files' chunks (surgical, not full manifest re-fetch)
 					console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFileIndexes.length} files missing on disk, resetting their chunks`);
+					// Before the files are created again: their chunks have to be downloaded anew.
+					if (this.failOnOversizedChunk(missingFileIndexes)) return;
 					for (const fi of missingFileIndexes) {
 						await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
 						if (this.destroyed) return;
@@ -731,6 +733,7 @@ export class Downloader {
 							return;
 						}
 						console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFiles.length} files missing on disk after downloadChunks, resetting`);
+						if (this.failOnOversizedChunk(missingFiles)) return;
 						for (const fi of missingFiles) {
 							await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
 							if (this.destroyed) return;

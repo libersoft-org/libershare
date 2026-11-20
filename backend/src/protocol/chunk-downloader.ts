@@ -122,15 +122,18 @@ export class ChunkDownloader {
 	 * The refusal for the largest chunk still missing when it can never fit the in-flight budget, so
 	 * the download can stop before it looks for a peer: a search uses up the one answer a seeder gives
 	 * per minute, and the user's next start, after raising the limit, would wait for the next one.
-	 * Chunks already stored are not asked for again and do not count.
+	 * Chunks already stored are not asked for again and do not count, except those of `lostFiles`:
+	 * files found gone from the disk, whose chunks are about to be marked missing again.
 	 */
-	oversizedChunk(): CodedError | undefined {
+	oversizedChunk(lostFiles: readonly number[] = []): CodedError | undefined {
 		const lish = this.deps.getLish();
 		const budget = this.deps.inflightBudget ?? chunkInflightBudget;
 		// No chunk is longer than the chunk size. When that fits, which is the usual case, the
 		// store is not read: the list of missing chunks costs a query per file.
 		if (!budget.tooLarge(lish.chunkSize)) return undefined;
 		let largest = 0;
+		// A file's first chunk is its largest.
+		for (const fileIndex of lostFiles) largest = Math.max(largest, expectedChunkLength(lish, fileIndex, 0));
 		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex));
 		return budget.tooLarge(largest);
 	}

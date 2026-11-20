@@ -827,6 +827,24 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 		expect(wants).toBe(0);
 	});
 
+	it('checks the chunks of a lost file before the file is created again', async () => {
+		// Everything is stored, but the file is gone: bringing it back would fill the disk for
+		// chunks that can no longer be downloaded.
+		ds.missingChunks = [];
+		priv(dl)['missingChunks'] = [];
+		priv(dl)['state'] = 'downloading';
+		let created = 0;
+		(priv(dl)['fileAllocator'] as { allocateFile: () => Promise<void> }).allocateFile = async () => {
+			created++;
+		};
+
+		await dl.doWork();
+
+		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(created).toBe(0);
+		expect(wants).toBe(0);
+	});
+
 	it('fails a resumed download before it looks for peers', async () => {
 		priv(dl)['state'] = 'downloading';
 		dl.disable();
