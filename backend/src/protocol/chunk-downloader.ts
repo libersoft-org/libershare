@@ -933,7 +933,9 @@ export class ChunkDownloader {
 				await Promise.all(current.map(([, p]) => p));
 				for (const [id] of current) peerLoopPromises.delete(id);
 			}
-			if (budgetRefusal && !this.deps.isDestroyed()) this.deps.onSetError(budgetRefusal.code, budgetRefusal.detail);
+			// Unless the download has stopped meanwhile: a write that failed while its reply was let
+			// through has set its own error, and that one says what went wrong first.
+			if (budgetRefusal && !this.deps.isDestroyed() && !this.deps.isDisabled()) this.deps.onSetError(budgetRefusal.code, budgetRefusal.detail);
 			console.debug(`[DL] downloadChunks done: ${downloadedCount}/${totalChunks}`);
 			if (downloadedCount < totalChunks) {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);

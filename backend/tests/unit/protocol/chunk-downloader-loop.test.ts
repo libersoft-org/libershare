@@ -742,6 +742,30 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(budget.reservedBytes).toBe(0);
 	}, 15000);
 
+	it('keeps the error of a failed write over the refusal that was waiting for that write', async () => {
+		const { missing, data } = makeChunks(2);
+		let capacity = CHUNK_SIZE;
+		const budget = new ByteBudget(() => capacity);
+		const ds = new FakeDataServer(missing);
+		ds.writeChunkHook = async () => {
+			throw new CodedError(ErrorCodes.LISH_UNSAFE_PATH, 'f.bin');
+		};
+		const pm = new PeerManager();
+		const errors: string[] = [];
+		const cd = makeDownloader(ds, pm, 2, { inflightBudget: budget, isDisabled: () => errors.length > 0, onSetError: code => errors.push(code) });
+		// The first chunk is on the wire for 300 ms; the second waits for its bytes and is refused.
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 300);
+		pm.tryAdd('peer-write-fails00', client as never, 'DIRECT');
+		const run = cd.run();
+		await Bun.sleep(50);
+		capacity = CHUNK_SIZE - 1;
+		budget.refresh();
+
+		await run;
+
+		expect(errors).toEqual([ErrorCodes.LISH_UNSAFE_PATH]);
+	}, 15000);
+
 	it('hands a chunk back when its peer stops while the request waits for budget', async () => {
 		const { missing, data } = makeChunks(2);
 		const budget = new ByteBudget(() => CHUNK_SIZE);
