@@ -238,6 +238,11 @@ export class ChunkDownloader {
 		// the new run must not overwrite — or be cleared together with — the old one.
 		const peerLoopPromises = new Map<string, Promise<void>>();
 		let peerLoopRuns = 0;
+		// A chunk the in-flight budget can no longer hold. Nothing more is requested from then on,
+		// replies already on their way are still written, and the download fails once they are:
+		// failing at once would close the streams and throw those replies away.
+		let budgetRefusal: CodedError | undefined;
+		const refused = new AbortController();
 
 		const corruptCount = new Map<string, number>(); // per-peer corruption counter
 		// Diagnostic only (skip trace log). The former `globalNotAvailable > queue.length`
@@ -457,14 +462,14 @@ export class ChunkDownloader {
 			// Requests pipelined to this peer: enough to keep chunkWindowBytes in flight, at least one.
 			// Read at every decision, so a settings change applies to running downloads.
 			const depth = (): number => pipelineDepth(lish.chunkSize);
-			// Ends every wait of this run: the download stopping (disable, error, destroy) or this peer being stopped.
-			const waitSignal = AbortSignal.any([this.deps.abortSignal, pauseController.stopSignal(), peerAbort.signal]);
+			// Ends every wait of this run: the download stopping (disable, error, destroy, a refused chunk) or this peer being stopped.
+			const waitSignal = AbortSignal.any([this.deps.abortSignal, pauseController.stopSignal(), peerAbort.signal, refused.signal]);
 			// Workers of this run that have not decided to leave; see the idle exit below.
 			let activeWorkers = 0;
 			/** One request at a time; up to `depth` of these share the peer state above and pipeline on its stream. */
 			const worker = async (): Promise<void> => {
 				while (true) {
-					if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) break;
+					if (stopped || refused.signal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) break;
 					// The window was made smaller: this worker's slot is gone.
 					if (activeWorkers > depth()) break;
 					await pauseController.waitIfDisabled();
@@ -553,11 +558,14 @@ export class ChunkDownloader {
 						} catch (err) {
 							// Either the wait ended (this peer or the download stopped), or the chunk is larger
 							// than the whole budget and no peer can ever be asked for it.
-							if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET) this.deps.onSetError(err.code, err.detail);
+							if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET) {
+								budgetRefusal ??= err;
+								refused.abort();
+							}
 							await requeueChunk(chunk, claim);
 							break;
 						}
-						if (stopped || this.deps.isDestroyed() || this.deps.isDisabled()) {
+						if (stopped || refused.signal.aborted || this.deps.isDestroyed() || this.deps.isDisabled()) {
 							await requeueChunk(chunk, claim);
 							break;
 						}
@@ -908,6 +916,7 @@ export class ChunkDownloader {
 				await Promise.all(current.map(([, p]) => p));
 				for (const [id] of current) peerLoopPromises.delete(id);
 			}
+			if (budgetRefusal && !this.deps.isDestroyed()) this.deps.onSetError(budgetRefusal.code, budgetRefusal.detail);
 			console.debug(`[DL] downloadChunks done: ${downloadedCount}/${totalChunks}`);
 			if (downloadedCount < totalChunks) {
 				console.log(`[DL] Peers exhausted at ${downloadedCount}/${totalChunks}, will retry`);

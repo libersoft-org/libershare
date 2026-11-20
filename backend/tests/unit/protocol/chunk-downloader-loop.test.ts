@@ -718,6 +718,30 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(budget.reservedBytes).toBe(0);
 	}, 15000);
 
+	it('writes the chunk already requested before failing on one the lowered budget cannot hold', async () => {
+		const { missing, data } = makeChunks(2);
+		let capacity = CHUNK_SIZE;
+		const budget = new ByteBudget(() => capacity);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const writtenAtError: number[] = [];
+		const cd = makeDownloader(ds, pm, 2, { inflightBudget: budget, isDisabled: () => writtenAtError.length > 0, onSetError: () => writtenAtError.push(ds.downloadedChunks.size) });
+		// The first chunk is on the wire for 300 ms; the second waits for its bytes.
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 300);
+		pm.tryAdd('peer-lowered-flight', client as never, 'DIRECT');
+		const run = cd.run();
+		await Bun.sleep(50);
+		expect(client.requests).toHaveLength(1);
+		capacity = CHUNK_SIZE - 1;
+		budget.refresh();
+
+		await run;
+
+		expect(writtenAtError).toEqual([1]);
+		expect(client.requests).toHaveLength(1);
+		expect(budget.reservedBytes).toBe(0);
+	}, 15000);
+
 	it('hands a chunk back when its peer stops while the request waits for budget', async () => {
 		const { missing, data } = makeChunks(2);
 		const budget = new ByteBudget(() => CHUNK_SIZE);
