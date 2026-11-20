@@ -113,7 +113,8 @@ export class ByteBudget {
 		this.waiters.length = 0;
 	}
 
-	private tooLarge(bytes: number): CodedError | undefined {
+	/** The refusal for `bytes` when they are more than the whole capacity and so can never be reserved. */
+	tooLarge(bytes: number): CodedError | undefined {
 		const capacity = this.capacity();
 		return bytes > capacity ? new CodedError(ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET, formatSizeOverLimit(bytes, capacity)) : undefined;
 	}

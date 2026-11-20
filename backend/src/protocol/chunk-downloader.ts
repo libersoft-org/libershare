@@ -119,6 +119,18 @@ export class ChunkDownloader {
 	}
 
 	/**
+	 * The refusal for the largest of `missing` when it can never fit the in-flight budget, so the
+	 * download can stop before it looks for a peer: a search uses up the one answer a seeder gives
+	 * per minute, and the user's next start, after raising the limit, would wait for the next one.
+	 */
+	oversizedChunk(missing: readonly MissingChunk[]): CodedError | undefined {
+		const lish = this.deps.getLish();
+		let largest = 0;
+		for (const chunk of missing) largest = Math.max(largest, expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex));
+		return (this.deps.inflightBudget ?? chunkInflightBudget).tooLarge(largest);
+	}
+
+	/**
 	 * Drain the missing-chunks queue from the currently connected peers. Returns
 	 * when either all chunks are downloaded, all peers are exhausted/removed,
 	 * or Downloader is disabled/destroyed. Does NOT schedule retry \u2014 the

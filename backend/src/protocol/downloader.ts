@@ -674,6 +674,12 @@ export class Downloader {
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 					// Continue downloading the reset chunks
 				}
+				// A chunk no budget can hold ends the download here, before any peer is looked for.
+				const oversized = this.chunkDownloader!.oversizedChunk(this.missingChunks);
+				if (oversized) {
+					this.setError(oversized.code, oversized.detail);
+					return;
+				}
 				if (this.peerManager.size() === 0) {
 					console.debug(`[DL] no peers, calling for peers (banned: ${this.peerManager.bannedSize()})`);
 					await this.callForPeers();

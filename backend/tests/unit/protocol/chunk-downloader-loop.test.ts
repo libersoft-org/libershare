@@ -796,6 +796,17 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		}
 	}, 15000);
 
+	it('names the chunk no budget can hold from the manifest alone, by its real length', async () => {
+		const { missing } = makeChunks(3);
+		const pm = new PeerManager();
+		const refusal = makeDownloader(new FakeDataServer(missing), pm, 3, { inflightBudget: new ByteBudget(() => CHUNK_SIZE - 1) }).oversizedChunk(missing);
+		expect(refusal).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET, detail: '1 kB > 1023 B' });
+		expect(makeDownloader(new FakeDataServer(missing), pm, 3, { inflightBudget: new ByteBudget(() => CHUNK_SIZE) }).oversizedChunk(missing)).toBeUndefined();
+		// A file shorter than the chunk size has one short chunk; that length is what must fit.
+		const short = [missing[0]!];
+		expect(makeDownloader(new FakeDataServer(short), pm, 1, { inflightBudget: new ByteBudget(() => 100), fileSize: 100 }).oversizedChunk(short)).toBeUndefined();
+	});
+
 	it('ends a disabled download even while another download holds the whole budget', async () => {
 		const budget = new ByteBudget(() => CHUNK_SIZE);
 		// Download B takes the only slot and keeps it: its peer answers after 10 s.
