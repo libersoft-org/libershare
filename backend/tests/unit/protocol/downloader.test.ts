@@ -781,6 +781,16 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 		expect(dl.getError()).toBeNull();
 		expect(wants).toBe(1);
 	}, 10000);
+
+	it('fails before any file is prepared', async () => {
+		priv(dl)['state'] = 'preparing';
+
+		await dl.doWork();
+
+		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(allocations).toBe(0);
+		expect(wants).toBe(0);
+	});
 });
 
 describe('Downloader – malformed manifest peer handling', () => {

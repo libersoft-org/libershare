@@ -274,6 +274,19 @@ export class Downloader {
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
 	}
 
+	/**
+	 * Fail the download when a chunk still missing can never fit the in-flight budget; returns
+	 * whether it did. Called before anything is done for the download: preparing its files would
+	 * fill the disk for data that cannot arrive, and a search for peers uses up the one answer a
+	 * seeder gives per minute, so the next start, after the limit is raised, would wait for another.
+	 */
+	private failOnOversizedChunk(): boolean {
+		const oversized = this.chunkDownloader?.oversizedChunk();
+		if (!oversized) return false;
+		this.setError(oversized.code, oversized.detail);
+		return true;
+	}
+
 	private scheduleRetry(): void {
 		if (this.retryTimer) clearTimeout(this.retryTimer);
 		// Fix D: exponential backoff — 10s, 20s, 40s, 80s, ... capped at 5 min
@@ -613,6 +626,7 @@ export class Downloader {
 				}
 				if (this.needsManifest) return;
 			}
+			if (this.failOnOversizedChunk()) return;
 			// Phase 2: create directory structure (skip if already has downloaded chunks — files already allocated)
 			if (this.state === 'preparing') {
 				// Validate download directory: if resuming (some chunks exist), check the dir itself;
@@ -673,12 +687,6 @@ export class Downloader {
 					}
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 					// Continue downloading the reset chunks
-				}
-				// A chunk no budget can hold ends the download here, before any peer is looked for.
-				const oversized = this.chunkDownloader!.oversizedChunk();
-				if (oversized) {
-					this.setError(oversized.code, oversized.detail);
-					return;
 				}
 				if (this.peerManager.size() === 0) {
 					console.debug(`[DL] no peers, calling for peers (banned: ${this.peerManager.bannedSize()})`);
