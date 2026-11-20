@@ -17,47 +17,74 @@ const MAX_PREFIX_BYTES = 8;
  * then copies the list into one array, and its suspended generator keeps the list until the next
  * read. A large frame is then held twice for as long as the caller works on it, which for a chunk
  * reply means twice the bytes the in-flight budget counts.
+ *
+ * Like that decoder's generator, the reader serves one read at a time and is finished for good
+ * once a read fails: the bytes left over belong to a broken reply and are not a frame.
  */
 export class FrameReader {
 	private readonly source: AsyncIterator<Uint8Array | Uint8ArrayList>;
 	/** Unread parts of the pieces already taken from the source, and the read position in the first. */
 	private parts: Uint8Array[] = [];
 	private offset = 0;
+	/** Set when the stream ended or a read failed; nothing is read after that. */
+	private ended = false;
+	/** Settles with the read in progress, so reads run one at a time in the order they were asked for. */
+	private tail: Promise<unknown> = Promise.resolve();
 
 	constructor(source: AsyncIterable<Uint8Array | Uint8ArrayList>) {
 		this.source = source[Symbol.asyncIterator]();
 	}
 
 	/**
-	 * The next frame, or undefined when the stream ended between frames. `onLength` gets the
-	 * announced length before anything is allocated or read for the body; throwing from it refuses
-	 * the frame. Throws {@link FrameEndedError} when the stream ends inside a frame.
+	 * The next frame, or undefined when the stream ended between frames or an earlier read failed.
+	 * `onLength` gets the announced length before anything is allocated or read for the body;
+	 * throwing from it refuses the frame. Throws {@link FrameEndedError} when the stream ends
+	 * inside a frame.
 	 */
-	async next(onLength: (length: number) => void): Promise<Uint8Array | undefined> {
-		let length = 0;
-		for (let prefixBytes = 0; ;) {
-			const part = await this.part();
-			if (!part) {
-				if (prefixBytes === 0) return undefined;
-				throw new FrameEndedError('stream ended inside a length prefix');
-			}
-			const byte = part[this.offset++]!;
-			// Multiplied, not shifted: a length may need more than 32 bits before it is refused.
-			length += (byte & 0x7f) * 2 ** (7 * prefixBytes++);
-			if (byte < 0x80) break;
-			if (prefixBytes === MAX_PREFIX_BYTES) throw new Error('frame length prefix too long');
-		}
-		onLength(length);
-		const frame = new Uint8Array(length);
-		for (let filled = 0; filled < length;) {
-			const part = await this.part();
-			if (!part) throw new FrameEndedError(`stream ended ${length - filled} bytes short of a frame`);
-			const take = Math.min(length - filled, part.length - this.offset);
-			frame.set(part.subarray(this.offset, this.offset + take), filled);
-			filled += take;
-			this.offset += take;
-		}
+	next(onLength: (length: number) => void): Promise<Uint8Array | undefined> {
+		const frame = this.tail.then(() => this.read(onLength));
+		this.tail = frame.catch(() => {});
 		return frame;
+	}
+
+	private async read(onLength: (length: number) => void): Promise<Uint8Array | undefined> {
+		if (this.ended) return undefined;
+		try {
+			let length = 0;
+			for (let prefixBytes = 0; ;) {
+				const part = await this.part();
+				if (!part) {
+					if (prefixBytes > 0) throw new FrameEndedError('stream ended inside a length prefix');
+					this.end();
+					return undefined;
+				}
+				const byte = part[this.offset++]!;
+				// Multiplied, not shifted: a length may need more than 32 bits before it is refused.
+				length += (byte & 0x7f) * 2 ** (7 * prefixBytes++);
+				if (byte < 0x80) break;
+				if (prefixBytes === MAX_PREFIX_BYTES) throw new Error('frame length prefix too long');
+			}
+			onLength(length);
+			const frame = new Uint8Array(length);
+			for (let filled = 0; filled < length;) {
+				const part = await this.part();
+				if (!part) throw new FrameEndedError(`stream ended ${length - filled} bytes short of a frame`);
+				const take = Math.min(length - filled, part.length - this.offset);
+				frame.set(part.subarray(this.offset, this.offset + take), filled);
+				filled += take;
+				this.offset += take;
+			}
+			return frame;
+		} catch (error) {
+			this.end();
+			throw error;
+		}
+	}
+
+	private end(): void {
+		this.ended = true;
+		this.parts = [];
+		this.offset = 0;
 	}
 
 	/** The part being read, with at least one unread byte left; undefined at the end of the stream. */

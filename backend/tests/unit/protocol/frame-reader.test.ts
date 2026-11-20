@@ -47,14 +47,43 @@ describe('FrameReader', () => {
 		expect(await new FrameReader(pieces(list)).next(accept)).toEqual(a);
 	});
 
-	it('returns each frame in a buffer of its own, exactly its length', async () => {
-		const a = payload(64, 6);
-		const reader = new FrameReader(pieces(wire(a, payload(64, 7))));
-		const first = (await reader.next(accept))!;
-		const second = (await reader.next(accept))!;
-		expect(first.byteLength).toBe(64);
-		expect(first.buffer.byteLength).toBe(64);
-		expect(first.buffer).not.toBe(second.buffer);
+	it('assembles a frame cut across pieces in a buffer of its own, exactly its length', async () => {
+		const bytes = wire(payload(64, 6));
+		const frame = (await new FrameReader(pieces(bytes.subarray(0, 30), bytes.subarray(30))).next(accept))!;
+		expect(frame.byteLength).toBe(64);
+		expect(frame.buffer.byteLength).toBe(64);
+	});
+
+	it('is finished after a refused frame: its body is never taken for the next frame', async () => {
+		// The body of the refused frame is itself a well-formed frame.
+		const inner = wire(payload(5, 11));
+		const reader = new FrameReader(pieces(wire(inner), wire(payload(3, 12))));
+		await expect(
+			reader.next(() => {
+				throw new Error('refused');
+			})
+		).rejects.toThrow('refused');
+		expect(await reader.next(accept)).toBeUndefined();
+		expect(await reader.next(accept)).toBeUndefined();
+	});
+
+	it('serves overlapping reads one at a time, in the order they were asked for', async () => {
+		const a = payload(70_000, 14);
+		const b = payload(9, 15);
+		const bytes = wire(a, b);
+		let release!: () => void;
+		const gate = new Promise<void>(resolve => (release = resolve));
+		async function* slow(): AsyncGenerator<Uint8Array> {
+			yield bytes.subarray(0, 1000);
+			await gate;
+			yield bytes.subarray(1000);
+		}
+		const reader = new FrameReader(slow());
+		const first = reader.next(accept);
+		const second = reader.next(accept);
+		release();
+		expect(await first).toEqual(a);
+		expect(await second).toEqual(b);
 	});
 
 	it('reports the announced length before reading the body, and a refusal stops the read', async () => {
