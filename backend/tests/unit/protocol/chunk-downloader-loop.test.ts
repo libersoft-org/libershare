@@ -893,6 +893,21 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(makeDownloader(new FakeDataServer([missing[0]!]), pm, 1, { inflightBudget: new ByteBudget(() => 100), fileSize: 100 }).oversizedChunk()).toBeUndefined();
 	});
 
+	it('reads the store for the size check only when the chunk size alone does not fit the budget', async () => {
+		const { missing } = makeChunks(3);
+		const ds = new FakeDataServer(missing);
+		let reads = 0;
+		const read = ds.getMissingChunks.bind(ds);
+		ds.getMissingChunks = lishID => (reads++, read(lishID));
+		let capacity = CHUNK_SIZE;
+		const cd = makeDownloader(ds, new PeerManager(), 3, { inflightBudget: new ByteBudget(() => capacity) });
+		expect(cd.oversizedChunk()).toBeUndefined();
+		expect(reads).toBe(0);
+		capacity = CHUNK_SIZE - 1;
+		expect(cd.oversizedChunk()).toBeDefined();
+		expect(reads).toBe(1);
+	});
+
 	it('does not hold a chunk already stored against the budget', async () => {
 		const { missing } = makeChunks(2);
 		const ds = new FakeDataServer(missing);

@@ -126,9 +126,13 @@ export class ChunkDownloader {
 	 */
 	oversizedChunk(): CodedError | undefined {
 		const lish = this.deps.getLish();
+		const budget = this.deps.inflightBudget ?? chunkInflightBudget;
+		// No chunk is longer than the chunk size. When that fits, which is the usual case, the
+		// store is not read: the list of missing chunks costs a query per file.
+		if (!budget.tooLarge(lish.chunkSize)) return undefined;
 		let largest = 0;
 		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex));
-		return (this.deps.inflightBudget ?? chunkInflightBudget).tooLarge(largest);
+		return budget.tooLarge(largest);
 	}
 
 	/**
