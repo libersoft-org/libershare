@@ -81,17 +81,17 @@ describe('chunk window settings', () => {
 
 	it('refuses a per-peer window above the shared budget, from either side', async () => {
 		const settings = await create();
-		await expect(settings.set('network.chunkWindowBytes', 65 * MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
+		await expect(settings.set('network.chunkWindowBytes', 257 * MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		await expect(settings.set('network.chunkInflightBudgetBytes', 8 * MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		await expect(settings.set('network', { ...settings.get('network'), chunkWindowBytes: 32 * MiB, chunkInflightBudgetBytes: 16 * MiB })).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		expect(settings.get('network.chunkWindowBytes')).toBe(16 * MiB);
-		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(64 * MiB);
+		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(256 * MiB);
 	});
 
 	it('accepts a window equal to the budget', async () => {
 		const settings = await create();
-		await settings.set('network.chunkWindowBytes', 64 * MiB);
-		expect(settings.get('network.chunkWindowBytes')).toBe(64 * MiB);
+		await settings.set('network.chunkWindowBytes', 256 * MiB);
+		expect(settings.get('network.chunkWindowBytes')).toBe(256 * MiB);
 	});
 
 	it('refuses a window or budget that is not a positive whole number of bytes', async () => {

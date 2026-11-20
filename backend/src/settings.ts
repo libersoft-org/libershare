@@ -11,7 +11,7 @@ export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
 // Default bytes of chunk requests kept in flight to one peer (settings: network.chunkWindowBytes).
 export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
 // Default bytes of chunk requests in flight across every download (network.chunkInflightBudgetBytes).
-export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 64 * 1024 * 1024;
+export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 256 * 1024 * 1024;
 
 export interface SettingsData {
 	language: string;
