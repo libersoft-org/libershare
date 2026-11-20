@@ -614,6 +614,40 @@ describe('download start — the lishnet window', () => {
 		expect(events).toEqual([]);
 	});
 
+	it('reports once a refusal that reaches a suspended download as its lishnet comes back', async () => {
+		// The downloader is kept while its lishnet is away. Refused on the way back, the failure
+		// ends both the download it was running and the resume that caused it: two handlers see
+		// it, and only one may tell the user and store the switch.
+		const net = makeNetworks([NET_A]);
+		const events: Array<{ event: string; data: any }> = [];
+		const dataServer = makeDataServer(() => {}, tmpdir());
+		const HUGE = 300 * 1024 * 1024; // above the default budget
+		const tail = { chunkID: 'chunk-1', fileIndex: 0, chunkIndex: 1 };
+		let missing: unknown[] = [tail];
+		const store = dataServer as unknown as { get: () => unknown; getMissingChunks: () => unknown[] };
+		store.get = () => ({ id: LISH_ID, name: 'x', directory: tmpdir(), chunkSize: HUGE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: HUGE + 100, checksums: ['chunk-0', 'chunk-1'] }] });
+		store.getMissingChunks = () => missing;
+		const handlers = initTransferHandlers(
+			net.networks,
+			dataServer,
+			tmpdir(),
+			() => {},
+			(event: string, data: any) => void (event === 'transfer.download:error' && events.push({ event, data })),
+			settings
+		);
+		expect(await handlers.enableDownload({ lishID: LISH_ID })).toEqual({ success: true });
+		net.announceLeave(NET_A);
+		persisted = [];
+		// The oversized chunk becomes missing while the download is suspended.
+		missing = [{ chunkID: 'chunk-0', fileIndex: 0, chunkIndex: 0 }, tail];
+
+		net.announceJoin(NET_A);
+		await new Promise(resolve => setTimeout(resolve, 40));
+
+		expect(events.map(e => e.data.error)).toEqual(['DOWNLOAD_CHUNK_EXCEEDS_BUDGET']);
+		expect(persisted.filter(e => !e.enabled)).toHaveLength(1);
+	});
+
 	it('lets a switch off land between scheduling a start and running it', async () => {
 		// The start body is deferred by one microtask so its single-flight registration cannot
 		// be missed. A disable arriving in that window is SYNCHRONOUS and therefore lands

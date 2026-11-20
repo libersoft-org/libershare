@@ -470,6 +470,23 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		recovery.start(lishID, errorCode, prev);
 	}
 
+	const failedDownloaders = new WeakSet<Downloader>();
+	/**
+	 * Record and announce that a download ended with an error, once per downloader. An error
+	 * raised while a retained downloader is switched back on reaches two callers: the one waiting
+	 * on the download and the one that switched it on.
+	 */
+	function failDownload(lishID: string, downloader: Downloader, code: string, detail: string | undefined, send: (event: string, data: any) => void): void {
+		if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+		if (failedDownloaders.has(downloader)) return;
+		failedDownloaders.add(downloader);
+		dataServer.setError(lishID, code, detail);
+		downloadEnabledLishs.delete(lishID);
+		persistDownloadEnabled?.(lishID, false);
+		send('transfer.download:error', { error: code, errorDetail: detail, lishID });
+		startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
+	}
+
 	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
 		const leave = transferAdmission.tryEnter();
 		if (!leave) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'Transfers are paused during factory reset');
@@ -507,15 +524,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
 			})
 			.catch(err => {
-				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
-				const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
-				const detail = err instanceof CodedError ? err.detail : err.message;
-				dataServer.setError(lishID, code, detail);
-				downloadEnabledLishs.delete(lishID);
-				persistDownloadEnabled?.(lishID, false);
-				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
-				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
+				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) {
+					if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+					return;
+				}
+				failDownload(lishID, downloader, err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR, err instanceof CodedError ? err.detail : err.message, send);
 			});
 		trackDownloadLifecycle(lifecycle);
 		return { downloadDir };
@@ -648,15 +661,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				}
 			})
 			.catch(err => {
-				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
-				const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
-				const detail = err instanceof CodedError ? err.detail : err.message;
-				dataServer.setError(lishID, code, detail);
-				downloadEnabledLishs.delete(lishID);
-				persistDownloadEnabled?.(lishID, false);
-				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
-				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
+				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) {
+					if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
+					return;
+				}
+				failDownload(lishID, downloader, err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR, err instanceof CodedError ? err.detail : err.message, send);
 			});
 		trackDownloadLifecycle(lifecycle);
 		return downloader;
@@ -833,13 +842,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				await dl.enable();
 				if (dl.getError()) {
 					const err = dl.getError()!;
-					const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-					dataServer.setError(p.lishID, err.code, err.detail);
-					downloadEnabledLishs.delete(p.lishID);
-					persistDownloadEnabled?.(p.lishID, false);
-					if (activeDownloaders.get(p.lishID) === dl) activeDownloaders.delete(p.lishID);
-					send('transfer.download:error', { error: err.code, errorDetail: err.detail, lishID: p.lishID });
-					startRecoveryIfEnabled(p.lishID, err.code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(p.lishID) });
+					failDownload(p.lishID, dl, err.code, err.detail, broadcast ?? ((event: string, data: any) => emit(client, event, data)));
 					return { success: false };
 				}
 				// `dl.enable()` awaits its access check, and a leave landing in that await takes
@@ -945,8 +948,8 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			}
 			const launched = await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true, scheduledAt);
 			// A download that failed at once is disabled too, but it is not waiting for a lishnet:
-			// its own handler reports the error and stores it as switched off, and the next start
-			// is the user's to make. A resume claim would start it again at the next join.
+			// failDownload reports the error and stores it as switched off, and the next start is
+			// the user's to make. A resume claim would start it again at the next join.
 			if (launched.getError?.()) return { success: false };
 			// The start registers the downloader and then keeps awaiting, so a leave landing
 			// after the registration reaches it through onNetworkLeft: the downloader is
