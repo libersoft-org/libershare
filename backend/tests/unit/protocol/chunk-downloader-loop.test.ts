@@ -7,6 +7,7 @@ import { ChunkDownloader, type ChunkDownloaderDeps } from '../../../src/protocol
 import { PeerManager } from '../../../src/protocol/peer-manager.ts';
 import { PauseController } from '../../../src/protocol/pause-controller.ts';
 import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
+import { downloadLimiter } from '../../../src/protocol/speed-limiter.ts';
 import { ProgressReporter } from '../../../src/protocol/progress-reporter.ts';
 import { CodedError, ErrorCodes, type ErrorCode, type ChunkID, type LISHid, type IStoredLISH } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
@@ -734,6 +735,32 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		await run;
 
 		expect(lost.requests).toHaveLength(1);
+		expect(ds.downloadedChunks.size).toBe(2);
+		expect(budget.reservedBytes).toBe(0);
+	}, 15000);
+
+	it('does not send a request the limiter held back once the budget was lowered under it', async () => {
+		const { missing, data } = makeChunks(2);
+		let capacity = 2 * CHUNK_SIZE;
+		const budget = new ByteBudget(() => capacity);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 2, { inflightBudget: budget });
+		// A reply takes 1.5 s, so the first chunk is still on its way when the limiter lets the second go.
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 1500);
+		pm.tryAdd('peer-budget-lower0', client as never, 'DIRECT');
+		downloadLimiter.setLimit(1); // one 1 KiB chunk a second
+		try {
+			const run = cd.run();
+			await Bun.sleep(300);
+			expect(budget.reservedBytes).toBe(2 * CHUNK_SIZE);
+			capacity = CHUNK_SIZE;
+			budget.refresh();
+			await run;
+		} finally {
+			downloadLimiter.setLimit(0);
+		}
+		expect(client.maxActive).toBe(1);
 		expect(ds.downloadedChunks.size).toBe(2);
 		expect(budget.reservedBytes).toBe(0);
 	}, 15000);

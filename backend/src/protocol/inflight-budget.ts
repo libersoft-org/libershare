@@ -33,6 +33,11 @@ export class ByteBudget {
 		return this.used;
 	}
 
+	/** False while the capacity sits below the bytes already reserved, as after it was lowered. */
+	get withinCapacity(): boolean {
+		return this.used <= this.capacity();
+	}
+
 	/**
 	 * Reserve `bytes`. Resolves with the release function — safe to call more than once. Rejects
 	 * with `signal.reason` if the signal aborts first, or with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET` when

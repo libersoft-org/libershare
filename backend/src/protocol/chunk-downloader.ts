@@ -531,12 +531,13 @@ export class ChunkDownloader {
 					// The manifest fixes each chunk's exact byte length; a file's last chunk may be shorter than chunkSize.
 					const expectedLen = expectedChunkLength(lish, chunk.fileIndex, chunk.chunkIndex);
 					const chunkBytes = expectedLen >= 0 ? expectedLen : lish.chunkSize;
+					const budget = this.deps.inflightBudget ?? chunkInflightBudget;
 					let releaseBudget: (() => void) | undefined;
 					try {
 						// Reserve the chunk's own length before asking for it. The reservation is held until the
 						// data is written or dropped, also while a failed write is retried from memory.
 						try {
-							releaseBudget = await (this.deps.inflightBudget ?? chunkInflightBudget).reserve(chunkBytes, waitSignal);
+							releaseBudget = await budget.reserve(chunkBytes, waitSignal);
 						} catch (err) {
 							// Either the wait ended (this peer or the download stopped), or the chunk is larger
 							// than the whole budget and no peer can ever be asked for it.
@@ -556,6 +557,14 @@ export class ChunkDownloader {
 							downloadLimiter.refund(limiterReservation);
 							await requeueChunk(chunk, claim);
 							break;
+						}
+						// The budget may have been lowered while the limiter held this request back. Nothing was
+						// sent yet, so the request has to fit the budget as it is now: hand the chunk back and
+						// take a fresh place in the queue.
+						if (!budget.withinCapacity) {
+							downloadLimiter.refund(limiterReservation);
+							await requeueChunk(chunk, claim);
+							continue;
 						}
 						const result = await this.downloadChunk(client, chunk.chunkID, peerID, () => !answered, chunkBytes);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
