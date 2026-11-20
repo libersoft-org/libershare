@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
+import { productName } from '@shared';
 import { encodeNetworkHelperRequest, isHelperOperationId, parseNetworkHelperResponse, type NetworkHelperRequest, type NetworkHelperResponse } from '../network-helper-protocol.ts';
 import { windowsProgramDataPath } from '../network-helper-windows.ts';
 import type { NativeEndRule } from './mutation-proof.ts';
@@ -39,9 +40,9 @@ export function helperRequestHash(request: NetworkHelperRequest | string): strin
 }
 
 export function helperResultsDirectory(): string {
-	if (process.platform === 'win32') return join(windowsProgramDataPath(), 'LiberShare', 'helper-results');
-	if (process.platform === 'darwin') return '/Library/Application Support/LiberShare/helper-results';
-	if (process.platform === 'linux') return '/var/lib/libershare-helper-results';
+	if (process.platform === 'win32') return join(windowsProgramDataPath(), productName, 'helper-results');
+	if (process.platform === 'darwin') return `/Library/Application Support/${productName}/helper-results`;
+	if (process.platform === 'linux') return `/var/lib/${productName.toLowerCase()}-helper-results`;
 	throw new Error('Privileged helper results are unavailable on this platform');
 }
 
@@ -141,9 +142,9 @@ export class HelperResultStore {
 		const parent = dirname(this.directory),
 			anchor = dirname(parent);
 		await this.permissions.verify(anchor, true, process.platform === 'win32');
-		// The parent is the helper's own only when it is a LiberShare directory, not a system one such as /var/lib.
+		// The parent is the helper's own only when it is the product's directory, not a system one such as /var/lib.
 		for (const [path, owned] of [
-			[parent, basename(parent) === 'LiberShare'],
+			[parent, basename(parent) === productName],
 			[this.directory, true],
 		] as const) {
 			await this.permissions.createDirectory(path, owned);

@@ -1,6 +1,6 @@
 import { DBusError } from './dbus.ts';
 import { WifiSession, WIFI_NM as NM, WIFI_NM_PATH as ROOT, wifiCall, wifiObjectPath, type WifiMutationDeps } from './wifi-client.ts';
-import { readWifiSecret, StoredWifiSecretUnavailable, type WifiRecoveryData } from './wifi-mutation.ts';
+import { readWifiSecret, StoredWifiSecretUnavailable, WIFI_VERIFY_CLONE_PREFIX, type WifiRecoveryData } from './wifi-mutation.ts';
 import { wifiNumber, wifiPaths, wifiProfileFingerprint, wifiProfilePinsBssid, wifiSecretFingerprint, wifiString, wifiValue } from './wifi-settings.ts';
 import type { NativeNetworkSettings } from './network-mutation.ts';
 
@@ -22,7 +22,7 @@ export function isWifiRecoveryData(value: unknown): value is WifiRecoveryData {
 	for (const key of ['originalBssid', 'targetBssid']) if (data[key] !== null && (typeof data[key] !== 'string' || !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(data[key] as string))) return false;
 	if (data['targetSsidHex'] !== null && (typeof data['targetSsidHex'] !== 'string' || !/^(?:[0-9a-f]{2}){1,32}$/.test(data['targetSsidHex']))) return false;
 	if (data['targetAuthentication'] !== null && !['open', 'wpa-psk', 'sae'].includes(String(data['targetAuthentication']))) return false;
-	if (data['cloneId'] !== null && (typeof data['cloneId'] !== 'string' || !/^libershare-verify-[A-Za-z0-9-]+$/.test(data['cloneId']))) return false;
+	if (data['cloneId'] !== null && (typeof data['cloneId'] !== 'string' || !data['cloneId'].startsWith(WIFI_VERIFY_CLONE_PREFIX) || !/^[A-Za-z0-9-]+$/.test(data['cloneId'].slice(WIFI_VERIFY_CLONE_PREFIX.length)))) return false;
 	if (data['checkpointPath'] !== null && (typeof data['checkpointPath'] !== 'string' || !/^\/org\/freedesktop\/NetworkManager\/Checkpoint\/\d+$/.test(data['checkpointPath']))) return false;
 	if ((data['oldSecretFingerprint'] !== null || data['newSecretFingerprint'] !== null) && data['secretSalt'] === null) return false;
 	if ((data['originalActiveUuid'] === null) !== (data['originalActiveFingerprint'] === null)) return false;

@@ -2,6 +2,7 @@ import { open, access, link, mkdir, readFile, readlink, rename, stat, unlink, ls
 import { dirname } from 'node:path';
 import { constants, type BigIntStats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { productName } from '@shared';
 import { DIRECTORY_SYNC_UNSUPPORTED, syncDirectory } from './file-durability.ts';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import { probeNativeTimeServiceAccess } from './native/linux/time-access-probe.ts';
@@ -504,7 +505,7 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	// refused the restore as somebody else's edit, leaving the rejected configuration on
 	// disk. Reproduced: original A, administrator swaps in B before the read, C published, a
 	// later step fails, and the restore of B is refused.
-	const backup = `${path}.libershare-${process.pid}-${randomUUID()}.bak`;
+	const backup = `${path}.${productName.toLowerCase()}-${process.pid}-${randomUUID()}.bak`;
 	let backupLinked = false;
 	if (keepBackup) {
 		try {
@@ -544,7 +545,7 @@ async function publishFile(path: string, content: string, permissions: { mode: n
 	// this call; replacing a file that was already different is still the whole point.
 	const guard = expected === undefined ? previous : expected;
 	// Same directory, or the rename would cross a filesystem boundary and stop being atomic.
-	const temp = `${path}.libershare-${process.pid}-${randomUUID()}.tmp`;
+	const temp = `${path}.${productName.toLowerCase()}-${process.pid}-${randomUUID()}.tmp`;
 	// Only when the exact restore is unavailable is it worth knowing what the original could
 	// do, and only then is the cost paid: on the linked path the inode comes back with
 	// everything it had, so there is nothing to compare - and a write that keeps no backup has

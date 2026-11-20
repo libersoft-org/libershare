@@ -1,3 +1,4 @@
+import { productName } from '@shared';
 import { type PlatformStatus, UNREADABLE_STATUS, isValidNtpServer, READ_BUDGET_MS, remainingSaveBudget } from './system-time-common.ts';
 import { NativeWorkerChannel } from './native/worker-host.ts';
 import { readdir, readFile } from 'node:fs/promises';
@@ -14,7 +15,7 @@ import { join } from 'node:path';
  * beat a `10-` prefix while the API still reported success. systemd reserves 60-90 for
  * local administrative overrides in `/etc`, which is exactly what this is.
  */
-export const TIMESYNCD_DROPIN_PATH = '/etc/systemd/timesyncd.conf.d/90-libershare.conf';
+export const TIMESYNCD_DROPIN_PATH: string = `/etc/systemd/timesyncd.conf.d/90-${productName.toLowerCase()}.conf`;
 
 /** systemd unit that reads {@link TIMESYNCD_DROPIN_PATH}. */
 export const TIMESYNCD_UNIT = 'systemd-timesyncd.service';

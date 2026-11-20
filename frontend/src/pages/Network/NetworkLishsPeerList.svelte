@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { t, translateError } from '../../scripts/language.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { createNavArea } from '../../scripts/navArea.svelte.ts';
+	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
 	import { addNotification } from '../../scripts/notifications.ts';
+	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { api } from '../../scripts/api.ts';
 	import { withPeerFallback, type PeerAttemptStatus } from '../../scripts/peerFallback.ts';
 	import { formatSize } from '../../scripts/utils.ts';
@@ -17,7 +18,7 @@
 	import TableHeader from '../../components/Table/TableHeader.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
-	import NetworkLishDetailView from './NetworkLishDetailView.svelte';
+	import NetworkLishDetailView, { lishDetailRowCount } from './NetworkLishDetailView.svelte';
 	interface Props {
 		areaID: string;
 		position?: Position | undefined;
@@ -34,6 +35,8 @@
 	// must not run concurrently — one finishing would clear/overwrite the other's state.
 	let busy = $derived(adding || loadingDetail);
 	let detail = $state<IPeerLishDetail | null>(null);
+	// The peer list follows the rows of the loaded detail in keyboard order.
+	let peerRowsBaseY = $derived(1 + (detail ? lishDetailRowCount(detail) : 0));
 	// Fallback progress per peer row (indexed like row.peers); outcomes persist until the next run.
 	let peerStatuses = $state<Array<PeerAttemptStatus | null>>([]);
 	// Real manifest-transfer progress per peer row, fed by the backend
@@ -103,6 +106,10 @@
 		}
 	}
 
+	async function copyLishID(): Promise<void> {
+		await copyToClipboard(row.id, $t('common.lishIDCopied'));
+	}
+
 	async function handleShowDetail(): Promise<void> {
 		// Closing an already-loaded detail is a pure UI toggle — allow it even while Add runs.
 		if (detail) {
@@ -112,12 +119,22 @@
 		if (busy || row.peers.length === 0) return;
 		loadingDetail = true;
 		try {
-			detail = await tryPeers(async (peerID, networkID) => {
+			const loadedDetail = await tryPeers(async (peerID, networkID) => {
 				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
 				// A null answer means this peer had nothing for us — flag it so the next peer is tried.
 				if (!d) throw Object.assign(new Error($t('network.peerDeclined')), { tryNextPeer: true });
 				return d;
 			});
+			const { controller } = nav;
+			const selectedY = controller.selectedPosition?.[1] ?? 0;
+			const peerIndex = selectedY - peerRowsBaseY;
+			detail = loadedDetail;
+			if (peerIndex >= 0 && peerIndex < row.peers.length) {
+				const position: NavPos = [0, peerRowsBaseY + peerIndex];
+				controller.select(position);
+				await tick();
+				if (controller.isSelected(position)) controller.scrollToSelected();
+			}
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		} finally {
@@ -126,14 +143,13 @@
 	}
 
 	// y=0 — top bar (Back, Add to sharing, Details)
-	// y=1 — title block (no nav items)
-	// y=2+i — peer rows
-	createNavArea(() => ({
+	// y=1.. — LISH detail rows once loaded, then the peer rows from peerRowsBaseY
+	const nav = createNavArea(() => ({
 		areaID,
 		position,
 		onBack,
 		activate: true,
-		listRange: (): [number, number] => [2, Math.max(2, 2 + row.peers.length)],
+		listRange: (): [number, number] => [1, Number.MAX_SAFE_INTEGER],
 	}));
 </script>
 
@@ -155,7 +171,7 @@
 		align-items: center;
 		gap: 2vh;
 		width: 1200px;
-		max-width: calc(94vw);
+		max-width: min(94vw, 100%);
 		padding: 2vh;
 		border-radius: 2vh;
 		box-sizing: border-box;
@@ -232,7 +248,7 @@
 
 	@media (max-width: 1199px) {
 		.container {
-			max-width: calc(100vw);
+			max-width: 100%;
 			margin: 0;
 			border-radius: 0;
 			box-shadow: none;
@@ -246,11 +262,12 @@
 			<ButtonBar basePosition={[0, 0]}>
 				<Button icon="/img/back.svg" label={$t('common.back')} onConfirm={onBack} width="auto" />
 				<Button icon="/img/download.svg" label={$t('network.addToDownloads')} onConfirm={handleAddToSharing} width="auto" disabled={busy || row.peers.length === 0} />
+				<Button icon="/img/copy.svg" label={$t('common.copyLishID')} onConfirm={copyLishID} width="auto" />
 				<Button icon="/img/info.svg" label={$t('network.details')} onConfirm={handleShowDetail} width="auto" disabled={detail ? loadingDetail : busy || row.peers.length === 0} />
 			</ButtonBar>
 		</div>
 		{#if detail}
-			<NetworkLishDetailView {detail} />
+			<NetworkLishDetailView {detail} baseY={1} />
 		{:else}
 			<div class="lish-info">
 				<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
@@ -266,7 +283,7 @@
 				<TableCell align="center">{$t('common.status')}</TableCell>
 			</TableHeader>
 			{#each row.peers as p, i}
-				<TableRow position={[0, 2 + i]} onConfirm={makeOpenHandler(p.peerID, p.networkID)}>
+				<TableRow position={[0, peerRowsBaseY + i]} onConfirm={makeOpenHandler(p.peerID, p.networkID)}>
 					<TableCell desktopOnly>{i + 1}</TableCell>
 					<TableCell><span class="peer-id">{p.peerID}</span></TableCell>
 					<TableCell align="center">{networkName(p.networkID)}</TableCell>

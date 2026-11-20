@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>File browser links</title>
+	<pre id="results">Running...</pre>
+	<div id="page"></div>
+	<script type="module">
+		import '/src/app.css';
+		import { mount, unmount, tick } from 'svelte';
+		import { get } from 'svelte/store';
+		import { t } from '/src/scripts/language.ts';
+		import { emit } from '/src/scripts/areas.ts';
+		import { wsClient } from '/src/scripts/ws-client.ts';
+		import FileBrowser from '/src/pages/FileBrowser/FileBrowser.svelte';
+
+		const root = document.querySelector('#page');
+		const results = [];
+		const originalCall = wsClient.call;
+		const entries = [
+			{ name: 'linked-dir', path: '/data/linked-dir', type: 'directory', link: true },
+			{ name: 'dangling', path: '/data/dangling', type: 'file', link: true, broken: true },
+			{ name: 'plain.txt', path: '/data/plain.txt', type: 'file', size: 3 },
+		];
+		wsClient.call = async (method, params) => {
+			if (method === 'fs.info') return { platform: 'linux', separator: '/', home: '/data', roots: ['/'], localFilesystem: true };
+			if (method === 'fs.list') return { path: params?.path ?? '/data', entries };
+			if (method.startsWith('events.')) return true;
+			throw new Error(`Unexpected API: ${method}`);
+		};
+		async function settle() {
+			for (let i = 0; i < 3; i++) {
+				await tick();
+				await new Promise(resolve => setTimeout(resolve, 0));
+			}
+		}
+		function row(name) {
+			return [...root.querySelectorAll('.row')].find(item => item.textContent.includes(name));
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		let component;
+		try {
+			component = mount(FileBrowser, { target: root, props: { areaID: 'links', position: { x: 0, y: 0 }, initialPath: '/data', selectFileButton: true, onShare: () => {} } });
+			for (let i = 0; i < 20 && !row('dangling'); i++) await settle();
+			await test('a broken link is dimmed and working entries are not', async () => {
+				const broken = row('dangling');
+				if (!broken) throw new Error(`Rows: ${[...root.querySelectorAll('.row')].map(item => item.textContent.trim()).join(' | ')}`);
+				if (!broken.classList.contains('dimmed')) throw new Error('The broken link is not dimmed');
+				for (const name of ['linked-dir', 'plain.txt']) if (row(name)?.classList.contains('dimmed')) throw new Error(`${name} is dimmed`);
+			});
+			await test('a broken link offers rename and delete to the mouse and keyboard', async () => {
+				const labels = () => [...root.querySelectorAll('.actions .button')].map(button => button.textContent.trim());
+				const expected = ['fileBrowser.renameFile', 'fileBrowser.deleteFile', 'common.back'].map(key => get(t)(key));
+				function checkActions() {
+					if (JSON.stringify(labels()) !== JSON.stringify(expected)) throw new Error(`Unexpected broken-link actions: ${labels().join(', ')}`);
+				}
+				row('dangling').click();
+				await settle();
+				checkActions();
+				emit('back');
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				checkActions();
+				const selected = root.querySelector('.actions .button.selected');
+				if (selected?.textContent.trim() !== expected[0]) throw new Error('Rename is not selected');
+			});
+			await unmount(component);
+			component = undefined;
+			await test('a broken link cannot be picked in the file selector', async () => {
+				const selections = [];
+				component = mount(FileBrowser, { target: root, props: { areaID: 'picker', position: { x: 0, y: 0 }, initialPath: '/data', filesOnly: true, onSelect: path => selections.push(path) } });
+				for (let i = 0; i < 20 && !row('dangling'); i++) await settle();
+				row('dangling').click();
+				await settle();
+				emit('confirmDown');
+				emit('confirmUp');
+				await settle();
+				if (selections.length !== 0) throw new Error('The broken link was selected');
+				row('plain.txt').click();
+				if (selections.length !== 1 || selections[0] !== '/data/plain.txt') throw new Error('The regular file was not selected');
+			});
+		} finally {
+			if (component) await unmount(component);
+			wsClient.call = originalCall;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
