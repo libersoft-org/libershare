@@ -827,6 +827,19 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 		expect(wants).toBe(0);
 	});
 
+	it('counts the chunks of a file found missing at the start, although the store still has them', async () => {
+		// The oversized chunk is recorded as stored, but its file is not on the disk.
+		mkdirSync(join(dir, 'data'));
+		ds.missingChunks = [tail];
+		priv(dl)['state'] = 'preparing';
+
+		await dl.doWork();
+
+		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(allocations).toBe(0);
+		expect(wants).toBe(0);
+	});
+
 	it('checks the chunks of a lost file before the file is created again', async () => {
 		// Everything is stored, but the file is gone: bringing it back would fill the disk for
 		// chunks that can no longer be downloaded.

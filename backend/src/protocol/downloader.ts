@@ -656,8 +656,9 @@ export class Downloader {
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
-				// Again after the awaits above: the limit may have been lowered meanwhile.
-				if (this.failOnOversizedChunk()) return;
+				// Again after the awaits above: the limit may have been lowered meanwhile. The files
+				// found missing count with their chunks, also those the store still has as present.
+				if (this.failOnOversizedChunk(missingBeforeAlloc)) return;
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
