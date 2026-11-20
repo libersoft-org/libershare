@@ -54,6 +54,23 @@ describe('FrameReader', () => {
 		expect(frame.buffer.byteLength).toBe(64);
 	});
 
+	it('holds only the bytes that arrived of a frame nobody made room for', async () => {
+		// A terabyte announced, five bytes sent: a buffer of the announced length cannot even be allocated.
+		const announced = Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x20, 1, 2, 3, 4, 5);
+		await expect(new FrameReader(pieces(announced)).next(accept)).rejects.toBeInstanceOf(FrameEndedError);
+	});
+
+	it('assembles a large frame the same whether its buffer grows or is taken at once', async () => {
+		const a = payload(200_000, 8);
+		const bytes = wire(a);
+		const cut = (): Uint8Array[] => Array.from({ length: Math.ceil(bytes.length / 7000) }, (_, i) => bytes.subarray(i * 7000, (i + 1) * 7000));
+		for (const roomMade of [false, true]) {
+			const frame = (await new FrameReader(pieces(...cut())).next(accept, roomMade))!;
+			expect(frame).toEqual(a);
+			expect(frame.buffer.byteLength).toBe(a.length);
+		}
+	});
+
 	it('hands out a frame that arrived whole in one piece as a view of it, without a copy', async () => {
 		const a = payload(64, 6);
 		const b = payload(64, 7);
