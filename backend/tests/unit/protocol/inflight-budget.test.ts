@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
+import { ErrorCodes } from '@shared';
 
 /** Whether `promise` has settled after the microtasks queued so far ran. */
 async function settled(promise: Promise<unknown>): Promise<boolean> {
@@ -29,40 +30,63 @@ describe('ByteBudget', () => {
 		expect(budget.reservedBytes).toBe(5);
 	});
 
-	it('lets one reservation larger than the whole budget through when nothing else is reserved', async () => {
-		const budget = new ByteBudget(() => 10);
-		const huge = await granted(budget.reserve(25));
-		expect(budget.reservedBytes).toBe(25);
-		const small = budget.reserve(1);
-		expect(await settled(small)).toBe(false);
-		huge();
-		expect(await settled(small)).toBe(true);
+	it('refuses a reservation larger than the whole budget at once, also when nothing is reserved', async () => {
+		const budget = new ByteBudget(() => 64);
+		await expect(budget.reserve(100)).rejects.toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(budget.reservedBytes).toBe(0);
+		// Exactly the whole budget still fits.
+		await granted(budget.reserve(64));
+		expect(budget.reservedBytes).toBe(64);
 	});
 
-	it('lets two reservations larger than half the budget run together, but not a third', async () => {
+	it('refuses a too large reservation without waiting behind the queue', async () => {
+		const budget = new ByteBudget(() => 64);
+		await granted(budget.reserve(64));
+		const waiting = budget.reserve(1);
+		const huge = budget.reserve(65);
+		await expect(huge).rejects.toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(await settled(waiting)).toBe(false);
+	});
+
+	it('never reserves more than the capacity, whatever the sizes', async () => {
+		const budget = new ByteBudget(() => 64);
+		const first = await granted(budget.reserve(50));
+		// A second 50 fits only once the first one is released.
+		const second = budget.reserve(50);
+		expect(await settled(second)).toBe(false);
+		expect(budget.reservedBytes).toBe(50);
+		first();
+		expect(await settled(second)).toBe(true);
+		// 14 more fill the budget exactly, beside the 50.
+		await granted(budget.reserve(14));
+		expect(budget.reservedBytes).toBe(64);
+		expect(await settled(budget.reserve(1))).toBe(false);
+	});
+
+	it('makes two reservations larger than half the budget take turns', async () => {
 		const budget = new ByteBudget(() => 64);
 		const first = await granted(budget.reserve(64));
-		await granted(budget.reserve(64));
-		const third = budget.reserve(64);
-		expect(await settled(third)).toBe(false);
-		expect(budget.reservedBytes).toBe(128);
+		const second = budget.reserve(64);
+		expect(await settled(second)).toBe(false);
+		expect(budget.reservedBytes).toBe(64);
 		first();
-		expect(await settled(third)).toBe(true);
-		expect(budget.reservedBytes).toBe(128);
+		expect(await settled(second)).toBe(true);
+		expect(budget.reservedBytes).toBe(64);
 	});
 
-	it('grants a large reservation beside small ones without waiting for an empty budget', async () => {
-		const budget = new ByteBudget(() => 64);
-		for (let i = 0; i < 60; i++) await granted(budget.reserve(1));
-		await granted(budget.reserve(64));
-		expect(budget.reservedBytes).toBe(124);
-	});
-
-	it('leaves reservations up to half the budget bounded by the capacity', async () => {
-		const budget = new ByteBudget(() => 64);
-		await granted(budget.reserve(32));
-		await granted(budget.reserve(32));
-		expect(await settled(budget.reserve(32))).toBe(false);
+	it('refuses a waiter that no longer fits a lowered capacity instead of blocking those behind it', async () => {
+		let capacity = 10;
+		const budget = new ByteBudget(() => capacity);
+		const held = await granted(budget.reserve(9));
+		const large = budget.reserve(8);
+		const small = budget.reserve(1);
+		capacity = 5;
+		budget.refresh();
+		await expect(large).rejects.toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(await settled(small)).toBe(false);
+		held();
+		expect(await settled(small)).toBe(true);
+		expect(budget.reservedBytes).toBe(1);
 	});
 
 	it('keeps first-come order: a waiting large reservation holds back smaller later ones', async () => {

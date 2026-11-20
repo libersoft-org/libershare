@@ -100,8 +100,11 @@ class ScriptedClient {
 	maxActive = 0;
 	/** Shared with other clients to count requests in flight across peers and downloads. */
 	sharedActive: { now: number; max: number } | undefined;
-	async requestChunk(_l: LISHid, c: ChunkID): Promise<Uint8Array> {
+	/** The reply size limit each chunk was requested with. */
+	maxBytes = new Map<ChunkID, number | undefined>();
+	async requestChunk(_l: LISHid, c: ChunkID, maxChunkBytes?: number): Promise<Uint8Array> {
 		this.requests.push(c);
+		this.maxBytes.set(c, maxChunkBytes);
 		this.maxActive = Math.max(this.maxActive, ++this.active);
 		if (this.sharedActive) this.sharedActive.max = Math.max(this.sharedActive.max, ++this.sharedActive.now);
 		try {
@@ -157,8 +160,8 @@ class GatedClient extends ScriptedClient {
 	}
 }
 
-function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller?: AbortController; isDestroyed?: () => boolean; isDisabled?: () => boolean; pauseController?: PauseController; inflightBudget?: ByteBudget }): ChunkDownloader {
-	const lish = { id: LISH_ID, name: 'test', chunkSize: CHUNK_SIZE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: chunkCount * CHUNK_SIZE, checksums: [] }] } as unknown as IStoredLISH;
+function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number, lifecycle?: { controller?: AbortController; isDestroyed?: () => boolean; isDisabled?: () => boolean; pauseController?: PauseController; inflightBudget?: ByteBudget; fileSize?: number; onSetError?: (code: string, detail?: string) => void }): ChunkDownloader {
+	const lish = { id: LISH_ID, name: 'test', chunkSize: CHUNK_SIZE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: lifecycle?.fileSize ?? chunkCount * CHUNK_SIZE, checksums: [] }] } as unknown as IStoredLISH;
 	const controller = lifecycle?.controller ?? new AbortController();
 	const pc =
 		lifecycle?.pauseController ??
@@ -179,7 +182,7 @@ function makeDownloader(ds: FakeDataServer, pm: PeerManager, chunkCount: number,
 		isDestroyed: lifecycle?.isDestroyed ?? (() => false),
 		isDisabled: lifecycle?.isDisabled ?? (() => false),
 		inflightBudget: lifecycle?.inflightBudget ?? new ByteBudget(() => 64 * 1024 * 1024),
-		onSetError: () => {},
+		onSetError: lifecycle?.onSetError ?? (() => {}),
 		emitAllocProgress: () => {},
 	} as unknown as ChunkDownloaderDeps;
 	return new ChunkDownloader(deps);
@@ -665,6 +668,76 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(budget.reservedBytes).toBe(0);
 	}, 15000);
 
+	it('reserves the real length of a short last chunk and caps the reply at it', async () => {
+		const TAIL = 100;
+		const { missing, data } = makeChunks(2);
+		const full = missing[0]!.chunkID;
+		const tail = data.get(missing[1]!.chunkID)!.slice(0, TAIL);
+		const tailID = sha256hex(tail) as ChunkID;
+		missing[1] = { fileIndex: 0, chunkIndex: 1, chunkID: tailID };
+		const budget = new ByteBudget(() => CHUNK_SIZE + TAIL);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 2, { inflightBudget: budget, fileSize: CHUNK_SIZE + TAIL });
+		const client = new ScriptedClient(
+			new Map<ChunkID, Reply>([
+				[full, data.get(full)!],
+				[tailID, tail],
+			]),
+			30
+		);
+		pm.tryAdd('peer-short-tail-00', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(ds.downloadedChunks.size).toBe(2);
+		// Both are on the wire together only because the tail took 100 bytes of the budget, not a whole chunk.
+		expect(client.maxActive).toBe(2);
+		expect(client.maxBytes.get(full)).toBe(CHUNK_SIZE);
+		expect(client.maxBytes.get(tailID)).toBe(TAIL);
+		expect(budget.reservedBytes).toBe(0);
+	}, 15000);
+
+	it('stops with an error, without asking any peer, when a chunk is larger than the whole budget', async () => {
+		const { missing, data } = makeChunks(3);
+		const budget = new ByteBudget(() => CHUNK_SIZE - 1);
+		const errors: Array<{ code: string; detail: string | undefined }> = [];
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		// As in the Downloader, an error disables the download.
+		const cd = makeDownloader(ds, pm, 3, { inflightBudget: budget, isDisabled: () => errors.length > 0, onSetError: (code, detail) => errors.push({ code, detail }) });
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])));
+		pm.tryAdd('peer-chunk-too-big', client as never, 'DIRECT');
+
+		await cd.run();
+
+		expect(client.requests).toEqual([]);
+		expect(errors[0]).toEqual({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET, detail: '1 kB > 1023 B' });
+		expect(ds.downloadedChunks.size).toBe(0);
+		expect(budget.reservedBytes).toBe(0);
+	}, 15000);
+
+	it('hands a chunk back when its peer stops while the request waits for budget', async () => {
+		const { missing, data } = makeChunks(2);
+		const budget = new ByteBudget(() => CHUNK_SIZE);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const cd = makeDownloader(ds, pm, 2, { inflightBudget: budget });
+		// The first peer takes both chunks: one goes out and loses the connection, the other still waits for budget.
+		const lost = new ScriptedClient(new Map(missing.map(c => [c.chunkID, 'gone' as Reply])), 50);
+		const steady = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])));
+		pm.tryAdd('peer-lost-waiting0', lost as never, 'DIRECT');
+		const run = cd.run();
+		await Bun.sleep(10);
+		pm.tryAdd('peer-steady-later0', steady as never, 'DIRECT');
+
+		await run;
+
+		expect(lost.requests).toHaveLength(1);
+		expect(ds.downloadedChunks.size).toBe(2);
+		expect(budget.reservedBytes).toBe(0);
+	}, 15000);
+
 	it('ends a disabled download even while another download holds the whole budget', async () => {
 		const budget = new ByteBudget(() => CHUNK_SIZE);
 		// Download B takes the only slot and keeps it: its peer answers after 10 s.
@@ -677,8 +750,6 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		const runB = cdB.run();
 		await Bun.sleep(20);
 		expect(budget.reservedBytes).toBe(CHUNK_SIZE);
-		// A second chunk fits beside B's, so fill that too: download A must really wait.
-		const second = await budget.reserve(CHUNK_SIZE);
 
 		// Download A waits for budget, then gets disabled.
 		let disabled = false;
@@ -697,9 +768,7 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		pcA.notifyStateChange();
 		const ended = await Promise.race([runA.then(() => true), Bun.sleep(1000).then(() => false)]);
 		expect(ended).toBe(true);
-		expect(budget.reservedBytes).toBe(2 * CHUNK_SIZE);
 
-		second();
 		holder.abort();
 		await pmB.closeAllAwait('test done', true);
 		await Promise.race([runB, Bun.sleep(1000)]);

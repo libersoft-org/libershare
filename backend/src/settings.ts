@@ -50,8 +50,9 @@ export interface SettingsData {
 		chunkWindowBytes: number;
 		/**
 		 * Bytes of chunk requests in flight across every download in the process, including
-		 * verified chunks waiting for a write retry. Chunks larger than half of it may reach twice
-		 * their own size instead. Applies to running downloads.
+		 * verified chunks waiting for a write retry. Never exceeded: a chunk is requested only when
+		 * its length fits beside the bytes already in flight, and a chunk larger than the whole
+		 * budget stops its download with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET`. Applies to running downloads.
 		 */
 		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;

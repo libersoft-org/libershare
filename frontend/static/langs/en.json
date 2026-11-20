@@ -317,6 +317,7 @@
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}",
+		"errorChunkExceedsBudget": "A chunk is larger than the limit for data requested ahead across all downloads ({detail}). Raise the limit in the settings and start the download again.",
 		"fileInfo": "LISH info",
 		"fileEmpty": "The file contains no LISH.",
 		"fileValid": "Valid",

@@ -317,6 +317,7 @@
 		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}",
+		"errorChunkExceedsBudget": "Část je větší než limit dat vyžádaných dopředu ze všech stahování ({detail}). Zvyšte limit v nastavení a stahování spusťte znovu.",
 		"fileInfo": "Informace o LISHi",
 		"fileEmpty": "Soubor neobsahuje žádný LISH.",
 		"fileValid": "V pořádku",

@@ -126,6 +126,7 @@ const errorCodeKeys: Record<string, string> = {
 	DIRECTORY_ACCESS_DENIED: 'lish.errorDirectoryAccessDenied',
 	DOWNLOADER_NOT_INITIALIZED: 'lish.errorDownloaderNotInitialized',
 	DOWNLOAD_ERROR: 'lish.errorDownload',
+	DOWNLOAD_CHUNK_EXCEEDS_BUDGET: 'lish.errorChunkExceedsBudget',
 	// Network → settings.lishNetwork
 	NETWORK_NOT_FOUND: 'settings.lishNetwork.errorNotFound',
 	NO_NETWORKS: 'settings.lishNetwork.errorNoNetworks',
