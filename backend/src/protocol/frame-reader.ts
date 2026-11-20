@@ -45,7 +45,11 @@ export class FrameReader {
 	 */
 	next(onLength: (length: number) => void): Promise<Uint8Array | undefined> {
 		const frame = this.tail.then(() => this.read(onLength));
-		this.tail = frame.catch(() => {});
+		// Only that the read is over, never its result: a promise kept here would keep the frame alive.
+		this.tail = frame.then(
+			() => {},
+			() => {}
+		);
 		return frame;
 	}
 

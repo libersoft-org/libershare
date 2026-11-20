@@ -80,6 +80,15 @@ describe('FrameReader', () => {
 		expect(await reader.next(accept)).toBeUndefined();
 	});
 
+	it('keeps no reference to a frame it has handed over', async () => {
+		const bytes = wire(payload(70_000, 16));
+		const reader = new FrameReader(pieces(bytes.subarray(0, 1000), bytes.subarray(1000)));
+		expect((await reader.next(accept))!.byteLength).toBe(70_000);
+		// What the reader holds on to between reads: the order of reads, not the last frame.
+		expect(await (reader as unknown as { tail: Promise<unknown> }).tail).toBeUndefined();
+		expect((reader as unknown as { parts: Uint8Array[] }).parts).toEqual([]);
+	});
+
 	it('serves overlapping reads one at a time, in the order they were asked for', async () => {
 		const a = payload(70_000, 14);
 		const b = payload(9, 15);
