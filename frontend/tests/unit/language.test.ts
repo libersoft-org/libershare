@@ -36,6 +36,8 @@ for (const lang of ['cs', 'en']) {
 			expect(message).toContain(lang === 'cs' ? 'Zvyšte ji v nastavení stahování' : 'Raise it in the download settings');
 			// A code without a translation still shows what happened.
 			expect(translateErrorCode('SOME_NEW_CODE', 'detail')).toBe('SOME_NEW_CODE: detail');
+			// A path is shown as it is, also with characters that mean something to String.replace.
+			expect(translateErrorCode('DISK_FULL', 'D:/Music $& Media/$1')).toContain('D:/Music $& Media/$1');
 		} finally {
 			translations.set(previous);
 		}

@@ -229,5 +229,6 @@ export function translateErrorCode(code: string, detail?: string | null): string
 	const key = errorCodeKeys[code];
 	const translated = key ? getNestedValue(get(translations), key) : undefined;
 	if (!translated) return detail ? `${code}: ${detail}` : code;
-	return detail ? translated.replace(/\{detail\}/g, detail) : translated.replace(/:\s*\{detail\}/, '');
+	// A function, not the string itself: a path may contain `$&` or `$1`, which replace() would expand.
+	return detail ? translated.replace(/\{detail\}/g, () => detail) : translated.replace(/:\s*\{detail\}/, '');
 }
