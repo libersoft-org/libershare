@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { Downloader } from '../../../src/protocol/downloader.ts';
@@ -789,6 +789,41 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 
 		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
 		expect(allocations).toBe(0);
+		expect(wants).toBe(0);
+	});
+
+	it('checks again after the disk was looked at, before any file is prepared', async () => {
+		// Only the tail is missing at first; the oversized chunk turns up while the files are checked.
+		// A download with a stored chunk has its directory already.
+		mkdirSync(join(dir, 'data'));
+		ds.missingChunks = [tail];
+		priv(dl)['state'] = 'preparing';
+		(priv(dl)['fileAllocator'] as { findMissingFiles: () => Promise<number[]> }).findMissingFiles = async () => {
+			ds.missingChunks = [big, tail];
+			return [0];
+		};
+
+		await dl.doWork();
+
+		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(allocations).toBe(0);
+		expect(wants).toBe(0);
+	});
+
+	it('checks again before looking for peers when a lost file put its chunks back', async () => {
+		// Everything is stored, but the file is gone from the disk: its chunks become missing again.
+		ds.missingChunks = [];
+		priv(dl)['missingChunks'] = [];
+		priv(dl)['state'] = 'downloading';
+		(priv(dl)['fileAllocator'] as { allocateFile: () => Promise<void> }).allocateFile = async () => {};
+		ds.resetFileChunks = () => {
+			ds.missingChunks = [big, tail];
+			return 2;
+		};
+
+		await dl.doWork();
+
+		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
 		expect(wants).toBe(0);
 	});
 

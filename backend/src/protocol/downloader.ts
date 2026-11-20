@@ -656,6 +656,8 @@ export class Downloader {
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
+				// Again after the awaits above: the limit may have been lowered meanwhile.
+				if (this.failOnOversizedChunk()) return;
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
@@ -689,6 +691,9 @@ export class Downloader {
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 					// Continue downloading the reset chunks
 				}
+				// Last look before peers are asked: chunks may have been put back just above, and the
+				// limit may have been lowered during the disk work.
+				if (this.failOnOversizedChunk()) return;
 				if (this.peerManager.size() === 0) {
 					console.debug(`[DL] no peers, calling for peers (banned: ${this.peerManager.bannedSize()})`);
 					await this.callForPeers();
