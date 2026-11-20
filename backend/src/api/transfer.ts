@@ -943,7 +943,11 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 					return { success: false };
 				}
 			}
-			await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true, scheduledAt);
+			const launched = await startStoredDownloader(p.lishID, joinedNetworks, originalNetworkIDs, false, client, true, scheduledAt);
+			// A download that failed at once is disabled too, but it is not waiting for a lishnet:
+			// its own handler reports the error and stores it as switched off, and the next start
+			// is the user's to make. A resume claim would start it again at the next join.
+			if (launched.getError?.()) return { success: false };
 			// The start registers the downloader and then keeps awaiting, so a leave landing
 			// after the registration reaches it through onNetworkLeft: the downloader is
 			// disabled and a FRESH suspension claim is filed. Clearing that claim here — it was
