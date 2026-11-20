@@ -551,17 +551,19 @@ export class ChunkDownloader {
 						}
 						// Throttle BEFORE downloading \u2014 ensures bandwidth is reserved before network transfer
 						touchPeer(lishID, peerID, 'download');
-						const limiterReservation = await downloadLimiter.throttle(lish.chunkSize, waitSignal);
+						// A slow limit can hold a request back for hours. If the budget is lowered meanwhile, the
+						// wait ends at once: its reservation would otherwise keep every other download out.
+						const lowered = budget.loweredSignal;
+						const limiterReservation = await downloadLimiter.throttle(lish.chunkSize, downloadLimiter.getLimit() > 0 ? AbortSignal.any([waitSignal, lowered]) : waitSignal);
 						if (this.deps.abortSignal.aborted || this.deps.isDestroyed()) break;
 						if (waitSignal.aborted) {
 							downloadLimiter.refund(limiterReservation);
 							await requeueChunk(chunk, claim);
 							break;
 						}
-						// The budget may have been lowered while the limiter held this request back. Nothing was
-						// sent yet, so the request has to fit the budget as it is now: hand the chunk back and
-						// take a fresh place in the queue.
-						if (!budget.withinCapacity) {
+						// Nothing was sent yet, so the request has to fit the budget as it is now: hand the chunk
+						// back and take a fresh place in the queue, which also asks the limiter again.
+						if (lowered.aborted || !budget.withinCapacity) {
 							downloadLimiter.refund(limiterReservation);
 							await requeueChunk(chunk, claim);
 							continue;

@@ -89,6 +89,21 @@ describe('ByteBudget', () => {
 		expect(budget.reservedBytes).toBe(1);
 	});
 
+	it('signals the holders when the capacity drops below what is reserved, and only then', async () => {
+		let capacity = 10;
+		const budget = new ByteBudget(() => capacity);
+		await granted(budget.reserve(8));
+		const before = budget.loweredSignal;
+		capacity = 9;
+		budget.refresh();
+		expect(before.aborted).toBe(false);
+		capacity = 4;
+		budget.refresh();
+		expect(before.aborted).toBe(true);
+		// The next change gets a signal of its own.
+		expect(budget.loweredSignal.aborted).toBe(false);
+	});
+
 	it('keeps first-come order: a waiting large reservation holds back smaller later ones', async () => {
 		const budget = new ByteBudget(() => 10);
 		const held = await granted(budget.reserve(9));

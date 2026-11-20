@@ -24,6 +24,7 @@ export class ByteBudget {
 	private used = 0;
 	private readonly waiters: Waiter[] = [];
 	private readonly capacity: () => number;
+	private lowered = new AbortController();
 
 	/** `capacity` is read on every decision, so a settings change applies to the next grant. */
 	constructor(capacity: () => number) {
@@ -76,8 +77,26 @@ export class ByteBudget {
 		});
 	}
 
-	/** Apply a changed capacity to the waiting reservations: grant what fits now, refuse what no longer can. */
+	/**
+	 * Aborts when the capacity is lowered below the bytes already reserved. A holder that has not
+	 * used its reservation yet — it still waits for something else — can then give it back at
+	 * once, instead of keeping everyone else out until its own wait ends. A new signal after
+	 * every such change.
+	 */
+	get loweredSignal(): AbortSignal {
+		return this.lowered.signal;
+	}
+
+	/**
+	 * Apply a changed capacity: tell the holders when it is now below what is reserved, grant what
+	 * fits and refuse what no longer can.
+	 */
 	refresh(): void {
+		if (!this.withinCapacity) {
+			const lowered = this.lowered;
+			this.lowered = new AbortController();
+			lowered.abort();
+		}
 		this.pump();
 	}
 

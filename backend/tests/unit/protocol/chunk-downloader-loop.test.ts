@@ -765,6 +765,37 @@ describe('ChunkDownloader peerLoop — pipelining', () => {
 		expect(budget.reservedBytes).toBe(0);
 	}, 15000);
 
+	it('gives back at once the reservations of requests the limiter still holds when the budget is lowered', async () => {
+		const { missing, data } = makeChunks(3);
+		let capacity = 3 * CHUNK_SIZE;
+		const budget = new ByteBudget(() => capacity);
+		const ds = new FakeDataServer(missing);
+		const pm = new PeerManager();
+		const controller = new AbortController();
+		const cd = makeDownloader(ds, pm, 3, { inflightBudget: budget, controller });
+		// The first request goes out and stays on the wire; the limiter holds the other two for seconds.
+		const client = new ScriptedClient(new Map(missing.map(c => [c.chunkID, data.get(c.chunkID)! as Reply])), 10_000);
+		pm.tryAdd('peer-limiter-held0', client as never, 'DIRECT');
+		downloadLimiter.setLimit(0.25); // one 1 KiB chunk every four seconds
+		try {
+			const run = cd.run();
+			await Bun.sleep(200);
+			expect(client.requests).toHaveLength(1);
+			expect(budget.reservedBytes).toBe(3 * CHUNK_SIZE);
+			capacity = CHUNK_SIZE;
+			budget.refresh();
+			await Bun.sleep(100);
+			// Only the request on the wire keeps its bytes; the held ones wait in the budget's queue again.
+			expect(budget.reservedBytes).toBe(CHUNK_SIZE);
+			expect(client.requests).toHaveLength(1);
+			controller.abort();
+			await pm.closeAllAwait('test done', true);
+			await Promise.race([run, Bun.sleep(1000)]);
+		} finally {
+			downloadLimiter.setLimit(0);
+		}
+	}, 15000);
+
 	it('ends a disabled download even while another download holds the whole budget', async () => {
 		const budget = new ByteBudget(() => CHUNK_SIZE);
 		// Download B takes the only slot and keeps it: its peer answers after 10 s.
