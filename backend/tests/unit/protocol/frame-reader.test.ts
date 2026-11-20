@@ -60,11 +60,17 @@ describe('FrameReader', () => {
 		await expect(new FrameReader(pieces(announced)).next(accept)).rejects.toBeInstanceOf(FrameEndedError);
 	});
 
+	it('takes at once no more of the buffer than the caller made room for', async () => {
+		// Room for a thousand bytes, a terabyte announced: only the part beyond the room may wait for data.
+		const announced = Uint8Array.of(0x80, 0x80, 0x80, 0x80, 0x80, 0x20, 1, 2, 3, 4, 5);
+		await expect(new FrameReader(pieces(announced)).next(accept, 1000)).rejects.toBeInstanceOf(FrameEndedError);
+	});
+
 	it('assembles a large frame the same whether its buffer grows or is taken at once', async () => {
 		const a = payload(200_000, 8);
 		const bytes = wire(a);
 		const cut = (): Uint8Array[] => Array.from({ length: Math.ceil(bytes.length / 7000) }, (_, i) => bytes.subarray(i * 7000, (i + 1) * 7000));
-		for (const roomMade of [false, true]) {
+		for (const roomMade of [0, 100_000, 200_000]) {
 			const frame = (await new FrameReader(pieces(...cut())).next(accept, roomMade))!;
 			expect(frame).toEqual(a);
 			expect(frame.buffer.byteLength).toBe(a.length);

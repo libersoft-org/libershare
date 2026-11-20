@@ -8,17 +8,18 @@ export class FrameEndedError extends Error {
 // A varint of Number.MAX_SAFE_INTEGER; the same bound it-length-prefixed uses on the sending side.
 const MAX_PREFIX_BYTES = 8;
 
-// Where the buffer of a frame nobody made room for starts; it doubles as the bytes arrive.
+// Taken at once on top of what the caller made room for; past it the buffer doubles as the bytes
+// arrive. Covers the envelope around a chunk, so a chunk reply still gets its buffer in one piece.
 const FIRST_BUFFER_BYTES = 64 * 1024;
 
 /**
  * Reads varint-length-prefixed frames off a byte stream. A frame that spans several incoming
  * pieces is assembled in one buffer: the pieces are copied in as they arrive and dropped at once,
- * so the frame costs its own size while it is received and nothing once it is handed over. When
- * the caller has made room for the frame, that buffer has the announced length from the start.
- * Otherwise it grows with the bytes that arrive, so a peer that announces a large frame and sends
- * little of it costs little. A frame that arrives whole inside one piece is handed out as a view
- * of that piece, without a copy.
+ * so the frame costs its own size while it is received and nothing once it is handed over. The
+ * buffer starts at what the caller has made room for, plus a little, and grows past that with the
+ * bytes that arrive, so a peer that announces a large frame and sends little of it costs little.
+ * A frame that arrives whole inside one piece is handed out as a view of that piece, without a
+ * copy.
  *
  * Not `it-length-prefixed`'s decoder: that one collects the pieces of a frame in a list, the caller
  * then copies the list into one array, and its suspended generator keeps the list until the next
@@ -45,11 +46,11 @@ export class FrameReader {
 	/**
 	 * The next frame, or undefined when the stream ended between frames or an earlier read failed.
 	 * `onLength` gets the announced length before anything is allocated or read for the body;
-	 * throwing from it refuses the frame. `roomMade` says the caller has already set memory aside
-	 * for a frame of any length `onLength` accepts, so its buffer is taken at once. Throws
-	 * {@link FrameEndedError} when the stream ends inside a frame.
+	 * throwing from it refuses the frame. `roomMade` is how many bytes the caller has already set
+	 * memory aside for; that much of the buffer is taken at once. Throws {@link FrameEndedError}
+	 * when the stream ends inside a frame.
 	 */
-	next(onLength: (length: number) => void, roomMade = false): Promise<Uint8Array | undefined> {
+	next(onLength: (length: number) => void, roomMade = 0): Promise<Uint8Array | undefined> {
 		const frame = this.tail.then(() => this.read(onLength, roomMade));
 		// Only that the read is over, never its result: a promise kept here would keep the frame alive.
 		this.tail = frame.then(
@@ -59,7 +60,7 @@ export class FrameReader {
 		return frame;
 	}
 
-	private async read(onLength: (length: number) => void, roomMade: boolean): Promise<Uint8Array | undefined> {
+	private async read(onLength: (length: number) => void, roomMade: number): Promise<Uint8Array | undefined> {
 		if (this.ended) return undefined;
 		try {
 			let length = 0;
@@ -83,7 +84,7 @@ export class FrameReader {
 				frame = first.subarray(this.offset, this.offset + length);
 				this.offset += length;
 			} else {
-				frame = new Uint8Array(roomMade ? length : Math.min(length, FIRST_BUFFER_BYTES));
+				frame = new Uint8Array(Math.min(length, roomMade + FIRST_BUFFER_BYTES));
 				for (let filled = 0; filled < length;) {
 					const part = await this.part();
 					if (!part) throw new FrameEndedError(`stream ended ${length - filled} bytes short of a frame`);

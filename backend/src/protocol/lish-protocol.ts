@@ -198,10 +198,10 @@ export class LISHClient {
 	 * Read the reply to the request just sent. `limit` bounds its length prefix, so an oversized
 	 * reply is refused before its body is read. A read that fails — timeout, oversized frame,
 	 * broken stream — aborts the stream: whatever of that reply is still unread or on its way
-	 * could otherwise be taken for the answer to the next request on this client. `roomMade` is for
-	 * a reply the caller has set memory aside for; see {@link FrameReader.next}.
+	 * could otherwise be taken for the answer to the next request on this client. `roomMade` is the
+	 * bytes the caller has set memory aside for; see {@link FrameReader.next}.
 	 */
-	private async readResponse(limit: number, timeoutMs: number, label: string, endDetail?: string, roomMade = false): Promise<Uint8Array> {
+	private async readResponse(limit: number, timeoutMs: number, label: string, endDetail?: string, roomMade = 0): Promise<Uint8Array> {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timeout = new Promise<never>((_, reject) => {
 			timer = setTimeout(() => reject(new CodedError(ErrorCodes.PEER_UNREACHABLE, `${label} timeout >${timeoutMs}ms`)), timeoutMs);
@@ -370,8 +370,9 @@ export class LISHClient {
 		};
 		// Read the response (with timeout — prevents hanging on dead/aborted streams)
 		return this.exchange(codecEncode(request), `getChunk ${lishID}`, async () => {
-			// A caller that names the chunk's size has reserved it in the in-flight budget.
-			const responseData = await this.readResponse(Math.min(getMaxMessageSize(), minMessageSizeFor(maxChunkBytes ?? getMaxChunkSize())), 30000, `getChunk ${lishID}/${chunkID}`, lishID, maxChunkBytes !== undefined);
+			// A caller that names the chunk's size has reserved that much in the in-flight budget, not
+			// the headroom the reply limit adds on top.
+			const responseData = await this.readResponse(Math.min(getMaxMessageSize(), minMessageSizeFor(maxChunkBytes ?? getMaxChunkSize())), 30000, `getChunk ${lishID}/${chunkID}`, lishID, maxChunkBytes ?? 0);
 			const response = this.parseResponse<LISHGetChunkResponse>(responseData, 'getChunk', `getChunk ${lishID}/${chunkID}`, `${lishID}/${chunkID}`);
 			if (!('data' in response) || !(response.data instanceof Uint8Array)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getChunk ${lishID}/${chunkID}: missing data`);
 			return response.data;
