@@ -784,6 +784,10 @@ export class ChunkDownloader {
 									// them again would fill the disk for chunks that can no longer be asked for.
 									const refusal = this.oversizedChunk(missingFiles);
 									if (refusal) {
+										// Stopping here skips the verification that would mark the lost files'
+										// chunks as missing. Left recorded as stored, they would not be fetched by a
+										// later start, which would create the files empty and call the download complete.
+										for (const fileIndex of missingFiles) dataServer.resetFileChunks(lishID, fileIndex);
 										this.deps.onSetError(refusal.code, refusal.detail);
 										aborted = true;
 										break;

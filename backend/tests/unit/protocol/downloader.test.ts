@@ -832,12 +832,16 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 		mkdirSync(join(dir, 'data'));
 		ds.missingChunks = [tail];
 		priv(dl)['state'] = 'preparing';
+		const markedMissing: number[] = [];
+		ds.resetFileChunks = (_lishID, fileIndex) => markedMissing.push(fileIndex);
 
 		await dl.doWork();
 
 		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
 		expect(allocations).toBe(0);
 		expect(wants).toBe(0);
+		// Left recorded as stored, the chunks of the lost file would never be fetched again.
+		expect(markedMissing).toEqual([0]);
 	});
 
 	it('checks the chunks of a lost file before the file is created again', async () => {
@@ -850,12 +854,17 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 		(priv(dl)['fileAllocator'] as { allocateFile: () => Promise<void> }).allocateFile = async () => {
 			created++;
 		};
+		const markedMissing: number[] = [];
+		ds.resetFileChunks = (_lishID, fileIndex) => markedMissing.push(fileIndex);
 
 		await dl.doWork();
 
 		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
 		expect(created).toBe(0);
 		expect(wants).toBe(0);
+		// The refusal must not leave the lost file's chunks recorded as stored: the next start
+		// would create the file empty, find nothing missing and call the download complete.
+		expect(markedMissing).toEqual([0]);
 	});
 
 	it('fails a resumed download before it looks for peers', async () => {

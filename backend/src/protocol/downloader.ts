@@ -280,9 +280,13 @@ export class Downloader {
 	 * fill the disk for data that cannot arrive, and a search for peers uses up the one answer a
 	 * seeder gives per minute, so the next start, after the limit is raised, would wait for another.
 	 */
-	private failOnOversizedChunk(lostFiles?: readonly number[]): boolean {
+	private failOnOversizedChunk(lostFiles: readonly number[] = []): boolean {
 		const oversized = this.chunkDownloader?.oversizedChunk(lostFiles);
 		if (!oversized) return false;
+		// The lost files are gone whatever comes next, and stopping here skips the step that
+		// would have said so. Left recorded as stored, their chunks would not be fetched by a
+		// later start, which would create the files empty and call the download complete.
+		for (const fileIndex of lostFiles) this.dataServer.resetFileChunks(this.lishID, fileIndex);
 		this.setError(oversized.code, oversized.detail);
 		return true;
 	}

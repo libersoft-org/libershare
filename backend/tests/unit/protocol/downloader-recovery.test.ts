@@ -477,6 +477,8 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		let capacity = 4096;
 		(h.deps as { inflightBudget?: ByteBudget }).inflightBudget = new ByteBudget(() => capacity);
 		let created = 0;
+		const markedMissing: number[] = [];
+		h.ds.resetFileChunks = (_lishID, fileIndex) => markedMissing.push(fileIndex);
 		(h.deps as unknown as { fileAllocator: unknown }).fileAllocator = {
 			// The limit drops below the file's 2048-byte chunk while the recovery waits and scans.
 			findMissingFiles: async () => {
@@ -493,6 +495,9 @@ describe('ChunkDownloader — write-retry retains chunk in memory (no re-downloa
 		expect(created).toBe(0);
 		expect(h.errors.map(e => e.code)).toEqual([ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET]);
 		expect(h.pauseController.writePaused).toBe(false);
+		// The file is gone either way. Left recorded as stored, its chunks would not be fetched by
+		// the next start, which would create the file empty and call the download complete.
+		expect(markedMissing).toEqual([0]);
 	});
 
 	it('does not lose the recovering chunk to a sibling that scans the rebuilt queue before its claim is released', async () => {
