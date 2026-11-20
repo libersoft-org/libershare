@@ -88,10 +88,17 @@ export class ByteBudget {
 	}
 
 	/**
-	 * Apply a changed capacity: tell the holders when it is now below what is reserved, grant what
-	 * fits and refuse what no longer can.
+	 * Apply a changed capacity: refuse every waiting reservation that can no longer fit, wherever
+	 * it stands in the queue, tell the holders when the capacity is now below what is reserved,
+	 * and grant what fits.
 	 */
 	refresh(): void {
+		for (const waiter of [...this.waiters]) {
+			const tooLarge = this.tooLarge(waiter.bytes);
+			if (!tooLarge) continue;
+			this.waiters.splice(this.waiters.indexOf(waiter), 1);
+			waiter.refuse(tooLarge);
+		}
 		if (!this.withinCapacity) {
 			const lowered = this.lowered;
 			this.lowered = new AbortController();
@@ -114,7 +121,7 @@ export class ByteBudget {
 	private pump(): void {
 		while (this.waiters.length > 0) {
 			const waiter = this.waiters[0]!;
-			// The capacity was lowered under a waiter: it would hold the queue forever.
+			// The capacity dropped under a waiter with no refresh() since: it would hold the queue forever.
 			const tooLarge = this.tooLarge(waiter.bytes);
 			if (tooLarge) {
 				this.waiters.shift();

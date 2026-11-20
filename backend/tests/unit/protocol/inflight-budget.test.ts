@@ -89,6 +89,19 @@ describe('ByteBudget', () => {
 		expect(budget.reservedBytes).toBe(1);
 	});
 
+	it('refuses a waiter a lowered capacity can no longer hold at once, also behind others in the queue', async () => {
+		let capacity = 100;
+		const budget = new ByteBudget(() => capacity);
+		await granted(budget.reserve(90));
+		const ahead = budget.reserve(30);
+		const behind = budget.reserve(65);
+		capacity = 64;
+		budget.refresh();
+		// 65 can never fit 64 any more; 30 still can and keeps its place.
+		await expect(behind).rejects.toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
+		expect(await settled(ahead)).toBe(false);
+	});
+
 	it('signals the holders when the capacity drops below what is reserved, and only then', async () => {
 		let capacity = 10;
 		const budget = new ByteBudget(() => capacity);
