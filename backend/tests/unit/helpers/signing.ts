@@ -1,8 +1,12 @@
 import type { PrivateKey } from '@libp2p/interface';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { encodeSignature, signedManifestBytes, type ILISH, type LISHid } from '@shared';
+import { encodeSignature, signedManifestBytes, type ILISH, type LISHChecks, type LISHid } from '@shared';
 import { deriveLISHID } from '../../../src/lish/lish-id.ts';
 import { signManifestAs } from '../../../src/lish/manifest-signature.ts';
+
+/** The checks of a manifest that passed every one, and of an unsigned one. */
+export const VERIFIED: LISHChecks = { signed: true, signatureValid: true, idMatchesPublisher: true };
+export const UNSIGNED: LISHChecks = { signed: false };
 
 /** One nonce for every test manifest, so a key always signs under the same ID. */
 export const TEST_NONCE = 'AAAAAAAAAAAAAAAAAAAAAA';

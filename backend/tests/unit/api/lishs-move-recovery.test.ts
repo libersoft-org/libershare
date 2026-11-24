@@ -48,7 +48,7 @@ test.each([true, false])('an old move cannot clear a replacement import verifica
 		await f.stopping.promise;
 		f.stopped.release();
 		await sourceEntered.promise;
-		const imported = await f.handlers.importFromJSON({ json: JSON.stringify(f.data.get(f.id)), downloadPath: join(f.base, 'replacement'), overwrite: true, enableDownloading: false, enableSharing: false });
+		const imported = await f.handlers.importFromJSON({ json: JSON.stringify(f.data.get(f.id)), downloadPath: join(f.base, 'replacement'), overwrite: true, enableDownloading: false, enableSharing: false, acceptUnverified: true });
 		await verifyEntered.promise;
 		expect(getBusyReason(f.id)).toBe('verifying');
 		releaseSource.release();

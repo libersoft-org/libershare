@@ -4,7 +4,8 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { ErrorCodes, isDerivedLISHID, type ILISH } from '@shared';
 import { Network } from '../../../src/protocol/network.ts';
 import { deriveLISHID } from '../../../src/lish/lish-id.ts';
-import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
+import { ManifestAdmission } from '../../../src/lish/manifest-admission.ts';
+import { VERIFIED } from '../helpers/signing.ts';
 
 /** `signManifest` runs on the live identity; a stand-in `this` supplies just that state. */
 function signWith(state: { node: unknown; currentPrivateKey: unknown; lifecycle?: string }, lish: ILISH): Promise<ILISH> {
@@ -32,7 +33,7 @@ describe('Network.signManifest', () => {
 		});
 		const signed = await signWith(state, manifest);
 		expect(signed.publisher).toBe(peerIdFromPrivateKey(first).toString());
-		expect(await verifyManifestSignature(signed)).toEqual({ signed: true, publisher: signed.publisher! });
+		expect(await ManifestAdmission.check(signed)).toEqual(VERIFIED);
 		expect(Object.keys(signed).sort()).toEqual([...new Set([...Object.keys(manifest), 'version', 'publisher', 'nonce', 'signature'])].sort());
 		// The ID the manifest came with is replaced by the one the signing key derives.
 		expect(signed.id).not.toBe(manifest.id);
@@ -45,7 +46,7 @@ describe('Network.signManifest', () => {
 		const key = await generateKeyPair('Ed25519');
 		const once = await signWith({ node: {}, currentPrivateKey: key }, manifest);
 		const again = await signWith({ node: {}, currentPrivateKey: key }, { ...once, name: 'Renamed' });
-		expect(await verifyManifestSignature(again)).toEqual({ signed: true, publisher: once.publisher! });
+		expect(await ManifestAdmission.check(again)).toEqual(VERIFIED);
 	});
 
 	it('refuses a key type that cannot produce an Ed25519 signature', async () => {

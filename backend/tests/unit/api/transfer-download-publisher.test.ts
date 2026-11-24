@@ -78,13 +78,13 @@ test('a local download waits for a real import owning the ID and is refused by t
 	let releaseInit!: () => void;
 	const initHeld = new Promise<void>(resolve => (releaseInit = resolve));
 	let initDone = false;
-	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string) {
-		await realInit.call(this, path);
+	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string, acceptUnverified?: boolean) {
+		await realInit.call(this, path, acceptUnverified);
 		initDone = true;
 		await initHeld;
 	});
 	try {
-		const downloading = handlers.download({ networkID: 'net-a', lishPath }, undefined);
+		const downloading = handlers.download({ networkID: 'net-a', lishPath, acceptUnverified: true }, undefined);
 		downloading.catch(() => {});
 		while (!initDone) await Bun.sleep(2);
 		// The real import of A writes A, then holds the ID while it stops old work for it.
@@ -145,14 +145,14 @@ test('a local download cannot activate while a real import holds the ID before w
 	let releaseInit!: () => void;
 	const initHeld = new Promise<void>(resolve => (releaseInit = resolve));
 	let initDone = false;
-	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string) {
-		await realInit.call(this, path);
+	const init = spyOn(Downloader.prototype, 'init').mockImplementation(async function (this: Downloader, path: string, acceptUnverified?: boolean) {
+		await realInit.call(this, path, acceptUnverified);
 		initDone = true;
 		await initHeld;
 	});
 	let open: { mockRestore(): void } | undefined;
 	try {
-		const downloading = handlers.download({ networkID: 'net-a', lishPath }, undefined);
+		const downloading = handlers.download({ networkID: 'net-a', lishPath, acceptUnverified: true }, undefined);
 		downloading.catch(() => {});
 		while (!initDone) await Bun.sleep(2);
 		// The real import of A takes the ID and is held at its first preparation step: A is not stored.

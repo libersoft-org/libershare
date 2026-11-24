@@ -4,9 +4,9 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { ErrorCodes, type ILISH, type IStoredLISH } from '@shared';
 import { addLISH, getLISH } from '../../../src/db/lishs.ts';
 import { withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
-import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
+import { ManifestAdmission } from '../../../src/lish/manifest-admission.ts';
 import { createTestDB } from '../helpers/fixtures.ts';
-import { fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
+import { VERIFIED, fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
 
 const CHECKSUM = 'a'.repeat(64);
 
@@ -60,7 +60,7 @@ describe('addLISH keeps the stored publisher', () => {
 			expect(stored.directories ?? []).toEqual([]);
 			expect(stored.links ?? []).toEqual([]);
 			// Rebuilt from the rows: stale directories or links would change the signed bytes.
-			expect(await verifyManifestSignature(stored)).toEqual({ signed: true, publisher: A });
+			expect(await ManifestAdmission.check(stored)).toEqual(VERIFIED);
 		}
 	});
 });

@@ -80,7 +80,7 @@ test('import refuses a linked derived root without deleting the overwritten reco
 		await Settings.create(base)
 	);
 	try {
-		await expect(handlers.importFromJSON({ json: JSON.stringify({ ...old, name: 'Dataset' }), downloadPath: destination, overwrite: true })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
+		await expect(handlers.importFromJSON({ json: JSON.stringify({ ...old, name: 'Dataset' }), downloadPath: destination, overwrite: true, acceptUnverified: true })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 		expect(data.get(id)?.name).toBe('Original');
 		expect(await readFile(join(outside, 'sentinel'), 'utf8')).toBe('safe');
 	} finally {
@@ -108,7 +108,7 @@ test('overwrite uses the new transfer choices rather than restoring previous ena
 		await Settings.create(base)
 	);
 	try {
-		await handlers.importFromJSON({ json: JSON.stringify(old), downloadPath: base, overwrite: true, enableSharing: false, enableDownloading: false });
+		await handlers.importFromJSON({ json: JSON.stringify(old), downloadPath: base, overwrite: true, enableSharing: false, enableDownloading: false, acceptUnverified: true });
 		expect(getEnabledUploads().has(id)).toBe(false);
 		expect(getDownloadEnabledLishs().has(id)).toBe(false);
 		expect(data.getUploadEnabledLishs().has(id)).toBe(false);

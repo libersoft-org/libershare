@@ -10,18 +10,18 @@ import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { CodedError, ErrorCodes, type ILISH, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, unverifiedLISHFromError, type ILISH, type IStoredLISH } from '@shared';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { lishOwnershipUsers, withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
 import { LISHClient } from '../../../src/protocol/lish-protocol.ts';
-import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
+import { ManifestAdmission } from '../../../src/lish/manifest-admission.ts';
 import { DEFAULT_MAX_CHUNK_SIZE, DEFAULT_MAX_MESSAGE_SIZE, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
 import { MockDataServer, MockLISHClient, priv } from './downloader-test-helpers.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { createTestDB } from '../helpers/fixtures.ts';
-import { fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
+import { VERIFIED, fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
 
 useNetworkSettings(() => ({ maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE, maxChunkSize: DEFAULT_MAX_CHUNK_SIZE }) as SettingsData['network']);
 
@@ -188,7 +188,7 @@ describe('a local .lish file', () => {
 		for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 	});
 
-	async function initFrom(file: ILISH, stored: IStoredLISH | null): Promise<Downloader> {
+	async function initFrom(file: ILISH, stored: IStoredLISH | null, acceptUnverified = false): Promise<Downloader> {
 		const dir = await mkdtemp(join(tmpdir(), 'lish-local-'));
 		dirs.push(dir);
 		const path = join(dir, 'item.lish');
@@ -197,7 +197,7 @@ describe('a local .lish file', () => {
 		if (stored) ds.storedLishs.set(ID, stored);
 		const dl = new Downloader(dir, new MockNetwork() as never, ds as never, 'net-001');
 		try {
-			await dl.init(path);
+			await dl.init(path, acceptUnverified);
 		} finally {
 			await dl.destroy();
 		}
@@ -206,14 +206,24 @@ describe('a local .lish file', () => {
 
 	it('never overrides the stored publisher', async () => {
 		const stored = (await sign(manifest(), keyA)) as IStoredLISH;
-		// Another key cannot sign under this ID at all, so its file never gets as far as the stored publisher.
-		await expect(initFrom(await signKeepingID(manifest(), keyQ), stored)).rejects.toMatchObject({ code: ErrorCodes.LISH_ID_MISMATCH });
-		await expect(initFrom(manifest(), stored)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		// Whatever the user agreed to, a file that is not verified downloads as an unsigned one, and the stored item has A.
+		for (const file of [await signKeepingID(manifest(), keyQ), { ...(await sign(manifest(), keyA)), name: 'Changed' }, manifest()]) {
+			await expect(initFrom(file, stored, true)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		}
 		await initFrom(await sign(manifest(), keyA), stored);
 	});
 
-	it('refuses a file whose signature does not match its body', async () => {
-		await expect(initFrom({ ...(await sign(manifest(), keyA)), name: 'Changed' }, null)).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_SIGNATURE });
+	it('refuses a file that is not verified until the user agrees, then takes it as an unsigned one', async () => {
+		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };
+		const refusal = unverifiedLISHFromError(await initFrom(forged, null).catch(error => error))!;
+		expect(refusal).toMatchObject({ code: 'LISH_INVALID_SIGNATURE', checks: { signed: true, signatureValid: false, idMatchesPublisher: true }, publisher: A });
+		// The file is on disk and read again on the next call, so nothing is held for an answer.
+		expect(refusal.token).toBeUndefined();
+		await expect(initFrom(await signKeepingID(manifest(), keyQ), null)).rejects.toMatchObject({ code: ErrorCodes.LISH_ID_MISMATCH });
+		await expect(initFrom(manifest(), null)).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSIGNED });
+		const accepted = priv(await initFrom(forged, null, true));
+		expect(accepted['localPublisher']).toBeNull();
+		expect(accepted['lish']).toEqual({ ...manifest(), name: 'Changed', version: 1 });
 	});
 });
 
@@ -313,7 +323,7 @@ describe('late manifest answers against the real store', () => {
 		const reloaded = ds.get(ID as never)!;
 		expect(reloaded.directories ?? []).toEqual([]);
 		expect(reloaded.links ?? []).toEqual([]);
-		expect(await verifyManifestSignature(reloaded)).toEqual({ signed: true, publisher: A });
+		expect(await ManifestAdmission.check(reloaded)).toEqual(VERIFIED);
 		await dl.destroy();
 	});
 

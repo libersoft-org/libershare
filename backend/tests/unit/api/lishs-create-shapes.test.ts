@@ -9,7 +9,9 @@ import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { DEFAULT_MAX_CHUNK_SIZE, Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers, type ManifestSigner } from '../../../src/api/lishs.ts';
-import { signManifestAs, verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
+import { ManifestAdmission } from '../../../src/lish/manifest-admission.ts';
+import { VERIFIED } from '../helpers/signing.ts';
+import { signManifestAs } from '../../../src/lish/manifest-signature.ts';
 
 /** Every shape of source a user can pick for a new LISH, signed and unsigned, through the real create. */
 
@@ -65,7 +67,8 @@ for (const sign of [false, true]) {
 		async function stored(lishID: string): Promise<ILISH> {
 			const lish = dataServer.get(lishID)!;
 			validateLISHStructure(lish, DEFAULT_MAX_CHUNK_SIZE);
-			expect(await verifyManifestSignature(lish)).toEqual(sign ? { signed: true, publisher } : { signed: false });
+			expect(await ManifestAdmission.check(lish)).toEqual(sign ? VERIFIED : { signed: false });
+			expect(lish.publisher).toBe(sign ? publisher : undefined);
 			// A signed item is stored under the ID its publisher derives, an unsigned one under a random ID.
 			expect(isDerivedLISHID(lish.id)).toBe(sign);
 			return lish;

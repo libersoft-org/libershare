@@ -47,7 +47,7 @@ for (const name of ['.', '..', '', '///', 'name.', 'NUL', 'aux.txt', 'COM¹', 'L
 
 it('keeps the manifest name unchanged while using its safe sanitized directory', async () => {
 	const id = crypto.randomUUID();
-	await handlers.importFromJSON({ json: JSON.stringify({ id, name: 'Dataset/A', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] }), downloadPath: target });
+	await handlers.importFromJSON({ json: JSON.stringify({ id, name: 'Dataset/A', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] }), downloadPath: target, acceptUnverified: true });
 	expect(data.get(id)?.directory).toBe(join(target, 'DatasetA'));
 	expect(data.get(id)?.name).toBe('Dataset/A');
 });
@@ -77,7 +77,7 @@ it('allows an explicit relocation directory independently of the manifest name',
 
 it('uses the ID only when the manifest has no name', async () => {
 	const id = crypto.randomUUID();
-	await handlers.importFromJSON({ json: JSON.stringify({ id, created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] }), downloadPath: target });
+	await handlers.importFromJSON({ json: JSON.stringify({ id, created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] }), downloadPath: target, acceptUnverified: true });
 	expect(data.get(id)?.directory).toBe(join(target, id));
 	await expect(handlers.importFromJSON({ json: JSON.stringify({ id: '..', created: '2026-01-01T00:00:00Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] }), downloadPath: target })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
 });

@@ -65,6 +65,7 @@ describe('lishnets.getPeerLish detail shape', () => {
 			],
 			directories: MANIFEST.directories,
 			links: MANIFEST.links,
+			checks: { signed: false },
 		});
 	});
 });
