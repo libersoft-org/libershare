@@ -8,7 +8,7 @@ import type { IDirectoryEntry, IFileEntry, ILinkEntry, ILISH } from './lish.ts';
  */
 export const LISH_FORMAT_VERSION = 1;
 
-const ROOT_FIELDS = new Set(['version', 'id', 'publisher', 'signature', 'name', 'description', 'created', 'chunkSize', 'checksumAlgo', 'directories', 'files', 'links', 'directory', 'finalDirectory', 'chunks']);
+const ROOT_FIELDS = new Set(['version', 'id', 'publisher', 'nonce', 'signature', 'name', 'description', 'created', 'chunkSize', 'checksumAlgo', 'directories', 'files', 'links', 'directory', 'finalDirectory', 'chunks']);
 const DIRECTORY_FIELDS = new Set(['path', 'permissions', 'modified', 'created']);
 const FILE_FIELDS = new Set(['path', 'size', 'permissions', 'modified', 'created', 'checksums']);
 const LINK_FIELDS = new Set(['path', 'target', 'hardlink', 'modified', 'created']);
@@ -17,10 +17,24 @@ const PERMISSIONS = /^[0-7]{1,4}$/;
 // Shape only: parsing the Peer ID and checking its key type needs libp2p, which lives in the backend.
 const PEER_ID_SHAPE = /^[1-9A-HJ-NP-Za-km-z]{1,128}$/;
 const SIGNATURE_SHAPE = /^[A-Za-z0-9_-]{86}$/;
+// 128 random bits as base64url without padding.
+const NONCE_SHAPE = /^[A-Za-z0-9_-]{22}$/;
+// A version 8 UUID (RFC 9562): the form of an ID derived from its publisher.
+const DERIVED_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** Whether `value` has the shape of a publisher Peer ID (base58btc); used for publishers peers only report. */
 export function isPublisherShape(value: unknown): value is string {
 	return typeof value === 'string' && PEER_ID_SHAPE.test(value);
+}
+
+/** Whether `value` has the shape of the nonce a signed manifest carries. */
+export function isNonceShape(value: unknown): value is string {
+	return typeof value === 'string' && NONCE_SHAPE.test(value);
+}
+
+/** Whether a LISH ID has the form of one derived from a publisher, so the manifest under it is expected to be signed. */
+export function isDerivedLISHID(id: unknown): boolean {
+	return typeof id === 'string' && DERIVED_ID_SHAPE.test(id);
 }
 
 /** Whether the manifest claims a publisher signature (either field present). */
@@ -81,6 +95,7 @@ export function validateSignedLISHShape(lish: ILISH): void {
 	if (lish.version !== LISH_FORMAT_VERSION) reject(`signed manifest needs version ${LISH_FORMAT_VERSION}, got ${formatUntrustedValue(lish.version)}`);
 	if (typeof lish.publisher !== 'string' || !PEER_ID_SHAPE.test(lish.publisher)) reject(`invalid publisher ${formatUntrustedValue(lish.publisher)}`);
 	if (typeof lish.signature !== 'string' || !SIGNATURE_SHAPE.test(lish.signature)) reject('invalid signature encoding');
+	if (!isNonceShape(lish.nonce)) reject(`invalid nonce ${formatUntrustedValue(lish.nonce)}`);
 	if (typeof lish.created !== 'string' || !TIMESTAMP.test(lish.created)) reject(`invalid created ${formatUntrustedValue(lish.created)}`);
 	// Normalization drops any falsy name/description, so a non-string one would ride along unsigned.
 	checkOptionalText('manifest', 'name', lish.name);
@@ -141,6 +156,7 @@ export function signedManifestPayload(lish: ILISH): Record<string, unknown> {
 		version: lish.version,
 		id: lish.id,
 		publisher: lish.publisher,
+		nonce: lish.nonce,
 		created: lish.created,
 		chunkSize: lish.chunkSize,
 		checksumAlgo: lish.checksumAlgo,

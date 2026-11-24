@@ -472,7 +472,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			links: lish.links ?? [],
 			directory,
 			...(enableDownloading ? { finalDirectory: datasetRootPath(finalRoot) } : {}),
-			...(publisher ? { publisher, signature: lish.signature! } : {}),
+			...(publisher ? { publisher, nonce: lish.nonce!, signature: lish.signature! } : {}),
 		};
 		if (existing) {
 			await stopDatasetWork(lish.id);

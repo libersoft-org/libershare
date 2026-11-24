@@ -271,7 +271,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	function refusalReason(error: CodedError): CodedError {
 		if (error.code !== ErrorCodes.PEER_INVALID_REQUEST || !(error.cause instanceof CodedError)) return error;
 		const cause = error.cause;
-		return cause.code === ErrorCodes.LISH_INVALID_SIGNATURE || cause.code === ErrorCodes.LISH_PUBLISHER_MISMATCH || cause.code === ErrorCodes.LISH_INVALID_MANIFEST ? cause : error;
+		return cause.code === ErrorCodes.LISH_INVALID_SIGNATURE || cause.code === ErrorCodes.LISH_ID_MISMATCH || cause.code === ErrorCodes.LISH_PUBLISHER_MISMATCH || cause.code === ErrorCodes.LISH_INVALID_MANIFEST ? cause : error;
 	}
 
 	async function getPeerLish(p: PeerLishParams): Promise<IPeerLishDetail> {

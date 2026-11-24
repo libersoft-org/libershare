@@ -42,7 +42,7 @@ function isOverLimitChunkSize(error: unknown): boolean {
 	return (error as { code?: unknown } | null)?.code === 'LISH_CHUNK_SIZE_TOO_LARGE';
 }
 
-const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_INVALID_MANIFEST', 'LISH_CHUNK_SIZE_TOO_LARGE']);
+const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNATURE', 'LISH_ID_MISMATCH', 'LISH_PUBLISHER_MISMATCH', 'LISH_INVALID_MANIFEST', 'LISH_CHUNK_SIZE_TOO_LARGE']);
 
 /**
  * Try each peer offering a LISH in turn until one answers, returning its result.

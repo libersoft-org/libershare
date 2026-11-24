@@ -116,6 +116,7 @@ const errorCodeKeys: Record<string, string> = {
 	LISH_INVALID_MANIFEST: 'lish.errorInvalidManifest',
 	LISH_INVALID_SIGNATURE: 'lish.errorInvalidSignature',
 	LISH_PUBLISHER_MISMATCH: 'lish.errorPublisherMismatch',
+	LISH_ID_MISMATCH: 'lish.errorIDMismatch',
 	LISH_SIGNING_UNSUPPORTED_KEY: 'lish.errorSigningUnsupportedKey',
 	LISH_SIGNING_UNSUPPORTED_SERVER: 'lish.errorSigningUnsupportedServer',
 	LISH_UNSAFE_PATH: 'lish.errorUnsafePath',

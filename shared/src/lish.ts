@@ -162,6 +162,8 @@ export interface ILISH {
 	links?: ILinkEntry[];
 	/** Peer ID of the node that signed the manifest; present only together with `signature`. */
 	publisher?: string;
+	/** Random value (128 bits, base64url) a signed manifest's `id` is derived from together with `publisher`. */
+	nonce?: string;
 	/** Ed25519 signature (base64url) over {@link signedManifestBytes}. */
 	signature?: string;
 }

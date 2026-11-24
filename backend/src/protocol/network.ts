@@ -7,10 +7,11 @@ import { privateKeyToProtobuf } from '@libp2p/crypto/keys';
 import { loadOrCreatePrivateKey, writeIdentityKey as writeIdentityKeyToDatastore, clearIdentityKey as clearIdentityKeyFromDatastore, clearDatastore as clearDatastoreDir, clearPeerstoreOnly } from './identity-store.ts';
 import { type Libp2p } from 'libp2p';
 import { type PeerId as PeerID, type PrivateKey, type Stream } from '@libp2p/interface';
-import { peerIdFromPrivateKey, peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
+import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
+import { signManifestAs } from '../lish/manifest-signature.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.ts';
@@ -19,7 +20,7 @@ import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
-import { CodedError, ErrorCodes, encodeSignature, LISH_FORMAT_VERSION, signedManifestBytes, type ILISH, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, type ILISH, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@libp2p/gossipsub/score';
 import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
@@ -3935,12 +3936,7 @@ export class Network {
 	 * if the identity is replaced meanwhile. Only manifest bytes are ever signed with it.
 	 */
 	async signManifest(lish: ILISH): Promise<ILISH> {
-		const key = this.signingKey();
-		const { signature: _old, ...unsigned } = lish;
-		// Signing writes the manifest in the current format, so an item made before `version` existed gets it here.
-		const withPublisher: ILISH = { ...unsigned, version: LISH_FORMAT_VERSION, publisher: peerIdFromPrivateKey(key).toString() };
-		const signature = await key.sign(signedManifestBytes(withPublisher));
-		return { ...withPublisher, signature: encodeSignature(signature) };
+		return signManifestAs(this.signingKey(), lish);
 	}
 
 	/** Throws what {@link signManifest} would throw right now, so a caller can refuse before long work. */
