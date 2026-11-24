@@ -25,7 +25,7 @@ This specification describes the logical structure, with JSON examples for clari
 ```typescript
 interface ILISH {
 	version?: number; // Manifest format version, an integer; currently 1 (required when signed, see below)
-	id: string; // Unique UUID for this LISH (required)
+	id: string; // Unique UUID for this LISH (required); derived from the publisher when signed, see below
 	name?: string; // LISH name (optional)
 	description?: string; // Free-form text description such as author, notes, etc. (optional)
 	created?: string; // ISO 8601 timestamp in UTC when LISH was created (optional)
@@ -34,7 +34,8 @@ interface ILISH {
 	directories?: IDirectoryEntry[]; // Array of directories (optional)
 	files?: IFileEntry[]; // Array of files (optional)
 	links?: ILinkEntry[]; // Array of symbolic links and hard links (optional)
-	publisher?: string; // Peer ID of the publisher who signed the manifest (optional, with `signature`)
+	publisher?: string; // Peer ID of the publisher who signed the manifest (optional, with `nonce` and `signature`)
+	nonce?: string; // 128 random bits the ID is derived from, base64url without padding (optional, with `publisher`)
 	signature?: string; // Ed25519 signature of the whole manifest, base64url without padding (optional, with `publisher`)
 }
 ```
@@ -49,23 +50,46 @@ interface ILISH {
 
 ### Publisher signature
 
-A LISH may be signed by its publisher. `publisher` and `signature` are either both present or both absent; an unsigned LISH has neither.
+A LISH may be signed by its publisher. `publisher`, `nonce` and `signature` are either all present or all absent; an unsigned LISH has none of them.
 
 - `publisher` is the canonical base58btc string of an Ed25519 libp2p Peer ID. The public key is embedded in it, so anyone can verify the signature without another lookup
+- `nonce` is 16 random bytes, encoded as base64url without padding (22 characters)
 - `signature` is the 64-byte Ed25519 signature, encoded as base64url without padding (86 characters)
-- The ID stays a random UUID; the signature does not turn it into a content hash. It proves who published this exact manifest, not that the publisher owns the ID
+
+**ID of a signed LISH.** Signing replaces the ID with one derived from the publisher:
+
+- take SHA-256 over the `publisher` string followed by the `nonce` string, both as the ASCII text the manifest carries, with nothing between them
+- keep the first 16 bytes, set the version to 8 and the variant to `10` (RFC 9562), and write them as a UUID
+
+The 122 remaining bits are the check. A receiver recomputes the ID from `publisher` and `nonce` and compares; an ID that differs was not made for that publisher. Anyone can compute an ID for any Peer ID, so the ID alone proves nothing: it counts together with that publisher's signature. The ID is not a content hash, and one publisher can sign two different manifests under one ID.
+
+An unsigned LISH keeps a random version 4 UUID. A version 8 UUID without a signature is a manifest whose signature was taken off.
 
 **Signed bytes.** The signature covers the UTF-8 bytes of the canonical JSON of the manifest, with nothing before or after it:
 
-- the manifest without `signature` and without local fields (`directory`, `finalDirectory`, `chunks`); `version` and `publisher` are included
+- the manifest without `signature` and without local fields (`directory`, `finalDirectory`, `chunks`); `version`, `id`, `publisher` and `nonce` are included
 - `directories`, `files` and `links` are always present (an absent collection is written as `[]`), entries in the order given
 - `hardlink` is always present on a link (`false` when absent)
 - optional fields that are absent are left out (an empty `name` or `description` counts as absent); `null` is never allowed
 - object keys sorted by UTF-16 code unit order, no whitespace, strings and numbers serialized as by `JSON.stringify`; numbers are safe integers
 
-**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry; the local fields `directory`, `finalDirectory` and `chunks` are allowed in the root because they are left out of the signed bytes), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, a missing or unknown `version`, or a `publisher` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
+**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry; the local fields `directory`, `finalDirectory` and `chunks` are allowed in the root because they are left out of the signed bytes), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, a missing or unknown `version`, or a `publisher` / `nonce` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
 
-**Verification.** Every place that admits a manifest (import, a `.lish` file to download, a manifest from a peer, a preview) verifies the signature when present. A node that already stores a LISH ID keeps its publisher for the life of the item: a manifest under the same ID from another publisher, or unsigned for a signed item (and the other way round), is refused.
+**Verification.** Every place that takes a manifest in (import, a `.lish` file to download, a manifest from a peer, a preview) runs three checks:
+
+| Check | Passes when |
+| --- | --- |
+| signed | the manifest carries `publisher`, `nonce` and `signature` |
+| signature matches | the signature is the publisher's, over the signed bytes |
+| ID belongs to the publisher | the ID is the one `publisher` and `nonce` derive |
+
+The last two are judged on their own, so a manifest can fail one or both. A LISH is verified only when all three pass.
+
+- When a user adds a LISH that is not verified, the node asks first and adds it only after the user agrees. Over the API such an add is refused with `LISH_UNSIGNED`, `LISH_INVALID_SIGNATURE` or `LISH_ID_MISMATCH` (the first check that failed); the `detail` is JSON with the three `checks`, the `publisher` the manifest names and, when the node keeps the manifest for the answer, a `token`. `lishs.answerUnverified` with that token adds exactly the manifest the question was about, or lets it go. Calls that carry the manifest themselves (`lishs.importFromFile`, `lishs.importFromJSON`, `transfer.download`) also take `acceptUnverified: true` for a user who agreed beforehand
+- A manifest the node fetches on its own, with nobody to ask, is taken only when it is unsigned or verified; a signed one that fails a check is the fault of the peer that sent it
+- A LISH added without being verified is stored and served as an unsigned one: only a verified manifest keeps its `publisher`, `nonce` and `signature`
+- A node that already stores a LISH ID keeps its publisher for the life of the item: a manifest under the same ID from another publisher, or unsigned for a signed item (and the other way round), is refused, whatever the user agreed to
+- A broken shape is refused outright; the user's agreement never covers it
 
 For signed creation over the local API, call `lishs.createSigned` with the usual creation parameters and `sign: true`. This method is available on servers that support signed creation and returns the confirmed `publisher`. Unsigned creation uses `lishs.create`.
 
