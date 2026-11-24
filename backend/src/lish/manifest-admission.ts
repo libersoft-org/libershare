@@ -9,9 +9,24 @@ import { lishIDMatchesPublisher } from './lish-id.ts';
  */
 export type ExpectedPublisher = string | null | undefined;
 
-/** How long a manifest waits for the user's answer, and how many wait at once. */
-const PENDING_TTL_MS = 10 * 60 * 1000;
-const PENDING_LIMIT = 256;
+/** How long a manifest waits for the user's answer, and how many and how much may wait at once. */
+export interface PendingLimits {
+	readonly ttlMs: number;
+	readonly count: number;
+	/** Estimated size of all waiting manifests together, see {@link manifestWeight}. */
+	readonly bytes: number;
+}
+const PENDING_LIMITS: PendingLimits = { ttlMs: 10 * 60 * 1000, count: 256, bytes: 256 * 1024 * 1024 };
+
+/**
+ * Rough size of a manifest in memory: its checksums and paths, which is nearly all of it.
+ * Every manifest counts for something, so empty ones cannot pile up for free.
+ */
+function manifestWeight(lish: ILISH): number {
+	let weight = 1024;
+	for (const file of lish.files ?? []) weight += file.path.length + file.checksums.length * (file.checksums[0]?.length ?? 0);
+	return weight;
+}
 
 interface Inspection {
 	readonly checks: LISHChecks;
@@ -21,6 +36,7 @@ interface Inspection {
 
 interface Pending<T> {
 	readonly token: string;
+	readonly weight: number;
 	readonly resume: () => Promise<T>;
 	readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -37,6 +53,12 @@ interface Pending<T> {
 export class ManifestAdmission<T> {
 	// One waiting manifest per LISH ID: asking again about the same ID replaces the earlier one.
 	private readonly pending = new Map<string, Pending<T>>();
+	private pendingBytes = 0;
+	private readonly limits: PendingLimits;
+
+	constructor(limits: PendingLimits = PENDING_LIMITS) {
+		this.limits = limits;
+	}
 
 	/** Run the three checks. Only a signed manifest with a malformed shape throws (`LISH_INVALID_MANIFEST`). */
 	static async check(lish: ILISH): Promise<LISHChecks> {
@@ -113,7 +135,7 @@ export class ManifestAdmission<T> {
 				lish,
 				checks,
 				fault,
-				this.park(lish.id, () => resume(checks))
+				this.park(lish, () => resume(checks))
 			);
 		this.drop(lish.id);
 		return resume(checks);
@@ -150,14 +172,18 @@ export class ManifestAdmission<T> {
 		return new CodedError(fault.code, JSON.stringify(detail), { cause: fault });
 	}
 
-	private park(lishID: string, resume: () => Promise<T>): string {
+	private park(lish: ILISH, resume: () => Promise<T>): string {
+		const lishID = lish.id;
 		this.drop(lishID);
-		// Oldest first: a client that never answers cannot grow this without bound.
-		if (this.pending.size >= PENDING_LIMIT) this.drop(this.pending.keys().next().value!);
+		const weight = manifestWeight(lish);
+		// Oldest first: a client that never answers cannot grow this without bound. A manifest
+		// larger than the whole allowance still waits, alone, so the user can answer about it.
+		while (this.pending.size > 0 && (this.pending.size >= this.limits.count || this.pendingBytes + weight > this.limits.bytes)) this.drop(this.pending.keys().next().value!);
 		const token = randomUUID();
-		const timer = setTimeout(() => this.drop(lishID), PENDING_TTL_MS);
+		const timer = setTimeout(() => this.drop(lishID), this.limits.ttlMs);
 		timer.unref();
-		this.pending.set(lishID, { token, resume, timer });
+		this.pending.set(lishID, { token, weight, resume, timer });
+		this.pendingBytes += weight;
 		return token;
 	}
 
@@ -166,5 +192,6 @@ export class ManifestAdmission<T> {
 		if (!pending) return;
 		clearTimeout(pending.timer);
 		this.pending.delete(lishID);
+		this.pendingBytes -= pending.weight;
 	}
 }

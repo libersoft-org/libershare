@@ -238,6 +238,59 @@ describe('a manifest waiting for the answer', () => {
 		expect(runs).toHaveLength(1);
 	});
 
+	describe('within its limits', () => {
+		/** An admission with the given limits; `tokenOf` asks about a manifest of `checksums` chunks under `id`. */
+		function limited(limits: { count?: number; bytes?: number; ttlMs?: number }) {
+			const admission = new ManifestAdmission<string>({ ttlMs: 60_000, count: 100, bytes: 1 << 30, ...limits });
+			const tokenOf = async (id: string, checksums = 1) => {
+				const lish = manifest({ id, files: [{ path: 'a.txt', size: 4 * checksums, checksums: Array.from({ length: checksums }, () => 'c'.repeat(64)) }] });
+				return unverifiedLISHFromError(await admission.admit(lish, false, async () => id).catch(error => error))!.token!;
+			};
+			const stillHeld = async (token: string) =>
+				admission
+					.answer(token, true, resume => resume())
+					.then(
+						() => true,
+						() => false
+					);
+			return { tokenOf, stillHeld };
+		}
+
+		it('lets the oldest question go when too many wait', async () => {
+			const { tokenOf, stillHeld } = limited({ count: 2 });
+			const [first, second, third] = [await tokenOf('one'), await tokenOf('two'), await tokenOf('three')];
+			expect(await stillHeld(first)).toBe(false);
+			expect(await stillHeld(second)).toBe(true);
+			expect(await stillHeld(third)).toBe(true);
+		});
+
+		it('lets the oldest questions go when the waiting manifests grow too large', async () => {
+			// 1000 checksums of 64 characters weigh about 64 kB; two of them do not fit under 100 kB.
+			const { tokenOf, stillHeld } = limited({ bytes: 100_000 });
+			const small = await tokenOf('small');
+			const large = await tokenOf('large', 1000);
+			expect(await stillHeld(small)).toBe(true);
+			const second = await tokenOf('second', 1000);
+			expect(await stillHeld(large)).toBe(false);
+			expect(await stillHeld(second)).toBe(true);
+		});
+
+		it('still holds one manifest larger than the whole allowance, so the user can answer about it', async () => {
+			const { tokenOf, stillHeld } = limited({ bytes: 100_000 });
+			const earlier = await tokenOf('earlier');
+			const huge = await tokenOf('huge', 5000);
+			expect(await stillHeld(earlier)).toBe(false);
+			expect(await stillHeld(huge)).toBe(true);
+		});
+
+		it('lets a question go when nobody answers in time', async () => {
+			const { tokenOf, stillHeld } = limited({ ttlMs: 20 });
+			const token = await tokenOf('slow');
+			await Bun.sleep(60);
+			expect(await stillHeld(token)).toBe(false);
+		});
+	});
+
 	it('forgets every question on clear', async () => {
 		const { admission, tokenOf } = waiting();
 		const token = await tokenOf(manifest());
