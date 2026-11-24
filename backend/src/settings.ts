@@ -143,6 +143,8 @@ export interface SettingsData {
 		minifyJSON: boolean;
 		compress: boolean;
 		compressionAlgorithm: CompressionAlgorithm;
+		/** Whether the switch for signing a new LISH starts turned on. */
+		sign: boolean;
 	};
 	input: {
 		initialDelay: number;
@@ -243,6 +245,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 		minifyJSON: false,
 		compress: false,
 		compressionAlgorithm: 'gzip' as CompressionAlgorithm,
+		sign: false,
 	},
 	input: {
 		initialDelay: 400,

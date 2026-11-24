@@ -3,7 +3,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { createNavArea, type NavPos } from '../../scripts/navArea.svelte.ts';
-	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, notificationTimeout, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setDefaultCompressionAlgorithm, setNotificationTimeout } from '../../scripts/settings.ts';
+	import { autoStartOnBoot, showInTray, minimizeToTray, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, defaultSign, notificationTimeout, setAutoStartOnBoot, setShowInTray, setMinimizeToTray, setDefaultMinifyJSON, setDefaultCompress, setDefaultCompressionAlgorithm, setDefaultSign, setNotificationTimeout } from '../../scripts/settings.ts';
 	import { type CompressionAlgorithm } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -23,6 +23,7 @@
 	let minifyJSON = $state($defaultMinifyJSON);
 	let compress = $state($defaultCompress);
 	let compressionAlgorithm = $state<CompressionAlgorithm>($defaultCompressionAlgorithm);
+	let sign = $state($defaultSign);
 	let timeout = $state($notificationTimeout.toString());
 
 	function toggleAutoStart(): void {
@@ -53,6 +54,7 @@
 		setDefaultMinifyJSON(minifyJSON);
 		setDefaultCompress(compress);
 		setDefaultCompressionAlgorithm(compressionAlgorithm);
+		setDefaultSign(sign);
 		setNotificationTimeout(parseInt(timeout) || 0);
 		timeout = $notificationTimeout.toString();
 		onBack?.();
@@ -62,8 +64,9 @@
 	let minifyPos = $derived<NavPos>([0, trayVisible ? 3 : 2]);
 	let compressPos = $derived<NavPos>([0, trayVisible ? 4 : 3]);
 	let algorithmRow = $derived(trayVisible ? 5 : 4);
-	let timeoutPos = $derived<NavPos>([0, algorithmRow + 1]);
-	let buttonsY = $derived(algorithmRow + 2);
+	let signPos = $derived<NavPos>([0, algorithmRow + 1]);
+	let timeoutPos = $derived<NavPos>([0, algorithmRow + 2]);
+	let buttonsY = $derived(algorithmRow + 3);
 
 	createNavArea(() => ({ areaID, position, onBack, activate: true }));
 </script>
@@ -110,6 +113,9 @@
 		</div>
 		<div role="group" data-mouse-activate-area={areaID}>
 			<CompressionAlgorithmRow label={$t('settings.system.defaultCompressionAlgorithm')} value={compressionAlgorithm} row={algorithmRow} onSelect={algorithm => (compressionAlgorithm = algorithm)} />
+		</div>
+		<div role="group" data-mouse-activate-area={areaID}>
+			<SwitchRow label={$t('settings.system.defaultSign') + ':'} checked={sign} position={signPos} onToggle={() => (sign = !sign)} />
 		</div>
 		<div role="group" data-mouse-activate-area={areaID}>
 			<Input bind:value={timeout} label={$t('settings.system.notificationTimeout')} type="number" position={timeoutPos} flex />

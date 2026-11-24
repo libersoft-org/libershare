@@ -364,6 +364,7 @@
 			"defaultMinifyJSON": "Minify JSON (default)",
 			"defaultCompress": "Compress (default)",
 			"defaultCompressionAlgorithm": "Compression algorithm (default)",
+			"defaultSign": "Sign new LISHs with my identity (default)",
 			"notificationTimeout": "Notification timeout (in seconds, 0 = unlimited)"
 		},
 		"network": {

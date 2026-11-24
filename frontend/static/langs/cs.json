@@ -364,6 +364,7 @@
 			"defaultMinifyJSON": "Minifikovat JSON (výchozí hodnota)",
 			"defaultCompress": "Komprimovat (výchozí hodnota)",
 			"defaultCompressionAlgorithm": "Kompresní algoritmus (výchozí hodnota)",
+			"defaultSign": "Podepisovat nové LISH mou identitou (výchozí hodnota)",
 			"notificationTimeout": "Časový limit notifikací (ve vteřinách, 0 = neomezeno)"
 		},
 		"network": {

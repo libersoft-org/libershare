@@ -8,7 +8,7 @@
 	import { pushBackHandler } from '../../scripts/focus.ts';
 	import { sanitizeFilename, compressionExtension, stripCompressionExtension, type CompressionAlgorithm } from '@shared';
 	import { SUPPORTED_ALGOS, DEFAULT_ALGO, type HashAlgorithm, parseBytes } from '@shared';
-	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm } from '../../scripts/settings.ts';
+	import { storageLISHPath, storagePath, autoStartSharing, autoStartDownloading, defaultMinifyJSON, defaultCompress, defaultCompressionAlgorithm, defaultSign } from '../../scripts/settings.ts';
 
 	/** Basename of a shared file/directory path (last segment, trailing separators stripped). */
 	function shareBaseName(path: string): string {
@@ -126,8 +126,8 @@
 	let compress = $state($defaultCompress);
 	let compressionAlgorithm = $state<CompressionAlgorithm>($defaultCompressionAlgorithm);
 	let showAdvanced = $state(false);
-	// Off by default: a signature publicly links the item to this node's Peer ID.
-	let sign = $state(false);
+	// A signature publicly links the item to this node's Peer ID, so the setting it starts from is off until the user turns it on.
+	let sign = $state($defaultSign);
 	// Prefill the LISH name from the shared file/directory basename (if any).
 	let name = $state(untrack(() => (initialDataPath ? shareBaseName(initialDataPath) : '')));
 	let nameManuallyEdited = $state(false); // Stop auto-filling the name from the data path once the user types one
