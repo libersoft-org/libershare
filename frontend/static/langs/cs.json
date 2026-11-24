@@ -319,7 +319,6 @@
 		"errorDirectoryAccessDenied": "Přístup zamítnut: {detail}",
 		"errorDownloaderNotInitialized": "Stahovač nebyl inicializován",
 		"errorDownload": "Stahování selhalo: {detail}",
-		"signature": "Podpis",
 		"signedBy": "Podepsal",
 		"unsigned": "Nepodepsáno",
 		"reportedPublisher": "Uváděný vydavatel",
@@ -328,6 +327,24 @@
 		"errorInvalidSignature": "Podpis manifestu nesedí. Obsah se po podepsání změnil, nebo ho uvedený vydavatel nepodepsal.",
 		"errorPublisherMismatch": "Vydavatel tohoto LISHe není ten, kterého aplikace čekala.",
 		"errorIDMismatch": "LISH ID nepatří vydavateli, který LISH podepsal.",
+		"errorUnsigned": "LISH není podepsaný.",
+		"errorConfirmationExpired": "Dotaz k tomuto LISH už není otevřený. Přidejte LISH znovu.",
+		"unverified": {
+			"title": "Neověřený LISH",
+			"askUnsigned": "„{name}“ není podepsaný, takže za jeho obsah nikdo neručí. Opravdu ho přidat?",
+			"askSignatureRemoved": "„{name}“ není podepsaný, ale podle ID podepsaný byl. Podpis někdo odstranil. Opravdu ho přidat?",
+			"askInvalidSignature": "Podpis u „{name}“ nesedí. Obsah se po podepsání změnil, nebo ho uvedený vydavatel nepodepsal. Opravdu ho přidat?",
+			"askIDMismatch": "ID u „{name}“ nepatří vydavateli, který ho podepsal. Někdo může svůj LISH vydávat pod cizím ID. Opravdu ho přidat?",
+			"askManyUnsigned": "{count} z přidávaných LISH není podepsaných, takže za jejich obsah nikdo neručí. Opravdu je přidat?"
+		},
+		"checks": {
+			"verification": "Ověření",
+			"verified": "Ověřený",
+			"unverified": "Neověřený",
+			"signed": "Podepsáno",
+			"signatureValid": "Podpis sedí",
+			"idMatchesPublisher": "ID patří vydavateli"
+		},
 		"errorSigningUnsupportedKey": "Identita tohoto uzlu neumí podepisovat (je potřeba klíč Ed25519)",
 		"errorSigningUnsupportedServer": "Tento server neumí vytvářet podepsané LISH. Pro podepisování server aktualizujte.",
 		"fileInfo": "Informace o LISHi",

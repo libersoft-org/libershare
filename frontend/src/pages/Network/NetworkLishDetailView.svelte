@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { t, translateError } from '../../scripts/language.ts';
-	import { type IPeerLishDetail, isISODate } from '@shared';
+	import { type IPeerLishDetail, isISODate, isVerifiedLISH } from '@shared';
+	import { checkRows, verificationKey } from '../../scripts/lishVerification.ts';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
@@ -179,6 +180,10 @@
 		white-space: pre-wrap;
 	}
 
+	.info-row .value.unverified {
+		color: var(--color-error);
+	}
+
 	/* Mirrors the Table component frame so both render modes look the same. */
 	.file-tree {
 		display: flex;
@@ -306,14 +311,17 @@
 			<div class="info-row"><span class="label">{$t('common.name')}:</span> <span class="value">{detail.name}</span></div>
 		{/if}
 		<div class="info-row"><span class="label">{$t('network.lishID')}:</span> <span class="value mono">{detail.id}</span></div>
-		<!-- The backend verified this signature over the whole manifest, so "signed by" is earned here. -->
-		<div class="info-row">
-			{#if detail.publisher}
-				<span class="label">{$t('lish.signedBy')}:</span> <span class="value mono">{detail.publisher}</span>
-			{:else}
-				<span class="label">{$t('lish.signature')}:</span> <span class="value">{$t('lish.unsigned')}</span>
-			{/if}
-		</div>
+		<!-- One word first: verified only when every check below passed. -->
+		<div class="info-row"><span class="label">{$t('lish.checks.verification')}:</span> <span class="value" class:unverified={!isVerifiedLISH(detail.checks)}>{$t(verificationKey(detail.checks))}</span></div>
+		{#each checkRows(detail.checks) as check (check.labelKey)}
+			<div class="info-row"><span class="label">{$t(check.labelKey)}:</span> <Icon img={check.passed ? '/img/check.svg' : '/img/cross.svg'} alt={$t(check.passed ? 'common.yes' : 'common.no')} size="2vh" padding="0" colorVariable={check.passed ? '--color-success' : '--color-error'} /></div>
+		{/each}
+		<!-- "Signed by" is earned by a verified signature; any other publisher is only what the manifest says. -->
+		{#if detail.publisher}
+			<div class="info-row"><span class="label">{$t('lish.signedBy')}:</span> <span class="value mono">{detail.publisher}</span></div>
+		{:else if detail.namedPublisher}
+			<div class="info-row"><span class="label">{$t('lish.reportedPublisher')}:</span> <span class="value mono">{detail.namedPublisher}</span></div>
+		{/if}
 		{#if detail.description}
 			<div class="info-row"><span class="label">{$t('common.description')}:</span> <span class="value description">{detail.description}</span></div>
 		{/if}

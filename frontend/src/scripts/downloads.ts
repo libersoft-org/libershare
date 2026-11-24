@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { type ILISHDetail } from '@shared';
+import { type ILISHDetail, type LISHChecks } from '@shared';
 import { api } from './api.ts';
 import { formatSize } from './utils.ts';
 import { navigateBack } from './navigation.ts';
@@ -44,6 +44,8 @@ export interface DownloadData {
 	description?: string | undefined;
 	/** Peer ID whose manifest signature the backend verified; absent for an unsigned item. */
 	publisher?: string | undefined;
+	/** What checking the manifest signature found; absent until the backend has sent the item itself. */
+	checks?: LISHChecks | undefined;
 	directory?: string | undefined;
 	progress: number;
 	size: string;
@@ -110,6 +112,7 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		name: detail.name ?? '-',
 		description: detail.description,
 		publisher: detail.publisher,
+		checks: detail.checks,
 		directory: detail.directory,
 		progress,
 		size: formatSize(detail.totalSize),

@@ -319,7 +319,6 @@
 		"errorDirectoryAccessDenied": "Access denied: {detail}",
 		"errorDownloaderNotInitialized": "Downloader not initialized",
 		"errorDownload": "Download failed: {detail}",
-		"signature": "Signature",
 		"signedBy": "Signed by",
 		"unsigned": "Unsigned",
 		"reportedPublisher": "Reported publisher",
@@ -328,6 +327,24 @@
 		"errorInvalidSignature": "The manifest signature does not match. The content changed after signing, or the stated publisher did not sign it.",
 		"errorPublisherMismatch": "The publisher of this LISH is not the one the app expected.",
 		"errorIDMismatch": "The LISH ID does not belong to the publisher who signed it.",
+		"errorUnsigned": "The LISH is not signed.",
+		"errorConfirmationExpired": "The question about this LISH is no longer open. Add the LISH again.",
+		"unverified": {
+			"title": "Unverified LISH",
+			"askUnsigned": "\"{name}\" is not signed, so nobody vouches for what is in it. Add it anyway?",
+			"askSignatureRemoved": "\"{name}\" is not signed, but its ID says it once was. Someone took the signature off. Add it anyway?",
+			"askInvalidSignature": "The signature of \"{name}\" does not match. The content changed after signing, or the stated publisher did not sign it. Add it anyway?",
+			"askIDMismatch": "The ID of \"{name}\" does not belong to the publisher who signed it. Someone may be passing their own LISH off under another ID. Add it anyway?",
+			"askManyUnsigned": "{count} of the LISHs are not signed, so nobody vouches for what is in them. Add them anyway?"
+		},
+		"checks": {
+			"verification": "Verification",
+			"verified": "Verified",
+			"unverified": "Not verified",
+			"signed": "Signed",
+			"signatureValid": "Signature matches",
+			"idMatchesPublisher": "ID belongs to the publisher"
+		},
 		"errorSigningUnsupportedKey": "This node identity cannot sign (an Ed25519 key is required)",
 		"errorSigningUnsupportedServer": "This backend cannot create signed LISHs. Update the backend to use signing.",
 		"fileInfo": "LISH info",

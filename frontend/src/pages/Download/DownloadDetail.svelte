@@ -5,6 +5,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
+	import { checkRows, verificationKey } from '../../scripts/lishVerification.ts';
 	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, type DownloadFileData, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
@@ -65,13 +66,13 @@
 	let containerElement: HTMLElement | null = $state(null);
 	let selectedInfoIndex = $state(0);
 	let infoRowElements: HTMLElement[] = $state([]);
-	type InfoRowKind = 'text' | 'description' | 'progress' | 'status' | 'allowed';
+	type InfoRowKind = 'text' | 'description' | 'progress' | 'status' | 'allowed' | 'check';
 	interface InfoRow {
 		label: string;
 		kind: InfoRowKind;
 		value?: string;
 	}
-	let infoRows = $derived<InfoRow[]>(download ? [{ label: $t('downloads.id'), kind: 'text' as InfoRowKind, value: download.id }, { label: $t('common.name'), kind: 'text' as InfoRowKind, value: download.name }, ...(download.description ? [{ label: $t('common.description'), kind: 'description' as InfoRowKind, value: download.description }] : []), download.publisher ? { label: $t('lish.signedBy'), kind: 'text' as InfoRowKind, value: download.publisher } : { label: $t('lish.signature'), kind: 'text' as InfoRowKind, value: $t('lish.unsigned') }, { label: $t('downloads.targetDirectory'), kind: 'text' as InfoRowKind, value: download.directory ?? '-' }, { label: $t('common.size'), kind: 'text' as InfoRowKind, value: download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size }, { label: $t('downloads.chunks'), kind: 'text' as InfoRowKind, value: `${download.totalChunks} (${formatSize(download.chunkSize)})` }, { label: $t('common.progress'), kind: 'progress' as InfoRowKind }, { label: $t('common.status'), kind: 'status' as InfoRowKind }, { label: $t('downloads.allowed'), kind: 'allowed' as InfoRowKind }, { label: $t('downloads.downloadingFrom'), kind: 'text' as InfoRowKind, value: String(download.downloadPeers) }, { label: $t('downloads.uploadingTo'), kind: 'text' as InfoRowKind, value: String(download.uploadPeers) }, { label: $t('downloads.downloadSpeed'), kind: 'text' as InfoRowKind, value: download.downloadSpeed }, { label: $t('downloads.uploadSpeed'), kind: 'text' as InfoRowKind, value: download.uploadSpeed }, { label: $t('downloads.downloaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalDownloadedBytes) }, { label: $t('downloads.uploaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalUploadedBytes) }] : []);
+	let infoRows = $derived<InfoRow[]>(download ? [{ label: $t('downloads.id'), kind: 'text' as InfoRowKind, value: download.id }, { label: $t('common.name'), kind: 'text' as InfoRowKind, value: download.name }, ...(download.description ? [{ label: $t('common.description'), kind: 'description' as InfoRowKind, value: download.description }] : []), ...(download.checks ? [{ label: $t('lish.checks.verification'), kind: 'text' as InfoRowKind, value: $t(verificationKey(download.checks)) }, ...checkRows(download.checks).map(row => ({ label: $t(row.labelKey), kind: 'check' as InfoRowKind, value: row.passed ? 'passed' : '' }))] : []), ...(download.publisher ? [{ label: $t('lish.signedBy'), kind: 'text' as InfoRowKind, value: download.publisher }] : []), { label: $t('downloads.targetDirectory'), kind: 'text' as InfoRowKind, value: download.directory ?? '-' }, { label: $t('common.size'), kind: 'text' as InfoRowKind, value: download.downloadedSize ? `${download.downloadedSize} / ${download.size}` : download.size }, { label: $t('downloads.chunks'), kind: 'text' as InfoRowKind, value: `${download.totalChunks} (${formatSize(download.chunkSize)})` }, { label: $t('common.progress'), kind: 'progress' as InfoRowKind }, { label: $t('common.status'), kind: 'status' as InfoRowKind }, { label: $t('downloads.allowed'), kind: 'allowed' as InfoRowKind }, { label: $t('downloads.downloadingFrom'), kind: 'text' as InfoRowKind, value: String(download.downloadPeers) }, { label: $t('downloads.uploadingTo'), kind: 'text' as InfoRowKind, value: String(download.uploadPeers) }, { label: $t('downloads.downloadSpeed'), kind: 'text' as InfoRowKind, value: download.downloadSpeed }, { label: $t('downloads.uploadSpeed'), kind: 'text' as InfoRowKind, value: download.uploadSpeed }, { label: $t('downloads.downloaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalDownloadedBytes) }, { label: $t('downloads.uploaded'), kind: 'text' as InfoRowKind, value: formatSize(download.totalUploadedBytes) }] : []);
 	// Per-peer data for this LISH
 	let currentPeers = $derived([...($peerDetails.get(lishID) ?? [])].sort((a, b) => a.peerID.localeCompare(b.peerID)));
 	let peerSnapshotLoaded = $derived($peerSnapshotReceived.get(lishID) === true);
@@ -851,6 +852,8 @@
 									<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
 								{:else if row.kind === 'allowed'}
 									<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" downloadColorVariable={rowSelected ? '--primary-background' : '--mode-download-fg'} uploadColorVariable={rowSelected ? '--primary-background' : '--mode-upload-fg'} disabledColorVariable={rowSelected ? '--primary-background' : '--mode-disabled-fg'} /></Cell>
+								{:else if row.kind === 'check'}
+									<Cell align="right"><Icon img={row.value ? '/img/check.svg' : '/img/cross.svg'} alt={$t(row.value ? 'common.yes' : 'common.no')} size="2.4vh" padding="0" colorVariable={rowSelected ? '--primary-background' : row.value ? '--color-success' : '--color-error'} /></Cell>
 								{:else}
 									<Cell align="right">{row.value}</Cell>
 								{/if}

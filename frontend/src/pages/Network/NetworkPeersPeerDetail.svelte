@@ -9,6 +9,9 @@
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type PeerListEntry, type PeerLishEntry } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { unverifiedOffer, type UnverifiedOffer } from '../../scripts/lishVerification.ts';
+	import { answerUnverifiedOffers } from '../../scripts/lishUnverifiedAnswer.ts';
+	import UnverifiedLISHDialog from '../../components/Dialog/UnverifiedLISHDialog.svelte';
 	import { tick } from 'svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -46,6 +49,8 @@
 	let loading = $state(true);
 	let error = $state('');
 	let addingLish = $state<string | null>(null);
+	// The unverified LISH the user is being asked about before it is added.
+	let offer = $state<UnverifiedOffer | null>(null);
 	// Per-row DOM refs so we can scroll the highlighted LISH into view once results load.
 	let itemEls = $state<Record<string, HTMLDivElement | undefined>>({});
 	// Detail view state
@@ -81,6 +86,21 @@
 		try {
 			await api.lishnets.addPeerLish(lish.id, peer.peerID, networkID, expectedPublisherFor(lish));
 			addNotification($t('network.lishAdded', { name: lish.name || lish.id }), 'success');
+		} catch (e: any) {
+			// The manifest is not verified: the backend holds it and the user decides.
+			offer = unverifiedOffer(e, lish);
+			if (!offer?.token) addNotification(translateError(e), 'error');
+		}
+		addingLish = null;
+	}
+
+	async function answerOffer(accept: boolean): Promise<void> {
+		const answered = offer;
+		offer = null;
+		if (!answered) return;
+		addingLish = accept ? answered.id : null;
+		try {
+			if (await answerUnverifiedOffers([answered], accept)) addNotification($t('network.lishAdded', { name: answered.name }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		}
@@ -231,4 +251,7 @@
 			{/if}
 		</div>
 	</div>
+{/if}
+{#if offer}
+	<UnverifiedLISHDialog {offer} {position} onAccept={() => answerOffer(true)} onRefuse={() => answerOffer(false)} />
 {/if}
