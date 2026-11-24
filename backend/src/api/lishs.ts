@@ -1,5 +1,5 @@
 import { type DataServer } from '../lish/data-server.ts';
-import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, checkManifestVersion, isSignedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
+import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, checkManifestVersion, isSignedLISH, isVerifiedLISH, formatSizeOverLimit, CodedError, ErrorCodes, productName, type LISHChecks } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
 import { DEFAULT_CHUNK_SIZE } from '@shared';
@@ -13,7 +13,7 @@ import { join, dirname, resolve } from 'path';
 import { openDataset, createDataset, validateDatasetNamespace, type DatasetRoot } from '../lish/safe-dataset-files.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
-import { assertExpectedPublisher, verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { ManifestAdmission, type ExpectedPublisher } from '../lish/manifest-admission.ts';
 import { withLISHOwnership } from '../lish/lish-ownership.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -34,26 +34,27 @@ interface CreateLISHParams {
 	/** Sign the new manifest as its publisher with the node identity. */
 	sign?: boolean;
 }
-interface ImportFromFileParams {
+/** How a manifest already in hand is imported. */
+export interface ImportManifestOptions {
+	overwrite?: boolean | undefined;
+	enableSharing?: boolean | undefined;
+	enableDownloading?: boolean | undefined;
+	/** Publisher the manifest must name; a different one is refused. */
+	expectedPublisher?: ExpectedPublisher;
+	/** The user already agreed to add the manifest even when it is not verified. */
+	acceptUnverified?: boolean | undefined;
+}
+interface ImportParams extends ImportManifestOptions {
+	downloadPath: string;
+}
+interface ImportFromFileParams extends ImportParams {
 	filePath: string;
-	downloadPath: string;
-	overwrite?: boolean;
-	enableSharing?: boolean;
-	enableDownloading?: boolean;
 }
-interface ImportFromJSONParams {
+interface ImportFromJSONParams extends ImportParams {
 	json: string;
-	downloadPath: string;
-	overwrite?: boolean;
-	enableSharing?: boolean;
-	enableDownloading?: boolean;
 }
-interface ImportFromURLParams {
+interface ImportFromURLParams extends ImportParams {
 	url: string;
-	downloadPath: string;
-	overwrite?: boolean;
-	enableSharing?: boolean;
-	enableDownloading?: boolean;
 }
 interface ExportToFileParams {
 	lishID: string;
@@ -106,9 +107,10 @@ interface LISHsHandlers {
 	finalizeDownload: (lishID: string) => Promise<SuccessResponse>; // Move from temp to final directory after download completes
 	/** Continue finalization for a transfer lifecycle admitted before mutation shutdown. */
 	finalizeDownloadAdmitted: (lishID: string) => Promise<SuccessResponse>;
-	importManifest: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>; // Shared import entrypoint
+	importManifest: (lish: ILISH, downloadPath: string, opts?: ImportManifestOptions) => Promise<ImportLISHResponse>; // Shared import entrypoint
 	/** As {@link LISHsHandlers.importManifest}, for a caller that already holds mutation admission. */
-	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }) => Promise<ImportLISHResponse>;
+	importManifestAdmitted: (lish: ILISH, downloadPath: string, opts?: ImportManifestOptions) => Promise<ImportLISHResponse>;
+	answerUnverified: (p: { token: string; accept: boolean }) => Promise<ImportLISHResponse | null>;
 	pauseMutations: () => Promise<void>;
 	/** Pause verification without discarding the user's queue during a network restart. */
 	pauseForNetworkRestart: () => Promise<void>;
@@ -182,6 +184,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 */
 	const currentCreation = new Map<unknown, AbortController>();
 	const mutationAdmission = new LISHMutationGate();
+	const admission = new ManifestAdmission<ImportLISHResponse>();
 
 	async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
 		const leave = mutationAdmission.tryEnter();
@@ -301,7 +304,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			lish = await signManifest(lish);
 			// Same check every receiver runs, so this node never publishes a signature it would refuse.
 			validateLISHStructure(lish, maxChunkSize);
-			await verifyManifestSignature(lish);
+			await ManifestAdmission.requireUnattended(lish);
 			if (ac.signal.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		}
 		// 2. Export to .lish(.gz) file if requested
@@ -394,7 +397,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	 * broadcasts, applies sharing/downloading flags, and starts verification.
 	 * Caller must have already resolved `lish.directory` (and optionally `lish.finalDirectory`).
 	 */
-	async function addLISH(lish: IStoredLISH, opts: { root: DatasetRoot; finalRoot?: DatasetRoot; enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; requireNew?: boolean }): Promise<void> {
+	async function addLISH(lish: IStoredLISH, opts: { root: DatasetRoot; finalRoot?: DatasetRoot; enableSharing?: boolean | undefined; enableDownloading?: boolean | undefined; requireNew?: boolean; checks?: LISHChecks }): Promise<void> {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
 		const dataset = await openDataset(opts.root);
@@ -403,7 +406,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		} finally {
 			await dataset.close();
 		}
-		dataServer.addDataset(lish, opts.root, opts.finalRoot, { requireNew: opts.requireNew ?? false });
+		dataServer.addDataset(lish, opts.root, opts.finalRoot, { requireNew: opts.requireNew ?? false, ...(opts.checks ? { checks: opts.checks } : {}) });
 		moveRecoveryTokens.delete(lish.id);
 		stopRecoveryForLISH(lish.id);
 		dataServer.setUploadEnabled(lish.id, false);
@@ -419,18 +422,30 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		enqueueVerification(lish.id);
 	}
 
-	async function importCommon(lish: ILISH, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean, expectedPublisher?: ExpectedPublisher): Promise<ImportLISHResponse> {
+	async function importCommon(lish: ILISH, downloadPath: string, opts: ImportManifestOptions = {}): Promise<ImportLISHResponse> {
+		const overwrite = opts.overwrite ?? false;
 		// Validate structure early to fail fast before any disk operations.
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		validateLISHStructure(lish, maxChunkSize);
-		const signature = await verifyManifestSignature(lish);
-		assertExpectedPublisher(signature, expectedPublisher);
-		// Owning the ID from here on: the stored state is re-read and a conflicting publisher refused
+		ManifestAdmission.assertExpected(lish, opts.expectedPublisher);
+		// Refused here as well as further on, so nobody is asked about an item that cannot be added anyway.
+		validateDatasetNamespace(lish);
+		datasetRootName(lish);
+		const refuseStored = (checks: LISHChecks): void => {
+			const stored = dataServer.getPublisher(lish.id);
+			if (stored === undefined) return;
+			if (!overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
+			const publisher = isVerifiedLISH(checks) ? lish.publisher! : null;
+			if (stored !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
+		};
+		// Owning the ID from there on: the stored state is re-read and a conflicting publisher refused
 		// before any existing work is stopped or any directory prepared.
-		return withLISHOwnership(lish.id, () => importOwned(lish, signature.signed ? signature.publisher : null, downloadPath, overwrite, enableSharing, enableDownloading));
+		return admission.admit(lish, opts.acceptUnverified === true, checks => withLISHOwnership(lish.id, () => importOwned(lish, checks, downloadPath, overwrite, opts.enableSharing, opts.enableDownloading)), refuseStored);
 	}
 
-	async function importOwned(lish: ILISH, publisher: string | null, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+	async function importOwned(lish: ILISH, checks: LISHChecks, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
+		// Only a verified manifest is stored with its publisher; any other is kept as an unsigned body.
+		const publisher = isVerifiedLISH(checks) ? lish.publisher! : null;
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		if (existing && (existing.publisher ?? null) !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${existing.publisher ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
@@ -477,7 +492,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		if (existing) {
 			await stopDatasetWork(lish.id);
 		}
-		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, requireNew: !existing });
+		await addLISH(storedLISH, { root, ...(enableDownloading ? { finalRoot } : {}), enableSharing, enableDownloading, requireNew: !existing, checks });
 		return { lishID: lish.id, directory };
 	}
 
@@ -489,7 +504,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p);
 		return lastResponse;
 	}
 
@@ -501,7 +516,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p);
 		return lastResponse;
 	}
 
@@ -514,28 +529,38 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p.overwrite ?? false, p.enableSharing, p.enableDownloading);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p);
 		return lastResponse;
 	}
 
 	/**
-	 * A preview never shows a signature it has not checked: a bad one fails the whole parse. A signed
-	 * manifest gets the full structural check first, as on import; unsigned previews stay as loose as before,
-	 * except for a format version the import would refuse.
+	 * The user's answer about a manifest an import or an add from a peer is holding: `accept` adds
+	 * exactly that manifest, a refusal lets it go and returns `null`.
 	 */
-	async function verifiedPreview(lishs: ILISH[]): Promise<ILISH[]> {
+	async function answerUnverified(p: { token: string; accept: boolean }): Promise<ImportLISHResponse | null> {
+		assert(p, ['token']);
+		if (typeof p.token !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'token must be a string');
+		return admission.answer(p.token, p.accept === true, runMutation);
+	}
+
+	/**
+	 * A preview hands the manifests to the screen that imports them, so it checks only what would
+	 * make them unreadable: a signed manifest gets the full structural check, as on import; an
+	 * unsigned one stays as loose as before, except for a format version the import would refuse.
+	 * Whether a signature holds is decided when the item is added.
+	 */
+	function readablePreview(lishs: ILISH[]): ILISH[] {
 		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
 		for (const lish of lishs) {
 			if (isSignedLISH(lish)) validateLISHStructure(lish, maxChunkSize);
 			else checkManifestVersion(lish);
-			await verifyManifestSignature(lish);
 		}
 		return lishs;
 	}
 
 	async function parseFromFile(p: { filePath: string }): Promise<ILISH[]> {
 		assert(p, ['filePath']);
-		return verifiedPreview(await importLISHFromFile(Utils.expandHome(p.filePath)));
+		return readablePreview(await importLISHFromFile(Utils.expandHome(p.filePath)));
 	}
 
 	/**
@@ -551,12 +576,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			try {
 				const lish = validateImportedLISH(data);
 				validateLISHStructure(lish, maxChunkSize);
-				// The summary shows the publisher, so it must be one whose signature was checked here.
-				await verifyManifestSignature(lish);
+				const checks = await ManifestAdmission.check(lish);
 				// The import refuses these paths when it prepares the dataset; the check itself touches no disk.
 				validateDatasetNamespace(lish);
 				datasetRootName(lish);
-				items.push({ detail: summarizeManifest(lish) });
+				items.push({ detail: summarizeManifest(lish, checks) });
 			} catch (error) {
 				if (error instanceof CodedError) items.push({ error: error.code, errorDetail: error.detail });
 				else throw error;
@@ -589,13 +613,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 
 	async function parseFromJSON(p: { json: string }): Promise<ILISH[]> {
 		assert(p, ['json']);
-		return verifiedPreview(parseLISHFromJSON(p.json));
+		return readablePreview(parseLISHFromJSON(p.json));
 	}
 
 	async function parseFromURL(p: { url: string }): Promise<ILISH[]> {
 		assert(p, ['url']);
 		const content = await Utils.fetchURL(p.url);
-		return verifiedPreview(parseLISHFromJSON(content));
+		return readablePreview(parseLISHFromJSON(content));
 	}
 
 	// Verification queue — only one verification runs at a time during normal use.
@@ -944,15 +968,17 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		}
 	}
 
-	async function importManifest(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean }): Promise<ImportLISHResponse> {
+	async function importManifest(lish: ILISH, downloadPath: string, opts?: ImportManifestOptions): Promise<ImportLISHResponse> {
 		return runMutation(() => importManifestAdmitted(lish, downloadPath, opts));
 	}
 
-	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: { overwrite?: boolean; enableSharing?: boolean; enableDownloading?: boolean; expectedPublisher?: ExpectedPublisher }): Promise<ImportLISHResponse> {
-		return importCommon(lish, downloadPath, opts?.overwrite ?? false, opts?.enableSharing, opts?.enableDownloading, opts?.expectedPublisher);
+	async function importManifestAdmitted(lish: ILISH, downloadPath: string, opts?: ImportManifestOptions): Promise<ImportLISHResponse> {
+		return importCommon(lish, downloadPath, opts);
 	}
 
 	async function pauseMutations(): Promise<void> {
+		// A question left open is about a state that maintenance is about to change or wipe.
+		admission.clear();
 		await mutationAdmission.closeAndDrain();
 	}
 
@@ -975,5 +1001,5 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		processVerificationQueue();
 	}
 
-	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, parseFromFile, parseFromJSON, parseFromURL, inspectFile, inspectFileChecksums, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
+	return { list, get, exportToFile, exportAllToFile, backup, create, delete: del, importFromFile, importFromJSON, importFromURL, answerUnverified, parseFromFile, parseFromJSON, parseFromURL, inspectFile, inspectFileChecksums, verify, verifyAll, stopVerify, stopVerifyAll, cancelVerifyAll, stopCreate, stopAllCreates, move, startVerification, resumePendingVerifications, finalizeDownload, finalizeDownloadAdmitted, importManifest, importManifestAdmitted, pauseMutations, pauseForNetworkRestart, resumeMutations, runMutation };
 }

@@ -1,6 +1,6 @@
 import { type Networks, type SetEnabledResult } from '../lishnet/lishnets.ts';
 import { type DataServer } from '../lish/data-server.ts';
-import { type ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { ManifestAdmission, type ExpectedPublisher } from '../lish/manifest-admission.ts';
 import { summarizeManifest } from '../lish/lish.ts';
 import { type Settings } from '../settings.ts';
 import { type LISHNetworkConfig, type LISHNetworkDefinition, type SuccessResponse, type SetLISHNetworkEnabledResponse, type NetworkNodeInfo, type NetworkStatus, type NetworkInfo, type PeerListEntry, type PeerLishEntry, type IPeerLishDetail, type ManifestProgressEvent, type ILISH, type ImportLISHResponse, type CompressionAlgorithm, type BootstrapStatus, type NetworkMutationOutcome, CodedError, ErrorCodes, productName } from '@shared';
@@ -267,7 +267,11 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const stored = dataServer.getPublisher(p.lishID);
 		return stored !== undefined ? stored : p.expectedPublisher;
 	}
-	/** A manifest this node refused over its signature or publisher: report that reason, not a generic peer fault. */
+	/**
+	 * A manifest this node refused over its signature or publisher: report that reason, not a generic peer fault.
+	 * A signed manifest that fails a check gets here only with an over-limit chunk size; any other
+	 * one is returned by the attended request and goes to the user.
+	 */
 	function refusalReason(error: CodedError): CodedError {
 		if (error.code !== ErrorCodes.PEER_INVALID_REQUEST || !(error.cause instanceof CodedError)) return error;
 		const cause = error.cause;
@@ -279,9 +283,9 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		const expectedPublisher = expectedPublisherFor(p);
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher));
+			const manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher, true));
 			shutdownSignal.throwIfAborted();
-			return summarizeManifest(manifest);
+			return summarizeManifest(manifest, await ManifestAdmission.check(manifest));
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw refusalReason(error);
@@ -299,7 +303,7 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 		let manifest;
 		try {
 			const onProgress = (received: number, total: number): void => broadcast('lishnets:manifestProgress', { lishID: p.lishID, peerID: p.peerID, received, total } satisfies ManifestProgressEvent);
-			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher));
+			manifest = await withPeerClient(p.peerID, client => client.requestManifest(p.lishID, onProgress, expectedPublisher, true));
 		} catch (error: any) {
 			shutdownSignal.throwIfAborted();
 			if (error instanceof CodedError) throw refusalReason(error);

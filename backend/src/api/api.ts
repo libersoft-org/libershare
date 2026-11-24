@@ -507,6 +507,7 @@ export class APIServer {
 			'lishs.importFromFile': _lishs.importFromFile,
 			'lishs.importFromJSON': _lishs.importFromJSON,
 			'lishs.importFromURL': _lishs.importFromURL,
+			'lishs.answerUnverified': _lishs.answerUnverified,
 			'lishs.parseFromFile': _lishs.parseFromFile,
 			'lishs.inspectFile': _lishs.inspectFile,
 			'lishs.inspectFileChecksums': _lishs.inspectFileChecksums,

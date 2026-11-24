@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { CodedError, ErrorCodes, type IStoredLISH, type LISHid } from '@shared';
+import { CodedError, ErrorCodes, isVerifiedLISH, type IStoredLISH, type LISHChecks, type LISHid } from '@shared';
 import { getInternalID } from './lishs-schema.ts';
 
 // Schema/DDL + migrations (and the shared getInternalID resolver) live in
@@ -26,6 +26,17 @@ export function lishExists(db: Database, lishID: LISHid): boolean {
 export interface AddLISHOptions {
 	/** Refuse with `LISH_ALREADY_EXISTS` when the ID is already stored (checked inside the write). */
 	readonly requireNew?: boolean;
+	/**
+	 * What checking the manifest found when the user added it. Kept only for a manifest that claimed
+	 * a signature and failed a check; without it the row keeps what it has.
+	 */
+	readonly checks?: LISHChecks;
+}
+
+/** The two checks of a signed manifest as bits: 1 the signature matches, 2 the ID belongs to the publisher. */
+function failedChecksBits(checks: LISHChecks): number | null {
+	if (!checks.signed || isVerifiedLISH(checks)) return null;
+	return (checks.signatureValid ? 1 : 0) | (checks.idMatchesPublisher ? 2 : 0);
 }
 
 export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions = {}): void {
@@ -54,6 +65,7 @@ export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions
 			   nonce = excluded.nonce`,
 			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null, publisher, lish.signature ?? null, lish.version ?? null, lish.nonce ?? null]
 		);
+		if (options.checks) db.run('UPDATE lishs SET signature_checks = ? WHERE lish_id = ?', [failedChecksBits(options.checks), lish.id]);
 		// A signed body is replaced whole: a collection it leaves out is empty, never "keep the old
 		// rows", or the stored body would no longer match its signature.
 		if (lish.signature !== undefined) lish = { ...lish, files: lish.files ?? [], directories: lish.directories ?? [], links: lish.links ?? [] };

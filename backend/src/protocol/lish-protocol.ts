@@ -1,6 +1,6 @@
 import { decode as lpDecode } from 'it-length-prefixed';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { assertExpectedPublisher, verifyManifestSignature, type ExpectedPublisher } from '../lish/manifest-signature.ts';
+import { ManifestAdmission, type ExpectedPublisher } from '../lish/manifest-admission.ts';
 import { type Stream } from '@libp2p/interface';
 import { type LISHid, type ChunkID, type ErrorCode, ErrorCodes, CodedError, validateLISHStructure, minMessageSizeFor, formatUntrustedValue } from '@shared';
 import { DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_MAX_CHUNK_SIZE, networkSetting } from '../settings.ts';
@@ -277,11 +277,14 @@ export class LISHClient {
 	// transfer nor a counted-through error response can flash a full bar. A throwing
 	// callback never breaks the transfer or poisons the shared decoder.
 	/**
-	 * Fetch a manifest and admit it only if its optional publisher signature is valid and matches
-	 * `expectedPublisher` (a Peer ID, `null` for an expected unsigned manifest, `undefined` when the
-	 * caller knows nothing). Any such failure is this peer's fault, so callers move to the next one.
+	 * Fetch a manifest and admit it only if it names `expectedPublisher` (a Peer ID, `null` for an
+	 * expected unsigned manifest, `undefined` when the caller knows nothing) and, when signed, passes
+	 * every signature check. Any such failure is this peer's fault, so callers move to the next one.
+	 *
+	 * `attended` is for a caller with a user to ask: a signed manifest that fails a check is then
+	 * returned as it came, and the caller puts it through {@link ManifestAdmission} itself.
 	 */
-	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void, expectedPublisher?: ExpectedPublisher): Promise<import('@shared').IStoredLISH> {
+	async requestManifest(lishID: LISHid, onProgress?: (received: number, total: number) => void, expectedPublisher?: ExpectedPublisher, attended = false): Promise<import('@shared').IStoredLISH> {
 		const request: LISHGetLishRequest = { type: 'getLish', lishID };
 		const safeLishID = formatUntrustedValue(lishID);
 		const safeEmit = (r: number, t: number): void => {
@@ -327,9 +330,10 @@ export class LISHClient {
 				if (response.manifest?.id !== lishID) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: manifest id mismatch (${formatUntrustedValue(response.manifest?.id)})`);
 				// Any peer can relay a signed manifest, so a changed body, a stripped signature or
 				// another publisher's signature under this ID is a fault of the peer that sent it.
-				const checkPublisher = async (): Promise<void> => {
+				const checkPublisher = async (checkSignature: boolean): Promise<void> => {
 					try {
-						assertExpectedPublisher(await verifyManifestSignature(response.manifest), expectedPublisher);
+						if (checkSignature) await ManifestAdmission.requireUnattended(response.manifest, expectedPublisher);
+						else ManifestAdmission.assertExpected(response.manifest, expectedPublisher);
 					} catch (error) {
 						// The over-limit path gets here before the rest of the shape is checked, so the signed bytes may not even build.
 						const e = error instanceof CodedError ? error : new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, error instanceof Error ? error.message : String(error));
@@ -349,10 +353,10 @@ export class LISHClient {
 					if (e instanceof CodedError && e.code !== ErrorCodes.LISH_CHUNK_SIZE_TOO_LARGE) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getLish ${safeLishID}: ${e.message}`, { cause: e });
 					// An over-limit chunk size is reported as a property of the LISH only when the
 					// manifest is not caught forging its publisher; a changed signed body is the peer's fault.
-					if (e instanceof CodedError) await checkPublisher();
+					if (e instanceof CodedError) await checkPublisher(true);
 					throw e;
 				}
-				await checkPublisher();
+				await checkPublisher(!attended);
 				// Emitted only after validation passes — a rejected manifest must not flash a full bar.
 				if (total > 0) safeEmit(total, total);
 				// Sanitize the peer-supplied manifest: a malicious or outdated peer could embed

@@ -1,0 +1,170 @@
+import { randomUUID } from 'node:crypto';
+import { peerIdFromString } from '@libp2p/peer-id';
+import { CodedError, ErrorCodes, decodeSignature, isSignedLISH, isVerifiedLISH, signedManifestBytes, validateSignedLISHShape, type ILISH, type LISHChecks, type UnverifiedLISH } from '@shared';
+import { lishIDMatchesPublisher } from './lish-id.ts';
+
+/**
+ * Publisher a manifest must name: `string` for a known publisher, `null` for an explicitly
+ * unsigned one, `undefined` when nothing is known yet.
+ */
+export type ExpectedPublisher = string | null | undefined;
+
+/** How long a manifest waits for the user's answer, and how many wait at once. */
+const PENDING_TTL_MS = 10 * 60 * 1000;
+const PENDING_LIMIT = 256;
+
+interface Inspection {
+	readonly checks: LISHChecks;
+	/** The first check that failed, `null` when the manifest is verified. */
+	readonly fault: CodedError | null;
+}
+
+interface Pending<T> {
+	readonly token: string;
+	readonly resume: () => Promise<T>;
+	readonly timer: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * The one place that decides whether a manifest may be taken in. Every way a LISH gets into this
+ * node goes through it: an import, an add from a peer, a download from a local file, a preview
+ * and the downloader fetching a manifest on its own.
+ *
+ * A manifest is verified when it is signed, the signature is its publisher's and its ID is the
+ * one that publisher derives. Anything else may still be added, but only after the user agreed;
+ * until then the manifest waits here, so what gets added is exactly what the user was asked about.
+ */
+export class ManifestAdmission<T> {
+	// One waiting manifest per LISH ID: asking again about the same ID replaces the earlier one.
+	private readonly pending = new Map<string, Pending<T>>();
+
+	/** Run the three checks. Only a signed manifest with a malformed shape throws (`LISH_INVALID_MANIFEST`). */
+	static async check(lish: ILISH): Promise<LISHChecks> {
+		return (await ManifestAdmission.inspect(lish)).checks;
+	}
+
+	private static async inspect(lish: ILISH): Promise<Inspection> {
+		if (!isSignedLISH(lish)) return { checks: { signed: false }, fault: new CodedError(ErrorCodes.LISH_UNSIGNED, lish.id) };
+		validateSignedLISHShape(lish);
+		const signatureFault = await ManifestAdmission.signatureFault(lish);
+		const idMatchesPublisher = lishIDMatchesPublisher(lish);
+		const checks: LISHChecks = { signed: true, signatureValid: signatureFault === null, idMatchesPublisher };
+		if (signatureFault !== null) return { checks, fault: new CodedError(ErrorCodes.LISH_INVALID_SIGNATURE, signatureFault) };
+		// A valid signature under an ID made for another key: the signer took over someone else's ID.
+		if (!idMatchesPublisher) return { checks, fault: new CodedError(ErrorCodes.LISH_ID_MISMATCH, `${lish.id} is not an ID of ${lish.publisher}`) };
+		return { checks, fault: null };
+	}
+
+	/** Why the signature does not hold, `null` when it does. */
+	private static async signatureFault(lish: ILISH): Promise<string | null> {
+		let peerID;
+		try {
+			peerID = peerIdFromString(lish.publisher!);
+		} catch {
+			return 'publisher is not a Peer ID';
+		}
+		// The publisher string is part of the signed bytes, so only its one canonical spelling counts.
+		if (peerID.toString() !== lish.publisher) return 'publisher is not in canonical form';
+		if (peerID.type !== 'Ed25519' || !peerID.publicKey) return 'publisher key is not Ed25519';
+		const ok = await peerID.publicKey.verify(signedManifestBytes(lish), decodeSignature(lish.signature!));
+		return ok ? null : 'signature does not match the manifest';
+	}
+
+	/**
+	 * Take a manifest nobody can be asked about (the downloader fetching it on its own, a node
+	 * checking what it just signed). An unsigned one passes, a signed one must be verified. Returns
+	 * the publisher, `null` for an unsigned manifest.
+	 */
+	static async requireUnattended(lish: ILISH, expected?: ExpectedPublisher): Promise<string | null> {
+		const { checks, fault } = await ManifestAdmission.inspect(lish);
+		if (checks.signed && fault) throw fault;
+		ManifestAdmission.assertExpected(lish, expected);
+		return checks.signed ? lish.publisher! : null;
+	}
+
+	/** Throw `LISH_PUBLISHER_MISMATCH` when the manifest names another publisher than expected. */
+	static assertExpected(lish: ILISH, expected: ExpectedPublisher): void {
+		if (expected === undefined) return;
+		const named = isSignedLISH(lish) ? (lish.publisher ?? '') : null;
+		if (named !== expected) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `expected ${expected ?? 'unsigned'}, got ${named ?? 'unsigned'}`);
+	}
+
+	/**
+	 * Take a manifest a user is adding and can be asked about. A verified one passes; any other
+	 * passes only with `accepted`, and is refused with one of the unverified codes otherwise.
+	 */
+	static async gate(lish: ILISH, accepted: boolean): Promise<LISHChecks> {
+		const { checks, fault } = await ManifestAdmission.inspect(lish);
+		if (fault && !accepted) throw ManifestAdmission.unverified(lish, checks, fault);
+		return checks;
+	}
+
+	/**
+	 * {@link gate} for a manifest this node holds while it asks: an unverified one is kept and the
+	 * refusal carries its token. `resume` adds the manifest; it runs at once for a verified or
+	 * accepted manifest, or later from {@link answer}. `refuse` throws for a manifest that cannot be
+	 * added whatever the user says, so nobody is asked about one of those.
+	 */
+	async admit(lish: ILISH, accepted: boolean, resume: (checks: LISHChecks) => Promise<T>, refuse?: (checks: LISHChecks) => void): Promise<T> {
+		const { checks, fault } = await ManifestAdmission.inspect(lish);
+		refuse?.(checks);
+		if (fault && !accepted)
+			throw ManifestAdmission.unverified(
+				lish,
+				checks,
+				fault,
+				this.park(lish.id, () => resume(checks))
+			);
+		this.drop(lish.id);
+		return resume(checks);
+	}
+
+	/**
+	 * The user's answer for a waiting manifest: add it, or let it go. `run` wraps the adding in
+	 * whatever the caller's own entry points run under. Returns `null` for a refusal.
+	 */
+	async answer(token: string, accept: boolean, run: (resume: () => Promise<T>) => Promise<T>): Promise<T | null> {
+		const entry = [...this.pending].find(([, pending]) => pending.token === token);
+		if (!entry) throw new CodedError(ErrorCodes.LISH_CONFIRMATION_EXPIRED, token);
+		this.drop(entry[0]);
+		return accept ? run(entry[1].resume) : null;
+	}
+
+	/** Let every waiting manifest go. */
+	clear(): void {
+		for (const lishID of [...this.pending.keys()]) this.drop(lishID);
+	}
+
+	/**
+	 * The manifest as this node stores and serves it. Only a verified manifest keeps its publisher:
+	 * an unverified one is kept as an unsigned body, so nothing downstream takes its claim for a fact.
+	 */
+	static storable<L extends ILISH>(lish: L, checks: LISHChecks): L {
+		if (isVerifiedLISH(checks) || !checks.signed) return lish;
+		const { publisher: _publisher, signature: _signature, nonce: _nonce, ...body } = lish;
+		return body as L;
+	}
+
+	private static unverified(lish: ILISH, checks: LISHChecks, fault: CodedError, token?: string): CodedError {
+		const detail: UnverifiedLISH = { checks, ...(token !== undefined ? { token } : {}), ...(typeof lish.publisher === 'string' ? { publisher: lish.publisher } : {}) };
+		return new CodedError(fault.code, JSON.stringify(detail), { cause: fault });
+	}
+
+	private park(lishID: string, resume: () => Promise<T>): string {
+		this.drop(lishID);
+		// Oldest first: a client that never answers cannot grow this without bound.
+		if (this.pending.size >= PENDING_LIMIT) this.drop(this.pending.keys().next().value!);
+		const token = randomUUID();
+		const timer = setTimeout(() => this.drop(lishID), PENDING_TTL_MS);
+		timer.unref();
+		this.pending.set(lishID, { token, resume, timer });
+		return token;
+	}
+
+	private drop(lishID: string): void {
+		const pending = this.pending.get(lishID);
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		this.pending.delete(lishID);
+	}
+}

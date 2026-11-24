@@ -1,7 +1,7 @@
 import { access, constants } from 'fs/promises';
 import { dirname } from 'path';
 import { type IStoredLISH, type LISHid, CodedError, ErrorCodes } from '@shared';
-import type { ExpectedPublisher } from '../lish/manifest-signature.ts';
+import type { ExpectedPublisher } from '../lish/manifest-admission.ts';
 import { readLocalDownload, bindSignedDataset } from './local-download.ts';
 import { withLISHOwnership } from '../lish/lish-ownership.ts';
 import { type Network } from './network.ts';
@@ -504,9 +504,9 @@ export class Downloader {
 		if (stored !== undefined && stored !== this.localPublisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored ?? 'unsigned'}, file ${this.localPublisher ?? 'unsigned'}`);
 	}
 
-	async init(lishPath: string): Promise<void> {
+	async init(lishPath: string, acceptUnverified = false): Promise<void> {
 		this.transitionTo('initializing', 'init() start');
-		({ lish: this.lish, publisher: this.localPublisher } = await readLocalDownload(lishPath));
+		({ lish: this.lish, publisher: this.localPublisher } = await readLocalDownload(lishPath, acceptUnverified));
 		this.lishID = this.lish.id as LISHid;
 		this.assertStoredPublisher();
 	}

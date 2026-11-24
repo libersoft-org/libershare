@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILinkEntry, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
+import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILinkEntry, type ILISHSummary, type ILISHDetail, type LISHChecks, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
 import { getVerificationProgress, getFileVerificationProgress } from './lishs-verification.ts';
 
 interface LISHRow {
@@ -237,7 +237,7 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 
 /** Returns detailed view of a LISH including file-level verification progress, or null. */
 export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null {
-	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; total_uploaded_bytes: number; total_downloaded_bytes: number; publisher: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, total_uploaded_bytes, total_downloaded_bytes, publisher FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; total_uploaded_bytes: number; total_downloaded_bytes: number; publisher: string | null; signature_checks: number | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, total_uploaded_bytes, total_downloaded_bytes, publisher, signature_checks FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 
 	const files = getFiles(db, row.id);
@@ -269,7 +269,18 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 		totalUploadedBytes: row.total_uploaded_bytes,
 		totalDownloadedBytes: row.total_downloaded_bytes,
 		...(row.publisher != null ? { publisher: row.publisher } : {}),
+		checks: storedChecks(row.publisher, row.signature_checks),
 	};
+}
+
+/**
+ * The checks of a stored item. A row keeps its publisher only when every check passed, and keeps
+ * the failed checks of a signed manifest the user added anyway; any other row is unsigned.
+ */
+function storedChecks(publisher: string | null, failed: number | null): LISHChecks {
+	if (publisher != null) return { signed: true, signatureValid: true, idMatchesPublisher: true };
+	if (failed == null) return { signed: false };
+	return { signed: true, signatureValid: (failed & 1) !== 0, idMatchesPublisher: (failed & 2) !== 0 };
 }
 
 /** Returns all stored LISHs in insertion order (for startup hydration). */

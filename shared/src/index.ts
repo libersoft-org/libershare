@@ -189,8 +189,12 @@ export interface IPeerLishDetail {
 	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string } & IInvalidEntryFields>;
 	directories: Array<import('./lish.ts').IDirectoryEntry & IInvalidEntryFields>;
 	links: Array<import('./lish.ts').ILinkEntry & IInvalidEntryFields>;
-	/** Peer ID whose signature over the whole manifest was verified; absent when unsigned. */
+	/** Peer ID whose signature over the whole manifest was verified; absent when unsigned or not verified. */
 	publisher?: string | undefined;
+	/** What checking the manifest's signature found. */
+	checks: import('./lish.ts').LISHChecks;
+	/** Publisher a manifest that is not verified names; shown as a claim only. */
+	namedPublisher?: string | undefined;
 }
 
 /** Marks the metadata of a summarized manifest entry that was left out because its value was invalid. */

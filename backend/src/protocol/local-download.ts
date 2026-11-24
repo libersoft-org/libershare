@@ -1,20 +1,24 @@
-import { CodedError, ErrorCodes, validateLISHStructure, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, isVerifiedLISH, validateLISHStructure, type IStoredLISH } from '@shared';
 import { resolve } from 'node:path';
 import { isBusy } from '../api/busy.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { conservativeDatasetRoot, datasetRootPath } from '../lish/dataset-root.ts';
 import { validateImportedLISH } from '../lish/lish.ts';
-import { verifyManifestSignature } from '../lish/manifest-signature.ts';
+import { ManifestAdmission } from '../lish/manifest-admission.ts';
 import { openDataset, type DatasetRoot } from '../lish/safe-dataset-files.ts';
 import { Utils } from '../utils.ts';
 import { getMaxChunkSize, toManifest } from './lish-protocol.ts';
 
-export async function readLocalDownload(lishPath: string): Promise<{ lish: IStoredLISH; publisher: string | null }> {
+/**
+ * Read the manifest a download starts from. A manifest that is not verified is refused unless the
+ * user already agreed (`acceptUnverified`); it is then downloaded as an unsigned one.
+ */
+export async function readLocalDownload(lishPath: string, acceptUnverified = false): Promise<{ lish: IStoredLISH; publisher: string | null }> {
 	const content = await Bun.file(lishPath).text();
 	const lish = validateImportedLISH(Utils.safeJSONParse(content, `LISH file: ${lishPath}`));
 	validateLISHStructure(lish, getMaxChunkSize());
-	const signature = await verifyManifestSignature(lish);
-	return signature.signed ? { lish: toManifest(lish), publisher: signature.publisher } : { lish, publisher: null };
+	const checks = await ManifestAdmission.gate(lish, acceptUnverified);
+	return isVerifiedLISH(checks) ? { lish: toManifest(lish), publisher: lish.publisher! } : { lish: ManifestAdmission.storable(lish, checks), publisher: null };
 }
 
 export async function bindSignedDataset(dataServer: DataServer, lish: IStoredLISH, base: string): Promise<{ lish: IStoredLISH; root: DatasetRoot }> {

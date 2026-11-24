@@ -37,7 +37,7 @@ interface ActiveTransfer {
 }
 
 interface TransferHandlers {
-	download: (p: { networkID: string; lishPath: string }, client: any) => Promise<DownloadResponse>;
+	download: (p: { networkID: string; lishPath: string; acceptUnverified?: boolean }, client: any) => Promise<DownloadResponse>;
 	disableDownload: (p: { lishID: string }) => { success: boolean };
 	enableDownload: (p: { lishID: string }, client?: any) => Promise<{ success: boolean }>;
 	disableUpload: (p: { lishID: string }) => { success: boolean };
@@ -471,7 +471,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		recovery.start(lishID, errorCode, prev);
 	}
 
-	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
+	async function download(p: { networkID: string; lishPath: string; acceptUnverified?: boolean }, client: any): Promise<DownloadResponse> {
 		const leave = transferAdmission.tryEnter();
 		if (!leave) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'Transfers are paused during factory reset');
 		try {
@@ -481,13 +481,13 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 	}
 
-	async function downloadAdmitted(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
+	async function downloadAdmitted(p: { networkID: string; lishPath: string; acceptUnverified?: boolean }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
 		const network = networks.getRunningNetwork();
 		const downloader = new Downloader(join(dataDir, 'downloads', Date.now().toString()), network, dataServer, p.networkID);
 		let claim: Awaited<ReturnType<typeof claimActiveDownloader<Downloader>>>;
 		try {
-			await downloader.init(p.lishPath);
+			await downloader.init(p.lishPath, p.acceptUnverified === true);
 			claim = await withLISHOwnership(downloader.getLISHID(), async () => {
 				await downloader.prepareLocalDownload();
 				return claimActiveDownloader(activeDownloaders, downloader.getLISHID(), downloader);

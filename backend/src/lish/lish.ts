@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate, LISH_FORMAT_VERSION } from '@shared';
+import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate, isVerifiedLISH, LISH_FORMAT_VERSION, type LISHChecks } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -494,8 +494,9 @@ export function parseLISHFromJSON(json: string): ILISH[] {
 
 /**
  * Summary of a structurally valid manifest for display: files without their checksums, totals.
+ * `checks` is what {@link ManifestAdmission.check} found for it.
  */
-export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
+export function summarizeManifest(manifest: ILISH, checks: LISHChecks): IPeerLishDetail {
 	const files = (manifest.files ?? []).map(f => ({ path: f.path, size: f.size, ...entryMetadata(f, ['permissions', 'modified', 'created']) }));
 	return {
 		id: manifest.id,
@@ -512,8 +513,9 @@ export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
 		files,
 		directories: (manifest.directories ?? []).map(d => ({ path: d.path, ...entryMetadata(d, ['permissions', 'modified', 'created']) })),
 		links: (manifest.links ?? []).map(l => ({ path: l.path, target: l.target, ...entryMetadata(l, ['hardlink', 'modified', 'created']) })),
-		// Callers verify the signature first, so a publisher here is a verified one.
-		...(manifest.publisher ? { publisher: manifest.publisher } : {}),
+		checks,
+		// `publisher` is a verified one; a manifest that failed a check only names its publisher.
+		...(manifest.publisher ? { [isVerifiedLISH(checks) ? 'publisher' : 'namedPublisher']: manifest.publisher } : {}),
 	};
 }
 

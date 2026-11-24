@@ -507,16 +507,24 @@ class LISHsAPI {
 		return this.client.call<boolean>('lishs.delete', { lishID, deleteLISH: deleteLISH, deleteData });
 	}
 
-	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromFile(filePath: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, acceptUnverified?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromFile', { filePath, downloadPath, overwrite, enableSharing, enableDownloading, acceptUnverified });
 	}
 
-	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading });
+	importFromJSON(json: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, acceptUnverified?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromJSON', { json, downloadPath, overwrite, enableSharing, enableDownloading, acceptUnverified });
 	}
 
-	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading });
+	/**
+	 * Answer the question an import or an add from a peer left open with one of the unverified
+	 * codes: `accept` adds the manifest the backend holds under `token`, a refusal lets it go.
+	 */
+	answerUnverified(token: string, accept: boolean): Promise<ImportLISHResponse | null> {
+		return this.client.call<ImportLISHResponse | null>('lishs.answerUnverified', { token, accept });
+	}
+
+	importFromURL(url: string, downloadPath: string, overwrite?: boolean, enableSharing?: boolean, enableDownloading?: boolean, acceptUnverified?: boolean): Promise<ImportLISHResponse> {
+		return this.client.call<ImportLISHResponse>('lishs.importFromURL', { url, downloadPath, overwrite, enableSharing, enableDownloading, acceptUnverified });
 	}
 
 	parseFromFile(filePath: string): Promise<ILISH[]> {
@@ -580,8 +588,9 @@ class TransferAPI {
 		this.client = client;
 	}
 
-	download(networkID: string, lishPath: string): Promise<DownloadResponse> {
-		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath });
+	/** `acceptUnverified`: the user agreed to download from a manifest that is not verified. */
+	download(networkID: string, lishPath: string, acceptUnverified?: boolean): Promise<DownloadResponse> {
+		return this.client.call<DownloadResponse>('transfer.download', { networkID, lishPath, ...(acceptUnverified ? { acceptUnverified } : {}) });
 	}
 }
 

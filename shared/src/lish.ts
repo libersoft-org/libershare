@@ -167,6 +167,51 @@ export interface ILISH {
 	/** Ed25519 signature (base64url) over {@link signedManifestBytes}. */
 	signature?: string;
 }
+/**
+ * What checking a manifest's signature found. An unsigned manifest has only `signed: false`;
+ * the other two are judged on their own, so a manifest can fail one or both.
+ */
+export interface LISHChecks {
+	/** The manifest carries a publisher and a signature. */
+	signed: boolean;
+	/** The signature is the publisher's, over this exact manifest. */
+	signatureValid?: boolean | undefined;
+	/** The ID is the one the publisher and the nonce derive. */
+	idMatchesPublisher?: boolean | undefined;
+}
+
+/** A LISH counts as verified only when every check passed. */
+export function isVerifiedLISH(checks: LISHChecks | undefined): boolean {
+	return checks !== undefined && checks.signed && checks.signatureValid === true && checks.idMatchesPublisher === true;
+}
+
+/** Codes a backend answers with when a LISH someone is adding is not verified and the user has not agreed yet. */
+export const UNVERIFIED_LISH_CODES = ['LISH_UNSIGNED', 'LISH_INVALID_SIGNATURE', 'LISH_ID_MISMATCH'] as const;
+export type UnverifiedLISHCode = (typeof UNVERIFIED_LISH_CODES)[number];
+
+/** What such an answer carries in its `detail`, as JSON. */
+export interface UnverifiedLISH {
+	checks: LISHChecks;
+	/** Handle of the manifest the backend keeps until the user answers; absent when it keeps none. */
+	token?: string | undefined;
+	/** Publisher the manifest names; not verified. */
+	publisher?: string | undefined;
+}
+
+/** Read {@link UnverifiedLISH} from an error of one of {@link UNVERIFIED_LISH_CODES}; `null` for any other error. */
+export function unverifiedLISHFromError(error: unknown): (UnverifiedLISH & { code: UnverifiedLISHCode }) | null {
+	const { code, detail } = (error ?? {}) as { code?: unknown; detail?: unknown };
+	if (typeof code !== 'string' || !(UNVERIFIED_LISH_CODES as readonly string[]).includes(code) || typeof detail !== 'string') return null;
+	try {
+		const parsed = JSON.parse(detail) as UnverifiedLISH;
+		if (!parsed || typeof parsed !== 'object' || typeof parsed.checks?.signed !== 'boolean') return null;
+		return { ...parsed, code: code as UnverifiedLISHCode };
+	} catch {
+		// The same codes also come with a plain text detail, from a manifest no user was asked about.
+		return null;
+	}
+}
+
 // Extended interface for LISHs stored locally in the app (lishs.json)
 export interface IStoredLISH extends ILISH {
 	directory?: string;
@@ -246,6 +291,8 @@ export interface ILISHDetail {
 	totalDownloadedBytes: number;
 	/** Verified publisher of a signed manifest. */
 	publisher?: string | undefined;
+	/** What checking the manifest's signature found. */
+	checks: LISHChecks;
 }
 
 // Result of `lishs.list`: the summaries plus the transient per-LISH activity sets.
