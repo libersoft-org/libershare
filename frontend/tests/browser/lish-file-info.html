@@ -27,7 +27,7 @@
 			if (inspection instanceof Error) throw inspection;
 			return { version: 'v1', items: structuredClone(inspection) };
 		};
-		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [] });
+		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [], checks: { signed: false } });
 		const valid = { detail: detail('c0000000-0000-4000-8000-000000000001', 'First LISH', 3) };
 		const second = { detail: detail('c0000000-0000-4000-8000-000000000002', 'Second LISH', 7) };
 		const broken = { error: 'LISH_INVALID_MANIFEST', errorDetail: '"short.bin": expected 3 checksums for size 2500 / chunkSize 1024, got 2' };

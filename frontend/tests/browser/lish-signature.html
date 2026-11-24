@@ -48,7 +48,14 @@
 		const target = document.querySelector('#view');
 		const results = [];
 		const calls = [];
-		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, getPeers: api.lishnets.getPeers, list: api.lishnets.list, getNodeInfo: api.lishnets.getNodeInfo, create: api.lishs.create, startSearch: api.search.startSearch, cancelSearch: api.search.cancelSearch, exists: api.fs.exists, get: api.lishs.get, importFromJSON: api.lishs.importFromJSON };
+		const originals = { on: api.on, subscribe: api.subscribe, unsubscribe: api.unsubscribe, call: api.call, addPeerLish: api.lishnets.addPeerLish, getPeerLish: api.lishnets.getPeerLish, getPeerLishs: api.lishnets.getPeerLishs, getPeers: api.lishnets.getPeers, list: api.lishnets.list, getNodeInfo: api.lishnets.getNodeInfo, create: api.lishs.create, startSearch: api.search.startSearch, cancelSearch: api.search.cancelSearch, exists: api.fs.exists, get: api.lishs.get, importFromJSON: api.lishs.importFromJSON, answerUnverified: api.lishs.answerUnverified };
+		const VERIFIED = { signed: true, signatureValid: true, idMatchesPublisher: true };
+		const FAILED_SIGNATURE = { signed: true, signatureValid: false, idMatchesPublisher: true };
+		const TAKEN_ID = { signed: true, signatureValid: true, idMatchesPublisher: false };
+		const UNSIGNED = { signed: false };
+		/** The answer of a backend holding an unverified manifest for the user: by LISH ID, the code and the checks. */
+		const held = new Map();
+		const heldError = id => Object.assign(new Error(held.get(id).code), { code: held.get(id).code, detail: JSON.stringify({ token: `token-${id}`, checks: held.get(id).checks, publisher: A }) });
 		let peerListing = [];
 		const listeners = new Map();
 		api.on = (event, listener) => {
@@ -68,17 +75,23 @@
 		};
 		api.lishnets.addPeerLish = async (...args) => {
 			calls.push(['addPeerLish', ...args]);
+			if (held.has(args[0])) throw heldError(args[0]);
 			return { lishID: args[0] };
 		};
 		api.lishnets.getPeerLish = async (...args) => {
 			calls.push(['getPeerLish', ...args]);
-			return { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], publisher: args[3] ?? undefined };
+			return { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], publisher: args[3] ?? undefined, checks: args[3] ? VERIFIED : UNSIGNED };
 		};
 		api.lishnets.getPeerLishs = async () => ({ lishs: structuredClone(peerListing) });
 		api.lishs.get = async id => (id === 'existing-id' ? { id } : null);
 		api.lishs.importFromJSON = async (...args) => {
 			calls.push(['importFromJSON', ...args]);
+			if (held.has(JSON.parse(args[0]).id)) throw heldError(JSON.parse(args[0]).id);
 			return { lishID: JSON.parse(args[0]).id };
+		};
+		api.lishs.answerUnverified = async (...args) => {
+			calls.push(['answerUnverified', ...args]);
+			return args[1] ? { lishID: X } : null;
 		};
 		api.lishs.create = async (...args) => {
 			calls.push(['create', ...args]);
@@ -164,7 +177,7 @@
 					await settle();
 					const call = calls.find(c => c[0] === 'getPeerLish');
 					assert(call && call[4] === null, `Detail did not send null for an unsigned row: ${JSON.stringify(calls)}`);
-					assert(text().includes(label('lish.unsigned')), 'Unsigned preview is not marked');
+					assert(text().includes(label('lish.checks.unverified')) && !text().includes(label('lish.signedBy')), 'Unsigned preview is not marked as not verified');
 				});
 
 				await test(`${lang}: two publishers under one ID stay two rows across search updates`, async () => {
@@ -227,9 +240,90 @@
 					assert(target.querySelector('.wrap.highlight'), 'Matching target is not highlighted');
 				});
 
-				await test(`${lang}: a verified preview says who signed it`, async () => {
-					await show(NetworkLishDetailView, { detail: { id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], publisher: A } });
+				const detailOf = extra => ({ id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], ...extra });
+				/** The check rows of the detail as [label, passed], read from the icon each row shows. */
+				const checkRows = () => [...target.querySelectorAll('.info-row')].filter(row => row.querySelector('.icon, img, svg, [style*="check.svg"], [style*="cross.svg"]')).map(row => [row.querySelector('.label').textContent.replace(':', ''), row.innerHTML.includes('check.svg')]);
+
+				await test(`${lang}: a verified preview says who signed it and passes every check`, async () => {
+					await show(NetworkLishDetailView, { detail: detailOf({ publisher: A, checks: VERIFIED }) });
 					assert(text().includes(label('lish.signedBy')) && text().includes(A), 'Signer is not shown');
+					assert(text().includes(label('lish.checks.verified')), 'A verified item is not called verified');
+					const rows = checkRows();
+					assert(rows.length === 3 && rows.every(row => row[1]), `A verified item does not show three passed checks: ${JSON.stringify(rows)}`);
+				});
+
+				await test(`${lang}: a preview that is not verified shows which check failed and no signer`, async () => {
+					for (const [checks, failed] of [
+						[FAILED_SIGNATURE, 'lish.checks.signatureValid'],
+						[TAKEN_ID, 'lish.checks.idMatchesPublisher'],
+					]) {
+						await show(NetworkLishDetailView, { detail: detailOf({ namedPublisher: A, checks }) });
+						assert(text().includes(label('lish.checks.unverified')) && !text().includes(label('lish.checks.verified')), 'The item is not called not verified');
+						assert(!text().includes(label('lish.signedBy')), 'A publisher that was not verified is shown as the signer');
+						assert(text().includes(label('lish.reportedPublisher')) && text().includes(A), 'The named publisher is not shown as a claim');
+						const rows = checkRows();
+						assert(rows.length === 3, `Expected three check rows: ${JSON.stringify(rows)}`);
+						for (const [name, passed] of rows) assert(passed === (name !== label(failed)), `Wrong mark on "${name}": ${JSON.stringify(rows)}`);
+					}
+					// With no signature there is nothing else to judge: one row, failed.
+					await show(NetworkLishDetailView, { detail: detailOf({ checks: UNSIGNED }) });
+					assert(text().includes(label('lish.checks.unverified')), 'An unsigned item is not called not verified');
+					assert(JSON.stringify(checkRows()) === JSON.stringify([[label('lish.checks.signed'), false]]), `An unsigned item shows other rows: ${JSON.stringify(checkRows())}`);
+				});
+
+				await test(`${lang}: adding an unverified LISH from a search row asks first and sends the answer`, async () => {
+					const row = { id: X, name: 'Item', publisher: A, peers: [{ peerID: 'peer-1', networkID: 'n' }] };
+					held.set(X, { code: 'LISH_INVALID_SIGNATURE', checks: FAILED_SIGNATURE });
+					try {
+						for (const accept of [true, false]) {
+							await show(NetworkLishsPeerList, { row, networks: [], onBack() {}, onOpenPeer() {} });
+							button('network.addToDownloads').click();
+							for (let i = 0; i < 20 && !text().includes(label('lish.unverified.title')); i++) await settle();
+							assert(text().includes(get(t)('lish.unverified.askInvalidSignature', { name: 'Item' })), `The question does not name the reason: ${text()}`);
+							assert(!calls.some(c => c[0] === 'answerUnverified'), 'An answer was sent before the user gave one');
+							button(accept ? 'common.yes' : 'common.no').click();
+							for (let i = 0; i < 20 && !calls.some(c => c[0] === 'answerUnverified'); i++) await settle();
+							const answer = calls.find(c => c[0] === 'answerUnverified');
+							assert(answer && answer[1] === `token-${X}` && answer[2] === accept, `Wrong answer sent: ${JSON.stringify(calls)}`);
+							await settle();
+							assert(!text().includes(label('lish.unverified.title')), 'The question stayed open after the answer');
+						}
+					} finally {
+						held.clear();
+					}
+				});
+
+				await test(`${lang}: importing several unverified LISHs asks once for the unsigned ones and once for each failed check`, async () => {
+					const item = id => ({ id, name: id, created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] });
+					for (const id of ['unsigned-1', 'unsigned-2']) held.set(id, { code: 'LISH_UNSIGNED', checks: UNSIGNED });
+					held.set('forged', { code: 'LISH_INVALID_SIGNATURE', checks: FAILED_SIGNATURE });
+					try {
+						let done = false;
+						await show(DownloadLISHImportOverwrite, { lishs: ['unsigned-1', 'forged', 'verified', 'unsigned-2'].map(item), downloadPath: '/dl', position: [0, 0], onDone: () => (done = true), onError: error => calls.push(['error', String(error)]) });
+						for (let i = 0; i < 20 && !text().includes(label('lish.unverified.title')); i++) await settle();
+						// Everything was tried first; the verified one is in, the others wait for the answer.
+						assert(calls.filter(c => c[0] === 'importFromJSON').length === 4 && !done, `Import did not try every item first: ${JSON.stringify(calls)}`);
+						assert(text().includes(get(t)('lish.unverified.askManyUnsigned', { count: '2' })), `The unsigned items are not asked about together: ${text()}`);
+						button('common.yes').click();
+						for (let i = 0; i < 20 && !text().includes(get(t)('lish.unverified.askInvalidSignature', { name: 'forged' })); i++) await settle();
+						assert(text().includes(get(t)('lish.unverified.askInvalidSignature', { name: 'forged' })), `The forged item is not asked about on its own: ${text()}`);
+						button('common.no').click();
+						for (let i = 0; i < 20 && !done; i++) await settle();
+						const answers = calls.filter(c => c[0] === 'answerUnverified').map(c => [c[1], c[2]]);
+						assert(
+							done &&
+								JSON.stringify(answers) ===
+									JSON.stringify([
+										['token-unsigned-1', true],
+										['token-unsigned-2', true],
+										['token-forged', false],
+									]),
+							`Wrong answers: ${JSON.stringify(answers)}`
+						);
+						assert(!calls.some(c => c[0] === 'error'), `Import reported an error: ${JSON.stringify(calls)}`);
+					} finally {
+						held.clear();
+					}
 				});
 
 				for (const signIt of [true, false]) {
@@ -269,7 +363,7 @@
 				});
 
 				await test(`${lang}: signature errors are translated`, async () => {
-					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY', 'LISH_SIGNING_UNSUPPORTED_SERVER']) {
+					for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_ID_MISMATCH', 'LISH_UNSIGNED', 'LISH_CONFIRMATION_EXPIRED', 'LISH_PUBLISHER_MISMATCH', 'LISH_SIGNING_UNSUPPORTED_KEY', 'LISH_SIGNING_UNSUPPORTED_SERVER']) {
 						const message = translateError(Object.assign(new Error(code), { code, detail: 'x' }));
 						assert(!message.includes(code), `${code} is not translated: ${message}`);
 					}
@@ -284,10 +378,10 @@
 			Object.assign(api.search, { startSearch: originals.startSearch, cancelSearch: originals.cancelSearch });
 			api.lishs.create = originals.create;
 			api.fs.exists = originals.exists;
-			Object.assign(api.lishs, { get: originals.get, importFromJSON: originals.importFromJSON });
+			Object.assign(api.lishs, { get: originals.get, importFromJSON: originals.importFromJSON, answerUnverified: originals.answerUnverified });
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
 			window.lishSignatureTestResults = results;
-			document.documentElement.dataset.testStatus = results.length === 26 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 32 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>

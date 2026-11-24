@@ -214,3 +214,41 @@ test('an over-limit answer stays the error at the end when a later peer cannot b
 		[1, 'unavailable'],
 	]);
 });
+
+/** The error the backend answers with while it holds an unverified manifest for the user's answer. */
+function heldError(code: string, token: string): Error {
+	return Object.assign(new Error(code), { code, detail: JSON.stringify({ token, checks: { signed: code !== 'LISH_UNSIGNED', signatureValid: false, idMatchesPublisher: true } }) });
+}
+
+test('a manifest that fails a check is asked about only after the other peers', async () => {
+	for (const code of ['LISH_INVALID_SIGNATURE', 'LISH_ID_MISMATCH']) {
+		const tried: string[] = [];
+		const result = await withPeerFallback(PEERS, async peerID => {
+			tried.push(peerID);
+			if (peerID === PEERS[0]!.peerID) throw heldError(code, 'first');
+			return 'added';
+		});
+		// The next peer had a manifest that needed no question.
+		expect(result).toBe('added');
+		expect(tried).toEqual([PEERS[0]!.peerID, PEERS[1]!.peerID]);
+	}
+});
+
+test('the first held manifest is the error at the end, not a later peer failure', async () => {
+	const err = await withPeerFallback(PEERS, async peerID => {
+		throw peerID === PEERS[0]!.peerID ? heldError('LISH_INVALID_SIGNATURE', 'first') : codedError('PEER_UNREACHABLE');
+	}).catch(e => e);
+	expect((err as { code?: string }).code).toBe('LISH_INVALID_SIGNATURE');
+	expect((err as { detail?: string }).detail).toContain('first');
+});
+
+test('an unsigned manifest is asked about at once', async () => {
+	// Every peer of an unsigned LISH serves it unsigned, so asking the next one changes nothing.
+	const tried: string[] = [];
+	const err = await withPeerFallback(PEERS, async peerID => {
+		tried.push(peerID);
+		throw heldError('LISH_UNSIGNED', 'only');
+	}).catch(e => e);
+	expect((err as { code?: string }).code).toBe('LISH_UNSIGNED');
+	expect(tried).toEqual([PEERS[0]!.peerID]);
+});
