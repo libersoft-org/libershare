@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { encodeSignature, ErrorCodes, signedManifestBytes, validateLISHStructure, type ILISH } from '@shared';
+import { ErrorCodes, isDerivedLISHID, validateLISHStructure, type ILISH } from '@shared';
 import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { DEFAULT_MAX_CHUNK_SIZE, Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers, type ManifestSigner } from '../../../src/api/lishs.ts';
-import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
+import { signManifestAs, verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
 
 /** Every shape of source a user can pick for a new LISH, signed and unsigned, through the real create. */
 
@@ -18,10 +18,7 @@ const key = await generateKeyPairFromSeed(
 	Uint8Array.from({ length: 32 }, (_, i) => i + 7)
 );
 const publisher = peerIdFromPrivateKey(key).toString();
-const signer: ManifestSigner = async lish => {
-	const withPublisher = { ...lish, publisher };
-	return { ...withPublisher, signature: encodeSignature(await key.sign(signedManifestBytes(withPublisher as ILISH))) };
-};
+const signer: ManifestSigner = lish => signManifestAs(key, lish);
 
 let dirs: string[] = [];
 let handlers: ReturnType<typeof initLISHsHandlers>[] = [];
@@ -69,6 +66,8 @@ for (const sign of [false, true]) {
 			const lish = dataServer.get(lishID)!;
 			validateLISHStructure(lish, DEFAULT_MAX_CHUNK_SIZE);
 			expect(await verifyManifestSignature(lish)).toEqual(sign ? { signed: true, publisher } : { signed: false });
+			// A signed item is stored under the ID its publisher derives, an unsigned one under a random ID.
+			expect(isDerivedLISHID(lish.id)).toBe(sign);
 			return lish;
 		}
 

@@ -7,12 +7,14 @@ import { createLISH, getPermissions } from '../../../src/lish/lish.ts';
 
 const PUBLISHER = '12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo';
 const SIGNATURE = 'A'.repeat(86);
+const NONCE = 'A'.repeat(22);
 
 function signed(overrides: Record<string, unknown> = {}): ILISH {
 	return {
 		version: 1,
 		id: '5f0c6d2e-0000-4000-8000-000000000001',
 		publisher: PUBLISHER,
+		nonce: NONCE,
 		signature: SIGNATURE,
 		name: 'Demo',
 		created: '2026-10-08T10:00:00.000Z',
@@ -29,7 +31,7 @@ describe('signed manifest bytes', () => {
 	it('match a fixed vector', () => {
 		const text = new TextDecoder().decode(signedManifestBytes(signed()));
 		// Nothing precedes the JSON; the format version is the `version` field inside it.
-		expect(text).toBe('{"checksumAlgo":"sha256","chunkSize":4,"created":"2026-10-08T10:00:00.000Z","directories":[{"path":"docs","permissions":"755"}],"files":[{"checksums":["aa","bb"],"modified":"2026-10-08T09:00:00Z","path":"docs/a.txt","permissions":"644","size":5}],"id":"5f0c6d2e-0000-4000-8000-000000000001","links":[{"hardlink":false,"path":"docs/l","target":"docs/a.txt"}],"name":"Demo","publisher":"12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo","version":1}');
+		expect(text).toBe('{"checksumAlgo":"sha256","chunkSize":4,"created":"2026-10-08T10:00:00.000Z","directories":[{"path":"docs","permissions":"755"}],"files":[{"checksums":["aa","bb"],"modified":"2026-10-08T09:00:00Z","path":"docs/a.txt","permissions":"644","size":5}],"id":"5f0c6d2e-0000-4000-8000-000000000001","links":[{"hardlink":false,"path":"docs/l","target":"docs/a.txt"}],"name":"Demo","nonce":"AAAAAAAAAAAAAAAAAAAAAA","publisher":"12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xo","version":1}');
 	});
 
 	it('ignore key order, the signature itself and node-local fields', () => {
@@ -50,7 +52,7 @@ describe('signed manifest bytes', () => {
 
 	it('change with any signed content', () => {
 		const base = signedManifestBytes(signed());
-		for (const change of [{ name: 'Other' }, { created: '2026-10-08T10:00:01.000Z' }, { publisher: '12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xp' }, { files: [{ path: 'docs/a.txt', size: 5, checksums: ['aa', 'bc'] }] }]) {
+		for (const change of [{ name: 'Other' }, { created: '2026-10-08T10:00:01.000Z' }, { publisher: '12D3KooWQYhTNQdmr3ArTeUHRYzFg94BKyTkoWBDWez9kSCVe2Xp' }, { nonce: 'B'.repeat(22) }, { files: [{ path: 'docs/a.txt', size: 5, checksums: ['aa', 'bc'] }] }]) {
 			expect(signedManifestBytes(signed(change))).not.toEqual(base);
 		}
 	});
@@ -112,9 +114,12 @@ describe('signed manifest shape', () => {
 		for (const extra of [{ name: false }, { description: 0 }]) expect(() => validateSignedLISHShape({ ...signed(), ...extra } as never)).toThrow(expect.objectContaining({ code: ErrorCodes.LISH_INVALID_MANIFEST }));
 	});
 
-	it('requires both signature fields in their wire form', () => {
+	it('requires the publisher, nonce and signature in their wire form', () => {
 		reject({ ...signed(), signature: undefined });
 		reject({ ...signed(), publisher: undefined });
+		reject({ ...signed(), nonce: undefined });
+		reject(signed({ nonce: 'A'.repeat(21) }));
+		reject(signed({ nonce: 'A'.repeat(21) + '+' }));
 		reject(signed({ publisher: 'not a peer id!' }));
 		reject(signed({ signature: 'short' }));
 	});
@@ -151,7 +156,7 @@ describe('signed manifest shape', () => {
 			await writeFile(join(dir, 'a.txt'), 'hello');
 			await chmod(join(dir, 'a.txt'), 0o400);
 			const lish = await createLISH(dir, 'x', 4, 'sha256', 1);
-			expect(() => validateLISHStructure({ ...lish, publisher: PUBLISHER, signature: SIGNATURE }, 1 << 30)).not.toThrow();
+			expect(() => validateLISHStructure({ ...lish, publisher: PUBLISHER, nonce: NONCE, signature: SIGNATURE }, 1 << 30)).not.toThrow();
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

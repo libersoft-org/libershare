@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { generateKeyPair, generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { ErrorCodes, type ILISH } from '@shared';
+import { ErrorCodes, isDerivedLISHID, type ILISH } from '@shared';
 import { Network } from '../../../src/protocol/network.ts';
+import { deriveLISHID } from '../../../src/lish/lish-id.ts';
 import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
 
 /** `signManifest` runs on the live identity; a stand-in `this` supplies just that state. */
@@ -32,7 +33,11 @@ describe('Network.signManifest', () => {
 		const signed = await signWith(state, manifest);
 		expect(signed.publisher).toBe(peerIdFromPrivateKey(first).toString());
 		expect(await verifyManifestSignature(signed)).toEqual({ signed: true, publisher: signed.publisher! });
-		expect(Object.keys(signed).sort()).toEqual([...new Set([...Object.keys(manifest), 'version', 'publisher', 'signature'])].sort());
+		expect(Object.keys(signed).sort()).toEqual([...new Set([...Object.keys(manifest), 'version', 'publisher', 'nonce', 'signature'])].sort());
+		// The ID the manifest came with is replaced by the one the signing key derives.
+		expect(signed.id).not.toBe(manifest.id);
+		expect(signed.id).toBe(deriveLISHID(signed.publisher!, signed.nonce!));
+		expect(isDerivedLISHID(signed.id)).toBe(true);
 		expect(signed.version).toBe(1);
 	});
 

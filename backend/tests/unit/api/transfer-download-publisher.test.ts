@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
-import { encodeSignature, ErrorCodes, signedManifestBytes, type ILISH } from '@shared';
+import { ErrorCodes, type ILISH } from '@shared';
 import { initDownloadState, initTransferHandlers, setActiveDownloadersRef } from '../../../src/api/transfer.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
 import { initUploadState } from '../../../src/protocol/lish-protocol.ts';
@@ -16,28 +16,20 @@ import { Settings } from '../../../src/settings.ts';
 import * as files from '../../../src/lish/safe-dataset-files.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 import type { Networks } from '../../../src/lishnet/lishnets.ts';
+import { fixedIDOf, signFixed as sign } from '../helpers/signing.ts';
 
 /**
  * A local `.lish` download must not take the active slot while an import of the same ID owns it.
- * The file of publisher Q has been read and passed its first comparison (nothing stored yet); a
- * real import of A then writes A and still holds the ID. The download waits, reads A on its second
- * comparison and is refused without ever activating.
+ * An unsigned file under the ID has been read and passed its first comparison (nothing stored
+ * yet); a real import of A then writes A and still holds the ID. The download waits, reads A on
+ * its second comparison and is refused without ever activating.
  */
 
-const ID = 'a2000000-0000-4000-8000-000000000008';
 const keyA = await generateKeyPairFromSeed(
 	'Ed25519',
 	Uint8Array.from({ length: 32 }, (_, i) => i + 1)
 );
-const keyQ = await generateKeyPairFromSeed(
-	'Ed25519',
-	Uint8Array.from({ length: 32 }, (_, i) => 100 + i)
-);
-
-async function sign(lish: ILISH, key: typeof keyA): Promise<ILISH> {
-	const withPublisher = { version: 1, ...lish, publisher: peerIdFromPrivateKey(key).toString() };
-	return { ...withPublisher, signature: encodeSignature(await key.sign(signedManifestBytes(withPublisher))) };
-}
+const ID = fixedIDOf(keyA);
 
 const manifest = { id: ID, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 4, checksums: ['d'.repeat(64)] }] } as ILISH;
 const dirs: string[] = [];
@@ -70,7 +62,7 @@ test('a local download waits for a real import owning the ID and is refused by t
 		settings
 	);
 	const lishPath = join(await tempDir('lish-local-file-'), 'item.lish');
-	await writeFile(lishPath, JSON.stringify(await sign(manifest, keyQ)));
+	await writeFile(lishPath, JSON.stringify(manifest));
 	const networks = { getRunningNetwork: () => new MockNetwork(), set onNetworkLeft(_c: unknown) {}, set onNetworkJoined(_c: unknown) {} } as unknown as Networks;
 	const handlers = initTransferHandlers(
 		networks,
@@ -137,7 +129,7 @@ test('a local download cannot activate while a real import holds the ID before w
 		settings
 	);
 	const lishPath = join(await tempDir('lish-local-file-'), 'item.lish');
-	await writeFile(lishPath, JSON.stringify(await sign(manifest, keyQ)));
+	await writeFile(lishPath, JSON.stringify(manifest));
 	const networks = { getRunningNetwork: () => new MockNetwork(), set onNetworkLeft(_c: unknown) {}, set onNetworkJoined(_c: unknown) {} } as unknown as Networks;
 	const handlers = initTransferHandlers(
 		networks,

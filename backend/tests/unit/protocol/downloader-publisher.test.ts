@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { CodedError, encodeSignature, ErrorCodes, signedManifestBytes, type ILISH, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, type ILISH, type IStoredLISH } from '@shared';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { lishOwnershipUsers, withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
@@ -21,10 +21,10 @@ import { MockDataServer, MockLISHClient, priv } from './downloader-test-helpers.
 import { MockNetwork } from '../helpers/mock-network.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { createTestDB } from '../helpers/fixtures.ts';
+import { fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
 
 useNetworkSettings(() => ({ maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE, maxChunkSize: DEFAULT_MAX_CHUNK_SIZE }) as SettingsData['network']);
 
-const ID = 'a1000000-0000-4000-8000-000000000007';
 const keyA = await generateKeyPairFromSeed(
 	'Ed25519',
 	Uint8Array.from({ length: 32 }, (_, i) => i + 1)
@@ -34,14 +34,10 @@ const keyQ = await generateKeyPairFromSeed(
 	Uint8Array.from({ length: 32 }, (_, i) => 100 + i)
 );
 const A = peerIdFromPrivateKey(keyA).toString();
+const ID = fixedIDOf(keyA);
 
 function manifest(overrides: Record<string, unknown> = {}): ILISH {
 	return { id: ID, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 4, checksums: ['c'.repeat(64)] }], ...overrides } as ILISH;
-}
-
-async function sign(lish: ILISH, key: typeof keyA): Promise<ILISH> {
-	const withPublisher = { version: 1, ...lish, publisher: peerIdFromPrivateKey(key).toString() };
-	return { ...withPublisher, signature: encodeSignature(await key.sign(signedManifestBytes(withPublisher))) };
 }
 
 /** Records the expectation every manifest request carried. */
@@ -169,7 +165,7 @@ describe('the topic-peer probe', () => {
 	it('refuses a manifest of another publisher and stores the expected one', async () => {
 		const stored = { ...manifest({ files: [] }), publisher: A } as IStoredLISH;
 		const forged = new MockDataServer();
-		await (priv(awaitingManifest(forged, stored, servingNetwork(await sign(manifest(), keyQ)))) as Record<string, any>)['probeTopicPeers']();
+		await (priv(awaitingManifest(forged, stored, servingNetwork(await signKeepingID(manifest(), keyQ)))) as Record<string, any>)['probeTopicPeers']();
 		expect(forged.addedLishs).toHaveLength(0);
 		const genuine = new MockDataServer();
 		await (priv(awaitingManifest(genuine, stored, servingNetwork(await sign(manifest(), keyA)))) as Record<string, any>)['probeTopicPeers']();
@@ -210,7 +206,8 @@ describe('a local .lish file', () => {
 
 	it('never overrides the stored publisher', async () => {
 		const stored = (await sign(manifest(), keyA)) as IStoredLISH;
-		await expect(initFrom(await sign(manifest(), keyQ), stored)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		// Another key cannot sign under this ID at all, so its file never gets as far as the stored publisher.
+		await expect(initFrom(await signKeepingID(manifest(), keyQ), stored)).rejects.toMatchObject({ code: ErrorCodes.LISH_ID_MISMATCH });
 		await expect(initFrom(manifest(), stored)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 		await initFrom(await sign(manifest(), keyA), stored);
 	});
@@ -267,7 +264,8 @@ describe('late manifest answers against the real store', () => {
 	for (const loop of ['connected', 'probe'] as const) {
 		it(`${loop}: a publisher stored after the answer was verified wins over it`, async () => {
 			const ds = new DataServer(createTestDB());
-			const forged = await sign(manifest(), keyQ);
+			// Unsigned, so with nothing stored yet it passes verification.
+			const forged = manifest({ name: 'Forged' });
 			const dl = awaitingManifest(ds as never, null, loop === 'probe' ? servingNetworkOf([{ peer: 'peer-late-00001', manifest: () => forged }]) : new MockNetwork());
 			let imported = false;
 			priv(dl)['onManifestImported'] = () => (imported = true);
@@ -348,7 +346,7 @@ describe('late manifest answers against the real store', () => {
 	it('probe: one pass refuses the forged peer and stores the genuine one', async () => {
 		const ds = new DataServer(createTestDB());
 		const stored = { ...manifest({ files: [] }), publisher: A } as IStoredLISH;
-		const forged = await sign(manifest({ name: 'Forged' }), keyQ);
+		const forged = await signKeepingID(manifest({ name: 'Forged' }), keyQ);
 		const genuine = await sign(manifest(), keyA);
 		const network = servingNetworkOf([
 			{ peer: 'peer-forged-0001', manifest: () => forged },

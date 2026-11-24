@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
 import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { encode as lpEncode } from 'it-length-prefixed';
-import { CodedError, encodeSignature, ErrorCodes, signedManifestBytes, type ILISH, type LISHid } from '@shared';
+import { CodedError, ErrorCodes, signedManifestBytes, type ILISH } from '@shared';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
@@ -15,6 +15,7 @@ import { initLISHnetsHandlers } from '../../../src/api/lishnets.ts';
 import { setActiveDownloadersRef } from '../../../src/api/transfer.ts';
 import { verifyManifestSignature } from '../../../src/lish/manifest-signature.ts';
 import { lishOwnershipUsers, withLISHOwnership } from '../../../src/lish/lish-ownership.ts';
+import { fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
 
 /**
  * The signature through the real import, create and add-from-peer pipelines over a real store:
@@ -22,7 +23,6 @@ import { lishOwnershipUsers, withLISHOwnership } from '../../../src/lish/lish-ow
  * any running work for the item is stopped.
  */
 
-const ID = 'd0000000-0000-4000-8000-000000000004' as LISHid;
 const keyA = await generateKeyPairFromSeed(
 	'Ed25519',
 	Uint8Array.from({ length: 32 }, (_, i) => i + 1)
@@ -32,14 +32,10 @@ const keyQ = await generateKeyPairFromSeed(
 	Uint8Array.from({ length: 32 }, (_, i) => 100 + i)
 );
 const A = peerIdFromPrivateKey(keyA).toString();
+const ID = fixedIDOf(keyA);
 
 function manifest(overrides: Record<string, unknown> = {}): ILISH {
 	return { id: ID, name: 'Signed', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['b'.repeat(64)] }], ...overrides } as ILISH;
-}
-
-async function sign(lish: ILISH, key: typeof keyA): Promise<ILISH> {
-	const withPublisher = { version: 1, ...lish, publisher: peerIdFromPrivateKey(key).toString() };
-	return { ...withPublisher, signature: encodeSignature(await key.sign(signedManifestBytes(withPublisher))) };
 }
 
 const signerA: ManifestSigner = lish => sign(lish, keyA);
@@ -120,79 +116,73 @@ describe('import keeps the signature', () => {
 		await lishs.importManifest(await sign(manifest(), keyA), downloadDir);
 		let destroyed = false;
 		setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyed = true) }]]));
-		for (const other of [await sign(manifest({ name: 'Q' }), keyQ), manifest({ name: 'unsigned' })]) {
-			await expect(lishs.importManifest(other, downloadDir, { overwrite: true })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
-		}
+		// Another key cannot sign under A's ID at all; an unsigned body is refused by the stored publisher.
+		await expect(lishs.importManifest(await signKeepingID(manifest({ name: 'Q' }), keyQ), downloadDir, { overwrite: true })).rejects.toMatchObject({ code: ErrorCodes.LISH_ID_MISMATCH });
+		await expect(lishs.importManifest(manifest({ name: 'unsigned' }), downloadDir, { overwrite: true })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 		expect(destroyed).toBe(false);
 		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A });
 	});
 
-	for (const variant of ['another key', 'unsigned'] as const) {
-		it(`an import (${variant}) queued behind a real import of A reads A under the lock and never reaches its own write`, async () => {
-			const lishs = handlers();
-			// A's import holds the ID: it has written A and is stopping old work, which the test holds.
-			let releaseA!: () => void;
-			const heldA = new Promise<void>(resolve => (releaseA = resolve));
-			setActiveDownloadersRef(new Map([[ID, { destroy: () => heldA }]]));
-			const writes: string[] = [];
-			const realAdd = dataServer.addDataset.bind(dataServer);
-			dataServer.addDataset = (lish, root, finalRoot, options) => {
-				writes.push(lish.publisher ?? 'unsigned');
-				return realAdd(lish, root, finalRoot, options);
-			};
-			const signedA = await sign(manifest(), keyA);
-			const importingA = lishs.importManifest(signedA, downloadDir);
-			while (writes.length === 0) await Bun.sleep(2);
-			const rootA = dataServer.getDatasetRoot(ID);
-			// Q passed its own checks and now waits for the ID (owner + one waiter).
-			const other = variant === 'unsigned' ? manifest({ name: 'Q' }) : await sign(manifest({ name: 'Q' }), keyQ);
-			const importingQ = lishs.importManifest(other, downloadDir, { overwrite: true });
-			importingQ.catch(() => {});
-			while (lishOwnershipUsers(ID) < 2) await Bun.sleep(2);
-			// From here on A has running work that only a passing Q would stop.
-			let destroyedByQ = false;
-			releaseA();
-			await importingA;
-			setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyedByQ = true) }]]));
-			await expect(importingQ).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
-			expect(writes).toEqual([A]);
-			expect(destroyedByQ).toBe(false);
-			expect(dataServer.getDatasetRoot(ID)).toEqual(rootA);
-			expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A, signature: signedA.signature });
-		});
-	}
+	it('an unsigned import queued behind a real import of A reads A under the lock and never reaches its own write', async () => {
+		const lishs = handlers();
+		// A's import holds the ID: it has written A and is stopping old work, which the test holds.
+		let releaseA!: () => void;
+		const heldA = new Promise<void>(resolve => (releaseA = resolve));
+		setActiveDownloadersRef(new Map([[ID, { destroy: () => heldA }]]));
+		const writes: string[] = [];
+		const realAdd = dataServer.addDataset.bind(dataServer);
+		dataServer.addDataset = (lish, root, finalRoot, options) => {
+			writes.push(lish.publisher ?? 'unsigned');
+			return realAdd(lish, root, finalRoot, options);
+		};
+		const signedA = await sign(manifest(), keyA);
+		const importingA = lishs.importManifest(signedA, downloadDir);
+		while (writes.length === 0) await Bun.sleep(2);
+		const rootA = dataServer.getDatasetRoot(ID);
+		// Q passed its own checks and now waits for the ID (owner + one waiter).
+		const importingQ = lishs.importManifest(manifest({ name: 'Q' }), downloadDir, { overwrite: true });
+		importingQ.catch(() => {});
+		while (lishOwnershipUsers(ID) < 2) await Bun.sleep(2);
+		// From here on A has running work that only a passing Q would stop.
+		let destroyedByQ = false;
+		releaseA();
+		await importingA;
+		setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyedByQ = true) }]]));
+		await expect(importingQ).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		expect(writes).toEqual([A]);
+		expect(destroyedByQ).toBe(false);
+		expect(dataServer.getDatasetRoot(ID)).toEqual(rootA);
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A, signature: signedA.signature });
+	});
 
-	for (const variant of ['another key', 'unsigned'] as const) {
-		it(`an import (${variant}) verified before A existed re-reads the ID under the lock`, async () => {
-			const lishs = handlers();
-			const writes: string[] = [];
-			const realAdd = dataServer.addDataset.bind(dataServer);
-			dataServer.addDataset = (lish, root, finalRoot, options) => {
-				writes.push(lish.publisher ?? 'unsigned');
-				return realAdd(lish, root, finalRoot, options);
-			};
-			const signedA = await sign(manifest(), keyA);
-			const rootA = { kind: 'explicit' as const, path: await tempDir('lish-sig-roota-') };
-			let destroyedByQ = false;
-			let importingQ!: Promise<unknown>;
-			await withLISHOwnership(ID, async () => {
-				const other = variant === 'unsigned' ? manifest({ name: 'Q' }) : await sign(manifest({ name: 'Q' }), keyQ);
-				importingQ = lishs.importManifest(other, downloadDir, { overwrite: true });
-				importingQ.catch(() => {});
-				// Q has passed every check made without the lock and now waits; nothing is stored yet.
-				while (lishOwnershipUsers(ID) < 2) await Bun.sleep(2);
-				expect(dataServer.get(ID)).toBeFalsy();
-				// Only now does the owner store A and start work for it.
-				dataServer.addDataset(signedA as never, rootA);
-				setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyedByQ = true) }]]));
-			});
-			await expect(importingQ).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
-			expect(writes).toEqual([A]);
-			expect(destroyedByQ).toBe(false);
-			expect(dataServer.getDatasetRoot(ID)).toEqual(rootA);
-			expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A, signature: signedA.signature });
+	it('an unsigned import verified before A existed re-reads the ID under the lock', async () => {
+		const lishs = handlers();
+		const writes: string[] = [];
+		const realAdd = dataServer.addDataset.bind(dataServer);
+		dataServer.addDataset = (lish, root, finalRoot, options) => {
+			writes.push(lish.publisher ?? 'unsigned');
+			return realAdd(lish, root, finalRoot, options);
+		};
+		const signedA = await sign(manifest(), keyA);
+		const rootA = { kind: 'explicit' as const, path: await tempDir('lish-sig-roota-') };
+		let destroyedByQ = false;
+		let importingQ!: Promise<unknown>;
+		await withLISHOwnership(ID, async () => {
+			importingQ = lishs.importManifest(manifest({ name: 'Q' }), downloadDir, { overwrite: true });
+			importingQ.catch(() => {});
+			// Q has passed every check made without the lock and now waits; nothing is stored yet.
+			while (lishOwnershipUsers(ID) < 2) await Bun.sleep(2);
+			expect(dataServer.get(ID)).toBeFalsy();
+			// Only now does the owner store A and start work for it.
+			dataServer.addDataset(signedA as never, rootA);
+			setActiveDownloadersRef(new Map([[ID, { destroy: async () => void (destroyedByQ = true) }]]));
 		});
-	}
+		await expect(importingQ).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		expect(writes).toEqual([A]);
+		expect(destroyedByQ).toBe(false);
+		expect(dataServer.getDatasetRoot(ID)).toEqual(rootA);
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed', publisher: A, signature: signedA.signature });
+	});
 
 	it('refuses a signature that does not match the body', async () => {
 		const lishs = handlers();
@@ -362,9 +352,15 @@ describe('add from a peer checks the expected publisher', () => {
 	}
 
 	// The user sees why this node refused the manifest, not a generic "peer rejected the request".
-	it('refuses another publisher than the row the user picked', async () => {
-		const lishnets = lishnetsOver(await sign(manifest(), keyQ));
+	it('refuses an unsigned manifest for a row that names a publisher', async () => {
+		const lishnets = lishnetsOver(manifest({ name: 'stripped' }));
 		await expect(lishnets.addPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: A })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		expect(dataServer.get(ID)).toBeFalsy();
+	});
+
+	it('refuses a manifest signed by a key the ID was not made for', async () => {
+		const lishnets = lishnetsOver(await signKeepingID(manifest(), keyQ));
+		await expect(lishnets.addPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_ID_MISMATCH });
 		expect(dataServer.get(ID)).toBeFalsy();
 	});
 
@@ -392,11 +388,10 @@ describe('add from a peer checks the expected publisher', () => {
 		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 	});
 
-	it('expects the stored publisher even when the picked row names another', async () => {
+	it('expects the stored publisher even when the picked row is an unsigned one', async () => {
 		await handlers().importManifest(await sign(manifest(), keyA), downloadDir);
-		const lishnets = lishnetsOver(await sign(manifest(), keyQ));
-		const Q = peerIdFromPrivateKey(keyQ).toString();
-		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: Q })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		const lishnets = lishnetsOver(manifest({ name: 'stripped' }));
+		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n', expectedPublisher: null })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 	});
 
 	it('shows the verified publisher in the preview', async () => {
