@@ -1,4 +1,5 @@
-import { CodedError, ErrorCodes, isPublisherShape, type IStoredLISH } from '@shared';
+import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
+import { lishIDMatchesPublisher } from '../lish/lish-id.ts';
 import { encode, decode } from './codec.ts';
 import { MAX_LIST_RESPONSE_SIZE } from './constants.ts';
 import { readRemoteError } from './lish-response.ts';
@@ -9,6 +10,27 @@ export interface LISHListEntry {
 	totalSize?: number;
 	/** Reported publisher of a signed item; the signature is checked only with the manifest. */
 	publisher?: string;
+	/** Nonce of a signed item, sent with `publisher` so a receiver can tell whether the ID is that publisher's. */
+	nonce?: string;
+}
+
+/** The row this node reports for an item it stores; only a verified item is stored with a publisher. */
+export function listEntry(lish: IStoredLISH): LISHListEntry {
+	return {
+		id: lish.id,
+		...(lish.name !== undefined ? { name: lish.name } : {}),
+		totalSize: (lish.files ?? []).reduce((sum, file) => sum + file.size, 0),
+		...(lish.publisher !== undefined ? { publisher: lish.publisher, ...(lish.nonce !== undefined ? { nonce: lish.nonce } : {}) } : {}),
+	};
+}
+
+/**
+ * Whether a reported row may stand: one without a publisher, or one whose ID that publisher
+ * derives. A publisher cannot have signed anything under an ID that is not its own, so such a
+ * row is dropped without fetching the manifest.
+ */
+export function listEntryHolds(entry: LISHListEntry): boolean {
+	return entry.publisher === undefined || lishIDMatchesPublisher(entry);
 }
 
 export interface LISHListRequest {
@@ -38,12 +60,7 @@ function entries(list: readonly IStoredLISH[], query: string | undefined, advert
 	return list
 		.filter(lish => advertised(lish.id) && (!q || lish.id.toLowerCase().includes(q) || lish.name?.toLowerCase().includes(q)))
 		.reverse()
-		.map(lish => ({
-			id: lish.id,
-			...(lish.name !== undefined ? { name: lish.name } : {}),
-			totalSize: (lish.files ?? []).reduce((sum, file) => sum + file.size, 0),
-			...(lish.publisher !== undefined ? { publisher: lish.publisher } : {}),
-		}));
+		.map(listEntry);
 }
 
 /** Only the current listing on this stream owns a cursor; a fresh query replaces it. */
@@ -177,9 +194,9 @@ export async function receiveLISHList(query: string | undefined, exchange: (requ
 		for (const entry of page) {
 			if (ids.has(entry.id)) throw invalid();
 			ids.add(entry.id);
-			// A malformed publisher drops only its row, after the page itself was judged: the page
-			// still counts for progress, so one bad row never ends the listing.
-			if (entry.publisher === undefined || isPublisherShape(entry.publisher)) result.push(entry);
+			// A publisher that is malformed or cannot own the ID drops only its row, after the page
+			// itself was judged: the page still counts for progress, so one bad row never ends the listing.
+			if (listEntryHolds(entry)) result.push(entry);
 		}
 		if (reply['nextCursor'] === undefined) return result;
 		cursor = reply['nextCursor'] as string;

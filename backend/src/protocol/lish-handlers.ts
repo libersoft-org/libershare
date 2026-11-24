@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { trace } from '../logger.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { LISH_PROTOCOL, LISHClient, type HaveChunks, isUploadEnabled, isUploadAdvertisable } from './lish-protocol.ts';
+import { listEntry, type LISHListEntry } from './lish-list-pages.ts';
 import { isBusy } from '../api/busy.ts';
 import { type WantMessage } from './downloader.ts';
 import { type IDialResult } from './network.ts';
@@ -241,17 +242,13 @@ export class LISHServingHandlers {
 		const entry: SeenSearch = { at: Date.now(), networks: arrivedOver, wasDirect };
 		this.deps.seenSearchIDs.set(dedupKey, entry);
 		const q = data.query.toLowerCase();
-		const matches: Array<{ id: string; name?: string; totalSize?: number; publisher?: string }> = [];
+		const matches: LISHListEntry[] = [];
 		for (const lish of this.deps.dataServer.list()) {
 			if (!isSearchAdvertisableLish(lish)) continue;
 			const idLower = lish.id.toLowerCase();
 			const nameLower = lish.name?.toLowerCase() ?? '';
 			if (!idLower.includes(q) && !nameLower.includes(q)) continue;
-			const totalSize = (lish.files ?? []).reduce((sum: number, f: { size: number }) => sum + f.size, 0);
-			const entry: { id: string; name?: string; totalSize?: number; publisher?: string } = { id: lish.id, totalSize };
-			if (lish.name !== undefined) entry.name = lish.name;
-			if (lish.publisher !== undefined) entry.publisher = lish.publisher;
-			matches.push(entry);
+			matches.push(listEntry(lish));
 		}
 		if (matches.length === 0) return;
 		trace(`[NET] searchLishs ${data.searchID.slice(0, 8)} from ${fromPeerID.slice(0, 12)}: ${matches.length} match(es)`);
