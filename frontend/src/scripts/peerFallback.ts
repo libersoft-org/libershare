@@ -56,8 +56,8 @@ const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNA
  * resilience. Only retryable failures (see {@link isRetryablePeerError}) move on to the
  * next peer — local errors surface immediately. Throws the last error if every peer failed,
  * except that an over-limit chunk size from any peer wins: it is the one the user can act on,
- * and a peer that later cannot be reached must not hide it. After it comes the first manifest
- * the backend is holding for the user's answer, for the same reason. An empty peer list rejects
+ * and a peer that later cannot be reached must not hide it. After it comes the manifest the
+ * backend is holding for the user's answer, for the same reason. An empty peer list rejects
  * immediately, so callers should guard it with their own UX.
  *
  * `onStatus` reports per-peer progress for the peer table rows: `downloading` when an
@@ -90,7 +90,8 @@ export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID
 				overLimit = e;
 				onStatus?.(i, null);
 			} else onStatus?.(i, 'unavailable');
-			if (unverifiedLISHFromError(e)?.token) unverified ??= e;
+			// The backend holds one manifest per LISH, the latest: an earlier answer of this kind is gone by now.
+			if (unverifiedLISHFromError(e)?.token) unverified = e;
 			lastErr = e;
 		}
 	}

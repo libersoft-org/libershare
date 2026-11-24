@@ -234,12 +234,20 @@ test('a manifest that fails a check is asked about only after the other peers', 
 	}
 });
 
-test('the first held manifest is the error at the end, not a later peer failure', async () => {
+test('a held manifest is the error at the end, not a later peer failure', async () => {
 	const err = await withPeerFallback(PEERS, async peerID => {
 		throw peerID === PEERS[0]!.peerID ? heldError('LISH_INVALID_SIGNATURE', 'first') : codedError('PEER_UNREACHABLE');
 	}).catch(e => e);
 	expect((err as { code?: string }).code).toBe('LISH_INVALID_SIGNATURE');
 	expect((err as { detail?: string }).detail).toContain('first');
+});
+
+test('when several peers leave a manifest held, the user is asked about the latest one', async () => {
+	// The backend holds one manifest per LISH, so the token of an earlier peer no longer answers anything.
+	const err = await withPeerFallback(PEERS, async peerID => {
+		throw heldError('LISH_INVALID_SIGNATURE', peerID === PEERS[0]!.peerID ? 'first' : 'second');
+	}).catch(e => e);
+	expect((err as { detail?: string }).detail).toContain('second');
 });
 
 test('an unsigned manifest is asked about at once', async () => {
