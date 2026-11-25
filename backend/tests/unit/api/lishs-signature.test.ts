@@ -290,6 +290,20 @@ describe('adding a manifest that is not verified', () => {
 		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed' });
 	});
 
+	it('refuses a request of several manifests before adding any, when one of them is not verified', async () => {
+		const lishs = handlers();
+		const plainID = '6f1e2d3c-4b5a-4978-8a6b-5c4d3e2f1a0b';
+		const json = JSON.stringify([await sign(manifest(), keyA), manifest({ id: plainID, name: 'Plain' })]);
+		// A question holds one manifest; answering it would add that one and leave the rest behind.
+		const question = await asked(lishs.importFromJSON({ json, downloadPath: downloadDir }));
+		expect(question).toMatchObject({ code: 'LISH_UNSIGNED', checks: UNSIGNED });
+		expect(question.token).toBeUndefined();
+		expect(dataServer.get(ID)).toBeFalsy();
+		await lishs.importFromJSON({ json, downloadPath: downloadDir, acceptUnverified: true });
+		expect(dataServer.getPublisher(ID)).toBe(A);
+		expect(dataServer.get(plainID)).toMatchObject({ name: 'Plain' });
+	});
+
 	it('never lets the agreement cover a broken shape', async () => {
 		const lishs = handlers();
 		const signed = await sign(manifest(), keyA);

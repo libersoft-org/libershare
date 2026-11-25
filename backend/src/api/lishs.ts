@@ -504,6 +504,24 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		return { lishID: lish.id, directory };
 	}
 
+	/** Import every manifest of one request, in order. */
+	async function importEach(lishs: ILISH[], p: ImportParams): Promise<ImportLISHResponse> {
+		const opts = importOptions(p);
+		// A question can hold one manifest, and answering it adds that one alone. So with several in
+		// a request, an unverified one is refused before anything is added: the caller asks its user
+		// and sends the request again with `acceptUnverified`.
+		if (lishs.length > 1) {
+			const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+			for (const lish of lishs) {
+				validateLISHStructure(lish, maxChunkSize);
+				await ManifestAdmission.gate(lish, opts.acceptUnverified === true);
+			}
+		}
+		let lastResponse!: ImportLISHResponse;
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, opts);
+		return lastResponse;
+	}
+
 	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {
 		return runMutation(() => importFromFileAdmitted(p));
 	}
@@ -511,9 +529,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function importFromFileAdmitted(p: ImportFromFileParams): Promise<ImportLISHResponse> {
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
-		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, importOptions(p));
-		return lastResponse;
+		return importEach(lishs, p);
 	}
 
 	async function importFromJSON(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
@@ -523,9 +539,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	async function importFromJSONAdmitted(p: ImportFromJSONParams): Promise<ImportLISHResponse> {
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
-		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, importOptions(p));
-		return lastResponse;
+		return importEach(lishs, p);
 	}
 
 	async function importFromURL(p: ImportFromURLParams): Promise<ImportLISHResponse> {
@@ -536,9 +550,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['url', 'downloadPath']);
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
-		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, importOptions(p));
-		return lastResponse;
+		return importEach(lishs, p);
 	}
 
 	/**
