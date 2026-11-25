@@ -4,7 +4,7 @@
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { type ILISH } from '@shared';
 	import { api } from '../../scripts/api.ts';
-	import { unverifiedOffer, type UnverifiedOffer } from '../../scripts/lishVerification.ts';
+	import { unverifiedOffer, unverifiedQuestionKey, type UnverifiedOffer } from '../../scripts/lishVerification.ts';
 	import { answerUnverifiedOffers } from '../../scripts/lishUnverifiedAnswer.ts';
 	import ConfirmDialog from '../../components/Dialog/ConfirmDialog.svelte';
 	import UnverifiedLISHDialog from '../../components/Dialog/UnverifiedLISHDialog.svelte';
@@ -31,9 +31,10 @@
 	let held = $state.raw<HeldImport[]>([]);
 	let processing = $state(true);
 	let currentOverwriteLISH = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
-	// One answer covers every unsigned LISH; one whose signature or ID failed a check is asked about on its own.
+	// One answer covers every plainly unsigned LISH. One whose signature or ID failed a check, or whose
+	// signature was taken off, is asked about on its own, so its warning is not lost among the others.
 	let question = $derived.by<HeldImport[]>(() => {
-		const unsigned = held.filter(item => item.offer.code === 'LISH_UNSIGNED');
+		const unsigned = held.filter(item => unverifiedQuestionKey(item.offer) === 'lish.unverified.askUnsigned');
 		return unsigned.length > 0 ? unsigned : held.slice(0, 1);
 	});
 

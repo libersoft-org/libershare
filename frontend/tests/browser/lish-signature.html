@@ -295,24 +295,31 @@
 
 				await test(`${lang}: importing several unverified LISHs asks once for the unsigned ones and once for each failed check`, async () => {
 					const item = id => ({ id, name: id, created: '2026-10-08T10:00:00.000Z', chunkSize: 4, checksumAlgo: 'sha256', files: [] });
-					for (const id of ['unsigned-1', 'unsigned-2']) held.set(id, { code: 'LISH_UNSIGNED', checks: UNSIGNED });
+					// An ID of the derived form with no signature: the signature was taken off.
+					const stripped = '123add53-1166-8c2c-b024-1428dd1104aa';
+					for (const id of ['unsigned-1', 'unsigned-2', stripped]) held.set(id, { code: 'LISH_UNSIGNED', checks: UNSIGNED });
 					held.set('forged', { code: 'LISH_INVALID_SIGNATURE', checks: FAILED_SIGNATURE });
 					try {
 						let done = false;
-						await show(DownloadLISHImportOverwrite, { lishs: ['unsigned-1', 'forged', 'verified', 'unsigned-2'].map(item), downloadPath: '/dl', position: [0, 0], onDone: () => (done = true), onError: error => calls.push(['error', String(error)]) });
+						await show(DownloadLISHImportOverwrite, { lishs: ['unsigned-1', 'forged', 'verified', stripped, 'unsigned-2'].map(item), downloadPath: '/dl', position: [0, 0], onDone: () => (done = true), onError: error => calls.push(['error', String(error)]) });
 						for (let i = 0; i < 20 && !text().includes(label('lish.unverified.title')); i++) await settle();
 						// Everything was tried first; the verified one is in, the others wait for the answer.
-						assert(calls.filter(c => c[0] === 'importFromJSON').length === 4 && !done, `Import did not try every item first: ${JSON.stringify(calls)}`);
+						assert(calls.filter(c => c[0] === 'importFromJSON').length === 5 && !done, `Import did not try every item first: ${JSON.stringify(calls)}`);
 						assert(text().includes(get(t)('lish.unverified.askManyUnsigned', { count: '2' })), `The unsigned items are not asked about together: ${text()}`);
 						button('common.yes').click();
 						for (let i = 0; i < 20 && !text().includes(get(t)('lish.unverified.askInvalidSignature', { name: 'forged' })); i++) await settle();
 						assert(text().includes(get(t)('lish.unverified.askInvalidSignature', { name: 'forged' })), `The forged item is not asked about on its own: ${text()}`);
 						button('common.no').click();
+						// The one whose signature was taken off is not hidden among the plainly unsigned ones.
+						const removed = get(t)('lish.unverified.askSignatureRemoved', { name: stripped });
+						for (let i = 0; i < 20 && !text().includes(removed); i++) await settle();
+						assert(text().includes(removed), `The item with its signature taken off is not asked about on its own: ${text()}`);
+						button('common.yes').click();
 						for (let i = 0; i < 20 && !done; i++) await settle();
 						// Agreeing sends the manifest again, so it does not matter whether the backend still holds it.
 						const accepted = calls.filter(c => c[0] === 'importFromJSON' && c[6] === true).map(c => JSON.parse(c[1]).id);
 						const answers = calls.filter(c => c[0] === 'answerUnverified').map(c => [c[1], c[2]]);
-						assert(done && JSON.stringify(accepted) === JSON.stringify(['unsigned-1', 'unsigned-2']), `Wrong items sent again: ${JSON.stringify(accepted)}`);
+						assert(done && JSON.stringify(accepted) === JSON.stringify(['unsigned-1', 'unsigned-2', stripped]), `Wrong items sent again: ${JSON.stringify(accepted)}`);
 						assert(JSON.stringify(answers) === JSON.stringify([['token-forged', false]]), `Wrong answers: ${JSON.stringify(answers)}`);
 						assert(!calls.some(c => c[0] === 'error'), `Import reported an error: ${JSON.stringify(calls)}`);
 					} finally {
