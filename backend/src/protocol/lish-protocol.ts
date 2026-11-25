@@ -10,7 +10,6 @@ import { isBusy } from '../api/busy.ts';
 import { trace } from '../logger.ts';
 import { registerUploadPeer, unregisterUploadPeer, recordUploadBytes, type ConnectionType } from './peer-tracker.ts';
 import { encode as codecEncode, decode as codecDecode } from './codec.ts';
-import { FrameEndedError, FrameReader } from './frame-reader.ts';
 import { MAX_ACK_RESPONSE_SIZE, MAX_INBOUND_MESSAGE_SIZE, MAX_LIST_RESPONSE_SIZE, MAX_SEARCH_QUERY_LENGTH } from './constants.ts';
 import { readRemoteError, type LISHOperation } from './lish-response.ts';
 import { LISHListPages, receiveLISHList, type LISHListEntry, type LISHListRequest } from './lish-list-pages.ts';
@@ -158,28 +157,39 @@ export function getSearchResultHandler(searchID: string): SearchResultHandler | 
 export class LISHClient {
 	private stream: Stream;
 	private readonly closeAbort = new AbortController();
-	// One reply at a time, each read into a single buffer; see FrameReader for why not a list of pieces.
-	private readonly frames: FrameReader;
+	private decoder: AsyncGenerator<Uint8Array | Uint8ArrayList>;
 	// Per-call progress hooks, set only for the duration of a request that opts into progress
-	// (currently requestManifest). The reader is shared across requests, so scoping the hooks
+	// (currently requestManifest). The decoder is shared across requests, so scoping the hooks
 	// per call keeps requestList/requestChunk unaffected — a null sink is a no-op.
 	private byteSink: ((n: number) => void) | null = null;
 	private lengthSink: ((total: number) => void) | null = null;
+	// Longest reply the request in flight may get, checked on the length prefix before the body
+	// is read; see readResponse.
+	private frameLimit = 0;
+	private frameLabel = '';
 	// Settles once every reply requested so far has been read; see exchange.
 	private readTail: Promise<void> = Promise.resolve();
 	// TODO: is haveChunks still used? review whether this belongs here
 	public haveChunks!: HaveChunks;
 	constructor(stream: Stream) {
 		this.stream = stream;
-		// The counting passthrough feeds the per-call byteSink; readResponse feeds the lengthSink.
-		this.frames = new FrameReader(this.countingSource(stream));
+		// Chunk response ≈ chunkSize + small msgpack overhead; manifest can be large for many-file LISHs.
+		// Counting passthrough + onLength feed the per-call progress sinks (byteSink/lengthSink).
+		this.decoder = lpDecode(this.countingSource(stream), {
+			maxDataLength: getMaxMessageSize(),
+			onLength: len => {
+				// Not a RangeError: the decoder takes that for an incomplete prefix and waits for more.
+				if (len > this.frameLimit) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${this.frameLabel}: reply of ${len} bytes exceeds ${this.frameLimit}`);
+				this.lengthSink?.(len);
+			},
+		});
 	}
 
 	/**
 	 * Passthrough over the raw stream that reports each chunk's byte length to the active byteSink.
 	 * Whatever the stream itself throws means it closed under the read — a remote reset, an aborted
 	 * connection, a socket error — so it surfaces as PEER_UNREACHABLE, like a stream that ended; an
-	 * oversized or malformed reply is thrown by the reader above this and keeps its own error.
+	 * oversized or malformed reply is thrown by the decoder above this and keeps its own error.
 	 */
 	private async *countingSource(src: AsyncIterable<Uint8Array | Uint8ArrayList>): AsyncGenerator<Uint8Array | Uint8ArrayList> {
 		try {
@@ -198,32 +208,29 @@ export class LISHClient {
 	 * Read the reply to the request just sent. `limit` bounds its length prefix, so an oversized
 	 * reply is refused before its body is read. A read that fails — timeout, oversized frame,
 	 * broken stream — aborts the stream: whatever of that reply is still unread or on its way
-	 * could otherwise be taken for the answer to the next request on this client. `roomMade` is the
-	 * bytes the caller has set memory aside for; see {@link FrameReader.next}.
+	 * could otherwise be taken for the answer to the next request on this client.
 	 */
-	private async readResponse(limit: number, timeoutMs: number, label: string, endDetail?: string, roomMade = 0): Promise<Uint8Array> {
+	private async readResponse(limit: number, timeoutMs: number, label: string, endDetail?: string): Promise<Uint8Array> {
+		this.frameLimit = limit;
+		this.frameLabel = label;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timeout = new Promise<never>((_, reject) => {
 			timer = setTimeout(() => reject(new CodedError(ErrorCodes.PEER_UNREACHABLE, `${label} timeout >${timeoutMs}ms`)), timeoutMs);
 		});
-		const reply = this.frames.next(length => {
-			if (length > limit) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `${label}: reply of ${length} bytes exceeds ${limit}`);
-			this.lengthSink?.(length);
-		}, roomMade);
-		let frame: Uint8Array | undefined;
+		let message: IteratorResult<Uint8Array | Uint8ArrayList>;
 		try {
-			frame = await Promise.race([reply, timeout]);
+			message = await Promise.race([this.decoder.next(), timeout]);
 		} catch (error) {
 			this.stream.abort(error instanceof Error ? error : new Error(String(error)));
 			// The stream ended inside a reply, as a relay circuit cut at its data limit does: the same
-			// lost transport as a stream ending between replies.
-			if (error instanceof FrameEndedError) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `${label}: stream ended inside the reply`);
+			// lost transport as a stream ending between replies. The decoder does not export the class.
+			if ((error as Error | undefined)?.name === 'UnexpectedEOFError') throw new CodedError(ErrorCodes.PEER_UNREACHABLE, `${label}: stream ended inside the reply`);
 			throw error;
 		} finally {
 			clearTimeout(timer);
 		}
-		if (!frame) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, endDetail);
-		return frame;
+		if (message.done || !message.value) throw new CodedError(ErrorCodes.PEER_UNREACHABLE, endDetail);
+		return message.value instanceof Uint8ArrayList ? message.value.subarray() : message.value;
 	}
 
 	/**
@@ -370,9 +377,7 @@ export class LISHClient {
 		};
 		// Read the response (with timeout — prevents hanging on dead/aborted streams)
 		return this.exchange(codecEncode(request), `getChunk ${lishID}`, async () => {
-			// A caller that names the chunk's size has reserved that much in the in-flight budget, not
-			// the headroom the reply limit adds on top.
-			const responseData = await this.readResponse(Math.min(getMaxMessageSize(), minMessageSizeFor(maxChunkBytes ?? getMaxChunkSize())), 30000, `getChunk ${lishID}/${chunkID}`, lishID, maxChunkBytes ?? 0);
+			const responseData = await this.readResponse(Math.min(getMaxMessageSize(), minMessageSizeFor(maxChunkBytes ?? getMaxChunkSize())), 30000, `getChunk ${lishID}/${chunkID}`, lishID);
 			const response = this.parseResponse<LISHGetChunkResponse>(responseData, 'getChunk', `getChunk ${lishID}/${chunkID}`, `${lishID}/${chunkID}`);
 			if (!('data' in response) || !(response.data instanceof Uint8Array)) throw new CodedError(ErrorCodes.PEER_INVALID_REQUEST, `getChunk ${lishID}/${chunkID}: missing data`);
 			return response.data;
