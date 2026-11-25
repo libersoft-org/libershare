@@ -7,6 +7,9 @@
 	interface Props {
 		name: string;
 		type: StorageItemType;
+		link?: boolean | undefined;
+		/** A link whose target is gone: shown greyed out, since opening it does nothing. */
+		broken?: boolean | undefined;
 		size?: number | undefined;
 		modified?: string | undefined;
 		selected?: boolean | undefined;
@@ -16,7 +19,7 @@
 		onmouseenter?: ((e: MouseEvent) => void) | undefined;
 		onkeydown?: ((e: KeyboardEvent) => void) | undefined;
 	}
-	let { name, type, size, modified, selected = false, el = $bindable(), onclick, onmouseenter, onkeydown }: Props = $props();
+	let { name, type, link = false, broken = false, size, modified, selected = false, el = $bindable(), onclick, onmouseenter, onkeydown }: Props = $props();
 </script>
 
 <style>
@@ -32,10 +35,10 @@
 	}
 </style>
 
-<TableRow {selected} bind:el {onclick} {onmouseenter} {onkeydown}>
+<TableRow {selected} dimmed={broken} bind:el {onclick} {onmouseenter} {onkeydown}>
 	<TableCell>
 		<div class="name">
-			<Icon img={getStorageIcon(type)} size="2vh" padding="0" colorVariable={selected ? '--primary-background' : '--secondary-foreground'} />
+			<Icon img={getStorageIcon(type, link)} size="2vh" padding="0" colorVariable={selected ? '--primary-background' : '--secondary-foreground'} />
 			<span>{name}</span>
 		</div>
 	</TableCell>

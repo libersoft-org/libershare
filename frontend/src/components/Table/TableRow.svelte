@@ -18,6 +18,7 @@
 	let { children, selected = false, dimmed = false, el = $bindable(), position, onConfirm, onclick, onmouseenter, onkeydown }: Props = $props();
 
 	const navArea = getContext<NavAreaController | undefined>('navArea');
+	const isCompact = getContext<(() => boolean) | undefined>('tableCompact');
 
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
 
@@ -49,6 +50,11 @@
 		border-bottom: none;
 	}
 
+	.row.compact {
+		padding: 0.6vh 2vh;
+		border-bottom: none;
+	}
+
 	.row.selected {
 		background-color: var(--primary-foreground);
 		color: var(--primary-background);
@@ -70,6 +76,6 @@
 </style>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div bind:this={el} class="row" class:selected={isSelected} class:dimmed role="row" tabindex={onclick || onkeydown ? -1 : undefined} {onclick} {onmouseenter} {onkeydown}>
+<div bind:this={el} class="row" class:selected={isSelected} class:dimmed class:compact={isCompact?.()} role="row" tabindex={onclick || onkeydown ? -1 : undefined} {onclick} {onmouseenter} {onkeydown}>
 	{@render children()}
 </div>

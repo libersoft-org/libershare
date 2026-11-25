@@ -122,7 +122,6 @@ const errorCodeKeys: Record<string, string> = {
 	LISH_SIGNING_UNSUPPORTED_KEY: 'lish.errorSigningUnsupportedKey',
 	LISH_SIGNING_UNSUPPORTED_SERVER: 'lish.errorSigningUnsupportedServer',
 	LISH_UNSAFE_PATH: 'lish.errorUnsafePath',
-	LISH_FILE_CHANGED: 'lish.errorFileChanged',
 	LISH_UNSUPPORTED_CHECKSUM: 'lish.errorUnsupportedChecksum',
 	LISH_UNEXPECTED_ARRAY: 'lish.errorUnexpectedArray',
 	PATH_ACCESS_DENIED: 'lish.errorPathAccessDenied',
@@ -158,6 +157,7 @@ const errorCodeKeys: Record<string, string> = {
 	SEARCH_QUERY_TOO_LONG: 'network.errorSearchQueryTooLong',
 	PEER_LISTING_NOT_AUTHORIZED: 'network.errorListingNotAuthorized',
 	PEER_LIST_TOO_LARGE: 'network.errorListTooLarge',
+	PEER_MANIFEST_TOO_LARGE: 'network.errorManifestTooLarge',
 	// Server → common
 	PARSE_ERROR: 'common.errorParseError',
 	METHOD_REQUIRED: 'common.errorMethodRequired',

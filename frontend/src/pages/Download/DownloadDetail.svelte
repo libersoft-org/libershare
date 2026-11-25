@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { useArea, activateArea, activeArea } from '../../scripts/areas.ts';
-	import { isMouseActive } from '../../scripts/input/mouse.ts';
+	import { activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
 	import { t } from '../../scripts/language.ts';
@@ -9,10 +8,12 @@
 	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, type DownloadFileData, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
-	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 	import { api } from '../../scripts/api.ts';
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { pushBackHandler } from '../../scripts/focus.ts';
+	import { createNavArea, type NavAreaOptions } from '../../scripts/navArea.svelte.ts';
+	import NavScope from '../../components/NavArea/NavScope.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import Header from '../../components/Table/TableHeader.svelte';
@@ -44,28 +45,33 @@
 	let tabAreaID = $derived(`${areaID}-tabs`);
 	let listAreaID = $derived(`${areaID}-list`);
 	let peerListAreaID = $derived(`${areaID}-peerlist`);
-	let toolbarActive = $derived($activeArea === toolbarAreaID);
 	let infoActive = $derived($activeArea === infoAreaID);
-	let tabActive = $derived($activeArea === tabAreaID);
-	let listActive = $derived($activeArea === listAreaID);
-	let peerListActive = $derived($activeArea === peerListAreaID);
-	let selectedToolbarIndex = $state(0);
+	// The info table, the tab row and the two lists are declarative NavAreas of their own (NavScope).
+	let infoScope: ReturnType<typeof NavScope> | undefined = $state();
+	let tabScope: ReturnType<typeof NavScope> | undefined = $state();
+	let fileScope: ReturnType<typeof NavScope> | undefined = $state();
+	let peerScope: ReturnType<typeof NavScope> | undefined = $state();
+	// Rows the lists come back to after a tab switch or a sub-page, which re-create them.
 	let selectedFileIndex = $state(0);
-	let selectedTabIndex = $state(0); // 0=files, 1=peers
+	let selectedPeerIndex = $state(0);
+	$effect(() => {
+		const filePosition = fileScope?.controller.selectedPosition;
+		const peerPosition = peerScope?.controller.selectedPosition;
+		if (filePosition) selectedFileIndex = filePosition[1];
+		if (peerPosition) selectedPeerIndex = peerPosition[1];
+	});
 	let activeTab = $state<string>('files');
 	let tabDefs = $derived<TabDef[]>([
 		{ id: 'files', icon: '/img/file.svg', label: $t('common.files') },
 		{ id: 'peers', icon: '/img/share.svg', label: $t('common.connections') },
 	]);
+	// A click on a tab switches it without moving the selection, so move it here. The list that
+	// had the keyboard goes away with the old tab, so the keyboard continues on the tab row.
 	function handleTabChange(id: string): void {
-		selectedTabIndex = id === 'files' ? 0 : 1;
+		tabScope?.controller.select([id === 'files' ? 0 : 1, 0]);
+		activateArea(tabAreaID);
 	}
-	let selectedPeerIndex = $state(0);
-	let peerElements: HTMLElement[] = $state([]);
-	let itemElements: HTMLElement[] = $state([]);
 	let containerElement: HTMLElement | null = $state(null);
-	let selectedInfoIndex = $state(0);
-	let infoRowElements: HTMLElement[] = $state([]);
 	type InfoRowKind = 'text' | 'description' | 'progress' | 'status' | 'allowed' | 'check';
 	interface InfoRow {
 		label: string;
@@ -120,43 +126,48 @@
 	let showFileBrowser = $state(false);
 	let removeFileBrowserBackHandler: (() => void) | null = null;
 
-	let unregisterToolbar: (() => void) | null = null;
-	let unregisterInfo: (() => void) | null = null;
-	let unregisterTab: (() => void) | null = null;
-	let unregisterList: (() => void) | null = null;
-	let unregisterPeerList: (() => void) | null = null;
+	// The toolbar is a declarative NavArea: its buttons register themselves by [x, y].
+	// The action that opened a sub-page; remembered on confirm, so a mouse click counts too.
+	let openedByAction: DownloadToolbarActionID = 'back';
+	const toolbarNav = createNavArea(() => ({
+		areaID: `${areaID}-toolbar`,
+		position,
+		onBack: handleBack,
+		onDown(): string | false {
+			if (!download) return false;
+			infoScope?.controller.select([0, 0]);
+			return infoAreaID;
+		},
+	}));
 
-	function registerDetailAreas(): void {
-		unregisterToolbar = useArea(toolbarAreaID, toolbarHandlers, position);
-		unregisterInfo = useArea(infoAreaID, infoHandlers, position);
-		unregisterTab = useArea(tabAreaID, tabHandlers, position);
-		unregisterList = useArea(listAreaID, listHandlers, position);
-		unregisterPeerList = useArea(peerListAreaID, peerListHandlers, position);
-		activateArea(toolbarAreaID);
+	// The other areas leave the page with the detail when a sub-page opens; only the toolbar pauses.
+	function unregisterDetailAreas(): void {
+		toolbarNav.pause();
 	}
 
-	function unregisterDetailAreas(): void {
-		unregisterToolbar?.();
-		unregisterInfo?.();
-		unregisterTab?.();
-		unregisterList?.();
-		unregisterPeerList?.();
-		unregisterToolbar = null;
-		unregisterInfo = null;
-		unregisterTab = null;
-		unregisterList = null;
-		unregisterPeerList = null;
+	/** Bring the areas back after a sub-page closes, with the toolbar on the button that opened it. */
+	function restoreDetailAreas(): void {
+		toolbarNav.resume();
+		// By action, not by slot: the sub-page may have changed which buttons the toolbar shows.
+		toolbarNav.controller.select([
+			Math.max(
+				0,
+				toolbarActions.findIndex(action => action.id === openedByAction)
+			),
+			0,
+		]);
+		activateArea(toolbarAreaID);
 	}
 
 	function handleExportBack(): void {
 		showExport = false;
-		registerDetailAreas();
+		restoreDetailAreas();
 	}
 
 	function handleMoveBack(): void {
 		popBreadcrumb();
 		showMove = false;
-		registerDetailAreas();
+		restoreDetailAreas();
 	}
 
 	function handleFileBrowserBack(): void {
@@ -164,42 +175,8 @@
 		removeFileBrowserBackHandler = null;
 		popBreadcrumb();
 		showFileBrowser = false;
-		registerDetailAreas();
+		restoreDetailAreas();
 	}
-	function scrollToSelected(): void {
-		scrollToElement(itemElements, selectedFileIndex);
-	}
-
-	// Hover-select only while the mouse is active, so a scroll under a stale cursor can't hijack it.
-	function handleFileHover(index: number): void {
-		if (!isMouseActive()) return;
-		activateArea(listAreaID);
-		selectedFileIndex = index;
-	}
-
-	function handleFileClick(index: number): void {
-		activateArea(listAreaID);
-		selectedFileIndex = index;
-		scrollToSelected();
-	}
-
-	// Mouse counterpart of the peer-list keyboard flow: hover selects, click opens the dialog.
-	function handlePeerHover(index: number): void {
-		if (!isMouseActive()) return;
-		activateArea(peerListAreaID);
-		selectedPeerIndex = index;
-	}
-
-	function handlePeerClick(index: number): void {
-		activateArea(peerListAreaID);
-		selectedPeerIndex = index;
-		openPeerDialog();
-	}
-
-	function scrollToSelectedInfoRow(): void {
-		scrollToElement(infoRowElements, selectedInfoIndex);
-	}
-
 	// Scrolls the files/peers container into view — on mobile it sits below the info table.
 	function scrollToContainer(): void {
 		if (containerElement) containerElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -208,38 +185,76 @@
 	// The files/peers panel sits to the RIGHT of the info table on desktop, so
 	// left/right arrows switch between the two panels from any row. Enters the
 	// active tab's table directly; falls back to the tab bar when it's empty.
-	function activateRightPanel(): void {
-		if (activeTab === 'files' && download && download.files.length > 0) {
-			activateArea(listAreaID);
-			scrollToSelected();
-			return;
-		}
-		if (activeTab === 'peers' && currentPeers.length > 0) {
-			activateArea(peerListAreaID);
-			return;
-		}
-		activateArea(tabAreaID);
+	function rightPanelAreaID(): string {
+		if (activeTab === 'files' && download && download.files.length > 0) return listAreaID;
+		if (activeTab === 'peers' && currentPeers.length > 0) return peerListAreaID;
+		return tabAreaID;
 	}
 
-	function activateInfoPanel(): void {
-		activateArea(infoAreaID);
-		scrollToSelectedInfoRow();
+	function infoOptions(): NavAreaOptions {
+		return {
+			areaID: infoAreaID,
+			position,
+			onBack: handleBack,
+			listRange: (): [number, number] => [0, infoRows.length - 1],
+			onUp: (): string => toolbarAreaID,
+			onDown(): string {
+				scrollToContainer();
+				return tabAreaID;
+			},
+			onRight: rightPanelAreaID,
+		};
 	}
 
-	function handleInfoRowHover(index: number): void {
-		if (!isMouseActive()) return;
-		activateArea(infoAreaID);
-		selectedInfoIndex = index;
+	function tabOptions(): NavAreaOptions {
+		return {
+			areaID: tabAreaID,
+			position,
+			onBack: handleBack,
+			initialPosition: [activeTab === 'files' ? 0 : 1, 0],
+			onUp(): string {
+				infoScope?.controller.select([0, infoRows.length - 1]);
+				return infoAreaID;
+			},
+			onDown(): string | false {
+				const target = rightPanelAreaID();
+				return target === tabAreaID ? false : target;
+			},
+			onLeft: (): string => infoAreaID,
+		};
 	}
 
-	function handleInfoRowClick(index: number): void {
-		activateArea(infoAreaID);
-		selectedInfoIndex = index;
-		scrollToSelectedInfoRow();
+	function fileListOptions(): NavAreaOptions {
+		return {
+			areaID: listAreaID,
+			position,
+			onBack: handleBack,
+			initialPosition: [0, selectedFileIndex],
+			listRange: (): [number, number] => [0, (download?.files.length ?? 0) - 1],
+			onUp: (): string => tabAreaID,
+			onLeft: (): string => infoAreaID,
+		};
+	}
+
+	function peerListOptions(): NavAreaOptions {
+		return {
+			areaID: peerListAreaID,
+			position,
+			onBack: handleBack,
+			initialPosition: [0, Math.min(selectedPeerIndex, Math.max(0, currentPeers.length - 1))],
+			listRange: (): [number, number] => [0, currentPeers.length - 1],
+			onUp: (): string => tabAreaID,
+			onLeft: (): string => infoAreaID,
+		};
 	}
 
 	function handleBack(): void {
 		onBack?.();
+	}
+
+	function confirmToolbarAction(actionID: DownloadToolbarActionID): void {
+		openedByAction = actionID;
+		handleToolbarAction(actionID);
 	}
 
 	function handleToolbarAction(actionID: DownloadToolbarActionID): void {
@@ -312,11 +327,9 @@
 		activateArea(toolbarAreaID);
 	}
 
-	function openPeerDialog(): void {
+	function openPeerDialog(peer: PeerDetail): void {
 		// Capture the peerID VALUE (not the index): sorting/pruning can reorder currentPeers,
 		// so the index is not stable while the dialog is open.
-		const peer = currentPeers[selectedPeerIndex];
-		if (!peer) return;
 		selectedPeerID = peer.peerID;
 		selectedPeerSnapshot = peer;
 		showPeerDialog = true;
@@ -328,265 +341,13 @@
 		activateArea(peerListAreaID);
 	}
 
-	const toolbarHandlers = {
-		up(): boolean {
-			return false;
-		},
-		down(): boolean {
-			if (download) {
-				selectedInfoIndex = 0;
-				activateInfoPanel();
-				return true;
-			}
-			return false;
-		},
-		left(): boolean {
-			if (selectedToolbarIndex > 0) {
-				selectedToolbarIndex--;
-				return true;
-			}
-			return false;
-		},
-		right(): boolean {
-			if (selectedToolbarIndex < toolbarActions.length - 1) {
-				selectedToolbarIndex++;
-				return true;
-			}
-			return false;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			const action = toolbarActions[selectedToolbarIndex];
-			if (action) handleToolbarAction(action.id);
-		},
-		confirmCancel(): void {},
-		back(): void {
-			handleBack();
-		},
-	};
-
-	const infoHandlers = {
-		up(): boolean {
-			if (selectedInfoIndex > 0) {
-				selectedInfoIndex--;
-				scrollToSelectedInfoRow();
-				return true;
-			}
-			activateArea(toolbarAreaID);
-			return true;
-		},
-		down(): boolean {
-			if (selectedInfoIndex < infoRows.length - 1) {
-				selectedInfoIndex++;
-				scrollToSelectedInfoRow();
-				return true;
-			}
-			activateArea(tabAreaID);
-			scrollToContainer();
-			return true;
-		},
-		left(): boolean {
-			return false;
-		},
-		right(): boolean {
-			activateRightPanel();
-			return true;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {},
-		confirmCancel(): void {},
-		pageUp(): void {
-			if (infoRows.length === 0) return;
-			selectedInfoIndex = Math.max(0, selectedInfoIndex - 10);
-			scrollToSelectedInfoRow();
-		},
-		pageDown(): void {
-			if (infoRows.length === 0) return;
-			selectedInfoIndex = Math.min(infoRows.length - 1, selectedInfoIndex + 10);
-			scrollToSelectedInfoRow();
-		},
-		home(): void {
-			if (infoRows.length === 0) return;
-			selectedInfoIndex = 0;
-			scrollToSelectedInfoRow();
-		},
-		end(): void {
-			if (infoRows.length === 0) return;
-			selectedInfoIndex = infoRows.length - 1;
-			scrollToSelectedInfoRow();
-		},
-		back(): void {
-			handleBack();
-		},
-	};
-
-	const listHandlers = {
-		up(): boolean {
-			if (selectedFileIndex > 0) {
-				selectedFileIndex--;
-				scrollToSelected();
-				return true;
-			}
-			activateArea(tabAreaID);
-			return true;
-		},
-		down(): boolean {
-			if (download && selectedFileIndex < download.files.length - 1) {
-				selectedFileIndex++;
-				scrollToSelected();
-				return true;
-			}
-			return false;
-		},
-		left(): boolean {
-			activateInfoPanel();
-			return true;
-		},
-		right(): boolean {
-			return false;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			// TODO: Open file or show file actions
-		},
-		confirmCancel(): void {},
-		pageUp(): void {
-			if (!download || download.files.length === 0) return;
-			selectedFileIndex = Math.max(0, selectedFileIndex - 10);
-			scrollToSelected();
-		},
-		pageDown(): void {
-			if (!download || download.files.length === 0) return;
-			selectedFileIndex = Math.min(download.files.length - 1, selectedFileIndex + 10);
-			scrollToSelected();
-		},
-		home(): void {
-			if (!download || download.files.length === 0) return;
-			selectedFileIndex = 0;
-			scrollToSelected();
-		},
-		end(): void {
-			if (!download || download.files.length === 0) return;
-			selectedFileIndex = download.files.length - 1;
-			scrollToSelected();
-		},
-		back(): void {
-			handleBack();
-		},
-	};
-
-	const tabHandlers = {
-		up(): boolean {
-			if (infoRows.length > 0) {
-				selectedInfoIndex = infoRows.length - 1;
-				activateArea(infoAreaID);
-				scrollToSelectedInfoRow();
-				return true;
-			}
-			activateArea(toolbarAreaID);
-			return true;
-		},
-		down(): boolean {
-			if (activeTab === 'files' && download && download.files.length > 0) {
-				activateArea(listAreaID);
-				scrollToSelected();
-				return true;
-			}
-			if (activeTab === 'peers' && currentPeers.length > 0) {
-				activateArea(peerListAreaID);
-				return true;
-			}
-			return false;
-		},
-		left(): boolean {
-			if (selectedTabIndex > 0) {
-				selectedTabIndex--;
-				activeTab = 'files';
-				return true;
-			}
-			activateInfoPanel();
-			return true;
-		},
-		right(): boolean {
-			if (selectedTabIndex < 1) {
-				selectedTabIndex++;
-				activeTab = 'peers';
-				return true;
-			}
-			return false;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			activeTab = selectedTabIndex === 0 ? 'files' : 'peers';
-		},
-		confirmCancel(): void {},
-		back(): void {
-			handleBack();
-		},
-	};
-
-	const peerListHandlers = {
-		up(): boolean {
-			if (selectedPeerIndex > 0) {
-				selectedPeerIndex--;
-				scrollToElement(peerElements, selectedPeerIndex);
-				return true;
-			}
-			activateArea(tabAreaID);
-			return true;
-		},
-		down(): boolean {
-			if (selectedPeerIndex < currentPeers.length - 1) {
-				selectedPeerIndex++;
-				scrollToElement(peerElements, selectedPeerIndex);
-				return true;
-			}
-			return false;
-		},
-		left(): boolean {
-			activateInfoPanel();
-			return true;
-		},
-		right(): boolean {
-			return false;
-		},
-		confirmDown(): void {},
-		confirmUp(): void {
-			openPeerDialog();
-		},
-		confirmCancel(): void {},
-		pageUp(): void {
-			if (currentPeers.length === 0) return;
-			selectedPeerIndex = Math.max(0, selectedPeerIndex - 10);
-			scrollToElement(peerElements, selectedPeerIndex);
-		},
-		pageDown(): void {
-			if (currentPeers.length === 0) return;
-			selectedPeerIndex = Math.min(currentPeers.length - 1, selectedPeerIndex + 10);
-			scrollToElement(peerElements, selectedPeerIndex);
-		},
-		home(): void {
-			if (currentPeers.length === 0) return;
-			selectedPeerIndex = 0;
-			scrollToElement(peerElements, selectedPeerIndex);
-		},
-		end(): void {
-			if (currentPeers.length === 0) return;
-			selectedPeerIndex = currentPeers.length - 1;
-			scrollToElement(peerElements, selectedPeerIndex);
-		},
-		back(): void {
-			handleBack();
-		},
-	};
-
 	onMount(() => {
 		// Capture the lishID at mount: the prop is cleared when the LISH is deleted and we
 		// navigate back, so reading it lazily in the cleanup would unsubscribe with an empty
 		// lishID (backend MISSING_PARAMETER). The captured value always matches the subscribe.
 		const subscribedLishID = lishID;
 		setCurrentDetailLISHID(subscribedLishID);
-		registerDetailAreas();
+		activateArea(toolbarAreaID);
 		// Subscribe to per-peer details for this LISH
 		if (subscribedLishID) api.call('transfer.subscribePeers', { lishID: subscribedLishID });
 		const clockInterval = setInterval(() => {
@@ -822,8 +583,8 @@
 {:else}
 	<div class="detail">
 		<div class="toolbar">
-			{#each toolbarActions as action, index (action.id)}
-				<Button icon={action.icon} label={action.label} selected={toolbarActive && selectedToolbarIndex === index} onConfirm={() => handleToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
+			{#each toolbarActions as action, index (index)}
+				<Button icon={action.icon} label={action.label} position={[index, 0]} onConfirm={() => confirmToolbarAction(action.id)} padding="1.2vh 1.8vh" fontSize="1.6vh" width="auto" />
 			{/each}
 		</div>
 		{#if deleteError}
@@ -839,101 +600,110 @@
 		{#if download}
 			<div class="content">
 				<div class="info" class:selected={infoActive}>
-					<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
-						{#each infoRows as row, index (row.label)}
-							{@const rowSelected = infoActive && selectedInfoIndex === index}
-							<TableRow bind:el={infoRowElements[index]} selected={rowSelected} onclick={() => handleInfoRowClick(index)} onmouseenter={() => handleInfoRowHover(index)}>
-								<Cell>{row.label}:</Cell>
-								{#if row.kind === 'description'}
-									<Cell align="right" wrap><span class="description">{row.value}</span></Cell>
-								{:else if row.kind === 'progress'}
-									<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating'} /></span></Cell>
-								{:else if row.kind === 'status'}
-									<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
-								{:else if row.kind === 'allowed'}
-									<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" downloadColorVariable={rowSelected ? '--primary-background' : '--mode-download-fg'} uploadColorVariable={rowSelected ? '--primary-background' : '--mode-upload-fg'} disabledColorVariable={rowSelected ? '--primary-background' : '--mode-disabled-fg'} /></Cell>
-								{:else if row.kind === 'check'}
-									<Cell align="right"><Icon img={row.value ? '/img/check.svg' : '/img/cross.svg'} alt={$t(row.value ? 'common.yes' : 'common.no')} size="2.4vh" padding="0" colorVariable={rowSelected ? '--primary-background' : row.value ? '--color-success' : '--color-error'} /></Cell>
-								{:else}
-									<Cell align="right">{row.value}</Cell>
-								{/if}
-							</TableRow>
-						{/each}
-					</Table>
+					<NavScope bind:this={infoScope} options={infoOptions()}>
+						<Table columns="auto 1fr" columnsMobile="auto 1fr" noBorder>
+							{#each infoRows as row, index (row.label)}
+								{@const rowSelected = infoScope?.controller.isSelected([0, index]) ?? false}
+								<TableRow position={[0, index]}>
+									<Cell>{row.label}:</Cell>
+									{#if row.kind === 'description'}
+										<Cell align="right" wrap><span class="description">{row.value}</span></Cell>
+									{:else if row.kind === 'progress'}
+										<Cell align="right"><span class="progress-value"><ProgressBar progress={download.progress} animated={download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating'} /></span></Cell>
+									{:else if row.kind === 'status'}
+										<Cell align="right"><Badge label={$t('downloads.statuses.' + download.status)} status={download.status} /></Cell>
+									{:else if row.kind === 'allowed'}
+										<Cell align="right"><AllowedBadge mode={enabledMode} size="3vh" downloadColorVariable={rowSelected ? '--primary-background' : '--mode-download-fg'} uploadColorVariable={rowSelected ? '--primary-background' : '--mode-upload-fg'} disabledColorVariable={rowSelected ? '--primary-background' : '--mode-disabled-fg'} /></Cell>
+									{:else if row.kind === 'check'}
+										<Cell align="right"><Icon img={row.value ? '/img/check.svg' : '/img/cross.svg'} alt={$t(row.value ? 'common.yes' : 'common.no')} size="2.4vh" padding="0" colorVariable={rowSelected ? '--primary-background' : row.value ? '--color-success' : '--color-error'} /></Cell>
+									{:else}
+										<Cell align="right">{row.value}</Cell>
+									{/if}
+								</TableRow>
+							{/each}
+						</Table>
+					</NavScope>
 				</div>
 				<!-- Tab header + content -->
 				<div class="container" bind:this={containerElement}>
-					<Tabs tabs={tabDefs} bind:activeID={activeTab} selectedIndex={selectedTabIndex} selectionActive={tabActive} compact onChange={handleTabChange} />
+					<NavScope bind:this={tabScope} options={tabOptions()}>
+						<Tabs tabs={tabDefs} bind:activeID={activeTab} position={[0, 0]} compact onChange={handleTabChange} />
+					</NavScope>
 					{#if activeTab === 'files'}
-						<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
-							<Header fontSize="1.4vh">
-								<Cell>{$t('common.name')}</Cell>
-								<Cell align="center">{$t('common.size')}</Cell>
-								<Cell align="center">{$t('common.progress')}</Cell>
-							</Header>
-							<div class="items">
-								{#each download.files as file, index (file.id)}
-									<div onclick={() => handleFileClick(index)} onmouseenter={() => handleFileHover(index)} onkeydown={e => e.key === 'Enter' && handleFileClick(index)} role="row" tabindex="-1">
-										<DownloadFile bind:el={itemElements[index]} name={file.name} type={file.type} progress={fileDisplayProgress(file)} size={file.size} downloadedSize={file.downloadedSize} selected={listActive && selectedFileIndex === index} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && fileDisplayProgress(file) < 100} />
-									</div>
-								{/each}
-							</div>
-						</Table>
+						<NavScope bind:this={fileScope} options={fileListOptions()}>
+							<Table columns="1fr 15vh 20vh" columnsMobile="1fr 13vh 10vh" noBorder>
+								<Header fontSize="1.4vh">
+									<Cell>{$t('common.name')}</Cell>
+									<Cell align="center">{$t('common.size')}</Cell>
+									<Cell align="center">{$t('common.progress')}</Cell>
+								</Header>
+								<div class="items">
+									{#each download.files as file, index (file.id)}
+										<!-- The wrapper keeps each row the last child of its own box, as before (no row borders). -->
+										<div>
+											<DownloadFile position={[0, index]} name={file.name} type={file.type} progress={fileDisplayProgress(file)} size={file.size} downloadedSize={file.downloadedSize} animated={(download.status === 'downloading' || download.status === 'downloading-uploading' || download.status === 'verifying' || download.status === 'moving' || download.status === 'allocating') && fileDisplayProgress(file) < 100} />
+										</div>
+									{/each}
+								</div>
+							</Table>
+						</NavScope>
 					{:else if !peerSnapshotLoaded}
 						<div class="empty-peers">{$t('downloads.peerList.searching')}</div>
 					{:else if currentPeers.length === 0}
 						<div class="empty-peers">{$t('downloads.peerList.noPeers')}</div>
 					{:else}
-						<Table columns="2fr 2fr 8vh 6vh 12vh 12vh 8vh" columnsMobile="2fr 2fr 8vh 6vh 12vh 12vh 8vh" noBorder>
-							<Header fontSize="1.3vh">
-								<Cell>{$t('downloads.peerList.currentFile')}</Cell>
-								<Cell>{$t('downloads.peerList.id')}</Cell>
-								<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
-								<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
-								<Cell align="center">{$t('common.speed')}</Cell>
-								<Cell align="center">{$t('common.transferred')}</Cell>
-								<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
-							</Header>
-							<div class="items">
-								{#each currentPeers as peer, index (peer.peerID)}
-									{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
-									{@const rowSelected = peerListActive && selectedPeerIndex === index}
-									{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
-									{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
-									<TableRow bind:el={peerElements[index]} selected={rowSelected} dimmed={peer.stale} onclick={() => handlePeerClick(index)} onmouseenter={() => handlePeerHover(index)}>
-										<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
-										<Cell><span class="peer-id">{peer.peerID}</span></Cell>
-										<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
-										<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
-										<Cell align="center">
-											<span class="peer-metric" class:sel={rowSelected}>
-												<span class="speed-dl">
-													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
-													<span>{formatSize(peer.downloadSpeed || 0)}/s</span>
+						<NavScope bind:this={peerScope} options={peerListOptions()}>
+							<Table columns="2fr 2fr 8vh 6vh 12vh 12vh 8vh" columnsMobile="2fr 2fr 8vh 6vh 12vh 12vh 8vh" noBorder>
+								<Header fontSize="1.3vh">
+									<Cell>{$t('downloads.peerList.currentFile')}</Cell>
+									<Cell>{$t('downloads.peerList.id')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.connection')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.availability')}</Cell>
+									<Cell align="center">{$t('common.speed')}</Cell>
+									<Cell align="center">{$t('common.transferred')}</Cell>
+									<Cell align="center">{$t('downloads.peerList.activity')}</Cell>
+								</Header>
+								<div class="items">
+									{#each currentPeers as peer, index (peer.peerID)}
+										{@const ageSec = peer.lastActivity ? Math.max(0, Math.round((now - peer.lastActivity) / 1000)) : 0}
+										{@const rowSelected = peerScope?.controller.isSelected([0, index]) ?? false}
+										{@const downloadColor = rowSelected ? '--primary-background' : '--mode-download-fg'}
+										{@const uploadColor = rowSelected ? '--primary-background' : '--mode-upload-fg'}
+										<TableRow position={[0, index]} dimmed={peer.stale} onConfirm={() => openPeerDialog(peer)}>
+											<Cell><span class="peer-file">{peer.currentFile ?? ''}</span></Cell>
+											<Cell><span class="peer-id">{peer.peerID}</span></Cell>
+											<Cell align="center"><span class="conn-badge" class:conn-direct={peer.connectionType === 'DIRECT'} class:conn-relay={peer.connectionType === 'RELAY'} class:conn-dcutr={peer.connectionType === 'DCUtR'}>{peer.connectionType}</span></Cell>
+											<Cell align="center"><span class="peer-ago">{peer.havePercent != null ? `${peer.havePercent}%` : '—'}</span></Cell>
+											<Cell align="center">
+												<span class="peer-metric" class:sel={rowSelected}>
+													<span class="speed-dl">
+														<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+														<span>{formatSize(peer.downloadSpeed || 0)}/s</span>
+													</span>
+													<span class="speed-ul">
+														<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+														<span>{formatSize(peer.uploadSpeed || 0)}/s</span>
+													</span>
 												</span>
-												<span class="speed-ul">
-													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
-													<span>{formatSize(peer.uploadSpeed || 0)}/s</span>
+											</Cell>
+											<Cell align="center">
+												<span class="peer-metric" class:sel={rowSelected}>
+													<span class="total-dl">
+														<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
+														<span>{formatSize(peer.totalDownloaded || 0)}</span>
+													</span>
+													<span class="total-ul">
+														<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
+														<span>{formatSize(peer.totalUploaded || 0)}</span>
+													</span>
 												</span>
-											</span>
-										</Cell>
-										<Cell align="center">
-											<span class="peer-metric" class:sel={rowSelected}>
-												<span class="total-dl">
-													<Icon img="/img/arrow-down.svg" size="1.4vh" padding="0" colorVariable={downloadColor} />
-													<span>{formatSize(peer.totalDownloaded || 0)}</span>
-												</span>
-												<span class="total-ul">
-													<Icon img="/img/arrow-up.svg" size="1.4vh" padding="0" colorVariable={uploadColor} />
-													<span>{formatSize(peer.totalUploaded || 0)}</span>
-												</span>
-											</span>
-										</Cell>
-										<Cell align="center"><span class="peer-ago">{ageSec}s</span></Cell>
-									</TableRow>
-								{/each}
-							</div>
-						</Table>
+											</Cell>
+											<Cell align="center"><span class="peer-ago">{ageSec}s</span></Cell>
+										</TableRow>
+									{/each}
+								</div>
+							</Table>
+						</NavScope>
 					{/if}
 				</div>
 			</div>

@@ -242,10 +242,10 @@
 
 				const detailOf = extra => ({ id: X, name: 'Item', created: '2026-10-08T10:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 4 }], directories: [], links: [], ...extra });
 				/** The check rows of the detail as [label, passed], read from the icon each row shows. */
-				const checkRows = () => [...target.querySelectorAll('.info-row')].filter(row => row.querySelector('.icon, img, svg, [style*="check.svg"], [style*="cross.svg"]')).map(row => [row.querySelector('.label').textContent.replace(':', ''), row.innerHTML.includes('check.svg')]);
+				const checkRows = () => [...target.querySelectorAll('.info-section .row')].filter(row => row.querySelector('.icon')).map(row => [row.querySelector('.label').textContent.replace(':', ''), row.innerHTML.includes('check.svg')]);
 
 				await test(`${lang}: a verified preview says who signed it and passes every check`, async () => {
-					await show(NetworkLishDetailView, { detail: detailOf({ publisher: A, checks: VERIFIED }) });
+					await show(NetworkLishDetailView, { detail: detailOf({ publisher: A, checks: VERIFIED }), baseY: 1 });
 					assert(text().includes(label('lish.signedBy')) && text().includes(A), 'Signer is not shown');
 					assert(text().includes(label('lish.checks.verified')), 'A verified item is not called verified');
 					const rows = checkRows();
@@ -257,7 +257,7 @@
 						[FAILED_SIGNATURE, 'lish.checks.signatureValid'],
 						[TAKEN_ID, 'lish.checks.idMatchesPublisher'],
 					]) {
-						await show(NetworkLishDetailView, { detail: detailOf({ namedPublisher: A, checks }) });
+						await show(NetworkLishDetailView, { detail: detailOf({ namedPublisher: A, checks }), baseY: 1 });
 						assert(text().includes(label('lish.checks.unverified')) && !text().includes(label('lish.checks.verified')), 'The item is not called not verified');
 						assert(!text().includes(label('lish.signedBy')), 'A publisher that was not verified is shown as the signer');
 						assert(text().includes(label('lish.reportedPublisher')) && text().includes(A), 'The named publisher is not shown as a claim');
@@ -266,7 +266,7 @@
 						for (const [name, passed] of rows) assert(passed === (name !== label(failed)), `Wrong mark on "${name}": ${JSON.stringify(rows)}`);
 					}
 					// With no signature there is nothing else to judge: one row, failed.
-					await show(NetworkLishDetailView, { detail: detailOf({ checks: UNSIGNED }) });
+					await show(NetworkLishDetailView, { detail: detailOf({ checks: UNSIGNED }), baseY: 1 });
 					assert(text().includes(label('lish.checks.unverified')), 'An unsigned item is not called not verified');
 					assert(JSON.stringify(checkRows()) === JSON.stringify([[label('lish.checks.signed'), false]]), `An unsigned item shows other rows: ${JSON.stringify(checkRows())}`);
 				});
