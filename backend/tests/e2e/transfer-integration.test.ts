@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { Database } from 'bun:sqlite';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { createDB } from './helpers/transfer-state.ts';
 import type { LISHid, ChunkID, IStoredLISH } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
@@ -10,6 +13,7 @@ import { setBusy, clearBusy, isBusy, getBusyReason } from '../../src/api/busy.ts
 import { DataServer } from '../../src/lish/data-server.ts';
 import { Downloader } from '../../src/protocol/downloader.ts';
 import type { MissingChunk } from '../../src/lish/data-server.ts';
+import { Settings, useNetworkSettings, type SettingsData } from '../../src/settings.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -615,6 +619,91 @@ describe('Downloader — download behavior with mocked peers', () => {
 
 		expect(receivedID).toBe('lish-manifest-xyz');
 	});
+});
+
+// ============================================================================
+// Test 5b: in-flight budget on a real store and a real disk
+// ============================================================================
+
+describe('Downloader — a chunk larger than the in-flight budget, on a real store and disk', () => {
+	const CHUNK = 1024;
+	let dir: string;
+	let defaults: SettingsData['network'];
+
+	beforeEach(async () => {
+		dir = mkdtempSync(join(tmpdir(), 'lish-budget-e2e-'));
+		defaults = (await Settings.create(join(dir, 'settings'))).getDefaults().network;
+	});
+
+	afterEach(() => {
+		useNetworkSettings(() => defaults);
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	/** A peer that has every chunk and records what it was asked for. */
+	class ServingClient {
+		readonly requests: ChunkID[] = [];
+		haveChunks: 'all' = 'all';
+		private readonly chunks: Map<ChunkID, Uint8Array>;
+		constructor(chunks: Map<ChunkID, Uint8Array>) {
+			this.chunks = chunks;
+		}
+		async requestChunk(_lishID: LISHid, chunkID: ChunkID): Promise<Uint8Array> {
+			this.requests.push(chunkID);
+			return this.chunks.get(chunkID)!;
+		}
+		async requestManifest(): Promise<null> {
+			return null;
+		}
+		async close(): Promise<void> {}
+		abort(): void {}
+	}
+
+	it('is refused before its file exists, and downloads whole once the limit is raised', async () => {
+		// Two full chunks and a 100-byte tail, each with bytes of its own.
+		const content = Uint8Array.from({ length: 2 * CHUNK + 100 }, (_, i) => (i * 131 + Math.floor(i / CHUNK) * 17 + 7) & 0xff);
+		const chunks = new Map<ChunkID, Uint8Array>();
+		for (let offset = 0; offset < content.length; offset += CHUNK) {
+			const piece = content.subarray(offset, offset + CHUNK);
+			chunks.set(new Bun.CryptoHasher('sha256').update(piece).digest('hex') as ChunkID, piece);
+		}
+		const directory = join(dir, 'data');
+		const lish = createTestLISH('integ-budget-lish-001' as LISHid, { chunkSize: CHUNK, directory, files: [{ path: 'payload.bin', size: content.length, checksums: [...chunks.keys()] }] });
+		const dataServer = new DataServer(createDB());
+		dataServer.add(lish);
+		const start = async (client: ServingClient): Promise<Downloader> => {
+			const downloader = new Downloader(directory, new MockNetwork() as never, dataServer, 'net-001');
+			await downloader.initFromManifest(dataServer.get(lish.id)!);
+			(priv(downloader)['peerManager'] as { tryAdd(peerID: string, client: unknown, type: string): boolean }).tryAdd('peer-with-all-chunks', client, 'DIRECT');
+			return downloader;
+		};
+
+		// One byte short of a full chunk: the download can never ask for it.
+		useNetworkSettings(() => ({ ...defaults, chunkInflightBudgetBytes: CHUNK - 1 }));
+		const unasked = new ServingClient(chunks);
+		const refused = await start(unasked);
+		try {
+			await expect(refused.download()).rejects.toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET, detail: '1 kB > 1023 B' });
+			expect(unasked.requests).toEqual([]);
+			expect(existsSync(join(directory, 'payload.bin'))).toBe(false);
+			expect(dataServer.getMissingChunks(lish.id)).toHaveLength(3);
+		} finally {
+			await refused.destroy();
+		}
+
+		// Room for two chunks at a time: the same download now runs to its end.
+		useNetworkSettings(() => ({ ...defaults, chunkInflightBudgetBytes: 2 * CHUNK }));
+		const asked = new ServingClient(chunks);
+		const completed = await start(asked);
+		try {
+			await completed.download();
+			expect(new Uint8Array(readFileSync(join(directory, 'payload.bin')))).toEqual(content);
+			expect(dataServer.getMissingChunks(lish.id)).toHaveLength(0);
+			expect([...asked.requests].sort()).toEqual([...chunks.keys()].sort());
+		} finally {
+			await completed.destroy();
+		}
+	}, 30_000);
 });
 
 // ============================================================================
