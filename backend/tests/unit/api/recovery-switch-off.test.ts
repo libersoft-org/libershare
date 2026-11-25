@@ -10,7 +10,7 @@ import { type DataServer } from '../../../src/lish/data-server.ts';
 import { MockNetwork } from '../helpers/mock-network.ts';
 import { MockDataServer, makeMissingChunk } from '../protocol/downloader-test-helpers.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
-import { Settings, useNetworkSettings } from '../../../src/settings.ts';
+import { type Settings } from '../../../src/settings.ts';
 
 /**
  * Error recovery restarts the download first and only then turns sharing back on. A switch-off
@@ -143,48 +143,5 @@ describe('error recovery and a switch-off during the attempt', () => {
 		expect(events).toContain('transfer.recovery:attempting');
 		expect(events).toContain('transfer.recovery:recovered');
 		expect(getEnabledUploads().has(LISH)).toBe(true);
-	}, 20_000);
-
-	it('does not restart again a download the attempt saw refused for the in-flight budget', async () => {
-		// The disk is back, but the limit was lowered under the missing chunk meanwhile. That is not
-		// a recovery that failed: retrying would repeat the refusal every few seconds, and the next
-		// start is the user's to make once the limit is raised.
-		resetUploadState();
-		initDownloadState(new Set([LISH]), () => {});
-		const defaults = (await Settings.create(dir)).getDefaults().network;
-		const events: string[] = [];
-		// What the store is told about the LISH's error, in order.
-		const stored: string[] = [];
-		const { setError, clearError } = unfinishedServer;
-		unfinishedServer.setError = (_lishID?: string, code?: string): void => void stored.push(`set ${code}`);
-		unfinishedServer.clearError = (): void => void stored.push('clear');
-		activeHandlers = initTransferHandlers(
-			networks,
-			unfinishedServer as unknown as DataServer,
-			tmpdir(),
-			() => {},
-			(event: string) => void events.push(event),
-			settings
-		);
-		enableUpload(LISH);
-		for (let i = 0; i < 100 && !events.includes('transfer.download:enabled'); i++) await Bun.sleep(50);
-		expect(events).toContain('transfer.download:enabled');
-		await missingFileRequest(unfinishedServer as unknown as DataServer);
-		// Below the 4-byte chunk the download still misses.
-		useNetworkSettings(() => ({ ...defaults, chunkInflightBudgetBytes: 2 }));
-		try {
-			const deadline = Date.now() + 12_000;
-			while (Date.now() < deadline && !events.includes('transfer.download:error')) await Bun.sleep(50);
-			await Bun.sleep(300);
-			const sinceAttempt = events.slice(events.indexOf('transfer.recovery:attempting'));
-			expect(sinceAttempt.filter(e => e === 'transfer.download:error')).toHaveLength(1);
-			expect(sinceAttempt).not.toContain('transfer.recovery:scheduled');
-			// The refusal stays stored: it is what the user has to see and act on. Bringing sharing
-			// back as a recovery does would clear the LISH's one error.
-			expect(stored[stored.length - 1]).toBe('set DOWNLOAD_CHUNK_EXCEEDS_BUDGET');
-		} finally {
-			useNetworkSettings(() => defaults);
-			Object.assign(unfinishedServer, { setError, clearError });
-		}
 	}, 20_000);
 });

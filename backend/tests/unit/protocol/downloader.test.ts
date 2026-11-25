@@ -772,13 +772,15 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 	});
 
 	it('goes on when the oversized chunk is already stored and only a small one is missing', async () => {
-		// The list taken at the start still names the stored chunk; the store does not.
+		// A download with a stored chunk has its directory already.
+		mkdirSync(join(dir, 'data'));
 		ds.missingChunks = [tail];
-		priv(dl)['state'] = 'downloading';
+		priv(dl)['state'] = 'preparing';
 
 		await dl.doWork();
 
 		expect(dl.getError()).toBeNull();
+		expect(allocations).toBe(1);
 		expect(wants).toBe(1);
 	}, 10000);
 
@@ -789,93 +791,6 @@ describe('Downloader – chunk larger than the in-flight budget', () => {
 
 		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
 		expect(allocations).toBe(0);
-		expect(wants).toBe(0);
-	});
-
-	it('checks again after the disk was looked at, before any file is prepared', async () => {
-		// Only the tail is missing at first; the oversized chunk turns up while the files are checked.
-		// A download with a stored chunk has its directory already.
-		mkdirSync(join(dir, 'data'));
-		ds.missingChunks = [tail];
-		priv(dl)['state'] = 'preparing';
-		(priv(dl)['fileAllocator'] as { findMissingFiles: () => Promise<number[]> }).findMissingFiles = async () => {
-			ds.missingChunks = [big, tail];
-			return [0];
-		};
-
-		await dl.doWork();
-
-		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
-		expect(allocations).toBe(0);
-		expect(wants).toBe(0);
-	});
-
-	it('checks again before looking for peers when a lost file put its chunks back', async () => {
-		// Everything is stored, but the file is gone from the disk: its chunks become missing again.
-		ds.missingChunks = [];
-		priv(dl)['missingChunks'] = [];
-		priv(dl)['state'] = 'downloading';
-		(priv(dl)['fileAllocator'] as { allocateFile: () => Promise<void> }).allocateFile = async () => {};
-		ds.resetFileChunks = () => {
-			ds.missingChunks = [big, tail];
-			return 2;
-		};
-
-		await dl.doWork();
-
-		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
-		expect(wants).toBe(0);
-	});
-
-	it('counts the chunks of a file found missing at the start, although the store still has them', async () => {
-		// The oversized chunk is recorded as stored, but its file is not on the disk.
-		mkdirSync(join(dir, 'data'));
-		ds.missingChunks = [tail];
-		priv(dl)['state'] = 'preparing';
-		const markedMissing: number[] = [];
-		ds.resetFileChunks = (_lishID, fileIndex) => markedMissing.push(fileIndex);
-
-		await dl.doWork();
-
-		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
-		expect(allocations).toBe(0);
-		expect(wants).toBe(0);
-		// Left recorded as stored, the chunks of the lost file would never be fetched again.
-		expect(markedMissing).toEqual([0]);
-	});
-
-	it('checks the chunks of a lost file before the file is created again', async () => {
-		// Everything is stored, but the file is gone: bringing it back would fill the disk for
-		// chunks that can no longer be downloaded.
-		ds.missingChunks = [];
-		priv(dl)['missingChunks'] = [];
-		priv(dl)['state'] = 'downloading';
-		let created = 0;
-		(priv(dl)['fileAllocator'] as { allocateFile: () => Promise<void> }).allocateFile = async () => {
-			created++;
-		};
-		const markedMissing: number[] = [];
-		ds.resetFileChunks = (_lishID, fileIndex) => markedMissing.push(fileIndex);
-
-		await dl.doWork();
-
-		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
-		expect(created).toBe(0);
-		expect(wants).toBe(0);
-		// The refusal must not leave the lost file's chunks recorded as stored: the next start
-		// would create the file empty, find nothing missing and call the download complete.
-		expect(markedMissing).toEqual([0]);
-	});
-
-	it('fails a resumed download before it looks for peers', async () => {
-		priv(dl)['state'] = 'downloading';
-		dl.disable();
-
-		await dl.enable();
-		await Bun.sleep(20);
-
-		expect(dl.getError()).toMatchObject({ code: ErrorCodes.DOWNLOAD_CHUNK_EXCEEDS_BUDGET });
-		expect(dl.isDisabled()).toBe(true);
 		expect(wants).toBe(0);
 	});
 });

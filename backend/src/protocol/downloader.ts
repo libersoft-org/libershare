@@ -274,23 +274,6 @@ export class Downloader {
 		console.error(`[DL] Error ${this.lishID.slice(0, 8)}: ${code}${detail ? ` — ${detail}` : ''}`);
 	}
 
-	/**
-	 * Fail the download when a chunk still missing can never fit the in-flight budget; returns
-	 * whether it did. Called before anything is done for the download: preparing its files would
-	 * fill the disk for data that cannot arrive, and a search for peers uses up the one answer a
-	 * seeder gives per minute, so the next start, after the limit is raised, would wait for another.
-	 */
-	private failOnOversizedChunk(lostFiles: readonly number[] = []): boolean {
-		const oversized = this.chunkDownloader?.oversizedChunk(lostFiles);
-		if (!oversized) return false;
-		// The lost files are gone whatever comes next, and stopping here skips the step that
-		// would have said so. Left recorded as stored, their chunks would not be fetched by a
-		// later start, which would create the files empty and call the download complete.
-		for (const fileIndex of lostFiles) this.dataServer.resetFileChunks(this.lishID, fileIndex);
-		this.setError(oversized.code, oversized.detail);
-		return true;
-	}
-
 	private scheduleRetry(): void {
 		if (this.retryTimer) clearTimeout(this.retryTimer);
 		// Fix D: exponential backoff — 10s, 20s, 40s, 80s, ... capped at 5 min
@@ -343,7 +326,6 @@ export class Downloader {
 			this.setError(code, this.downloadDir);
 			return;
 		}
-		if (this.failOnOversizedChunk()) return;
 		this.disabled = false;
 		if (this.state === 'error') this.transitionTo(this.missingChunks.length > 0 ? 'downloading' : 'preparing', 'enable() retry from error');
 		this.errorCode = undefined;
@@ -631,7 +613,6 @@ export class Downloader {
 				}
 				if (this.needsManifest) return;
 			}
-			if (this.failOnOversizedChunk()) return;
 			// Phase 2: create directory structure (skip if already has downloaded chunks — files already allocated)
 			if (this.state === 'preparing') {
 				// Validate download directory: if resuming (some chunks exist), check the dir itself;
@@ -660,9 +641,13 @@ export class Downloader {
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
-				// Again after the awaits above: the limit may have been lowered meanwhile. The files
-				// found missing count with their chunks, also those the store still has as present.
-				if (this.failOnOversizedChunk(missingBeforeAlloc)) return;
+				// A chunk no in-flight budget can hold would be refused at its first request anyway.
+				// Checked here so that its files do not take up the disk first.
+				const oversized = this.chunkDownloader?.oversizedChunk();
+				if (oversized) {
+					this.setError(oversized.code, oversized.detail);
+					return;
+				}
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
@@ -688,8 +673,6 @@ export class Downloader {
 					}
 					// Reset only the missing files' chunks (surgical, not full manifest re-fetch)
 					console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFileIndexes.length} files missing on disk, resetting their chunks`);
-					// Before the files are created again: their chunks have to be downloaded anew.
-					if (this.failOnOversizedChunk(missingFileIndexes)) return;
 					for (const fi of missingFileIndexes) {
 						await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
 						if (this.destroyed) return;
@@ -698,9 +681,6 @@ export class Downloader {
 					this.missingChunks = this.dataServer.getMissingChunks(this.lishID);
 					// Continue downloading the reset chunks
 				}
-				// Last look before peers are asked: chunks may have been put back just above, and the
-				// limit may have been lowered during the disk work.
-				if (this.failOnOversizedChunk()) return;
 				if (this.peerManager.size() === 0) {
 					console.debug(`[DL] no peers, calling for peers (banned: ${this.peerManager.bannedSize()})`);
 					await this.callForPeers();
@@ -738,7 +718,6 @@ export class Downloader {
 							return;
 						}
 						console.warn(`[DL] ${this.lishID.slice(0, 8)}: ${missingFiles.length} files missing on disk after downloadChunks, resetting`);
-						if (this.failOnOversizedChunk(missingFiles)) return;
 						for (const fi of missingFiles) {
 							await this.fileAllocator.allocateFile(this.lish, fi, this.abortController.signal);
 							if (this.destroyed) return;

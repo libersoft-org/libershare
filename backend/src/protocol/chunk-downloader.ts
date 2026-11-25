@@ -129,21 +129,17 @@ export class ChunkDownloader {
 	}
 
 	/**
-	 * The refusal for the largest chunk still missing when it can never fit the in-flight budget, so
-	 * the download can stop before it looks for a peer: a search uses up the one answer a seeder gives
-	 * per minute, and the user's next start, after raising the limit, would wait for the next one.
-	 * Chunks already stored are not asked for again and do not count, except those of `lostFiles`:
-	 * files found gone from the disk, whose chunks are about to be marked missing again.
+	 * The refusal the largest chunk still missing would get from the in-flight budget, if it can
+	 * never fit. The same answer its request gets later, available before the download's files are
+	 * prepared. Chunks already stored are not asked for again and do not count.
 	 */
-	oversizedChunk(lostFiles: readonly number[] = []): CodedError | undefined {
+	oversizedChunk(): CodedError | undefined {
 		const lish = this.deps.getLish();
 		const budget = this.deps.inflightBudget ?? chunkInflightBudget;
 		// No chunk is longer than the chunk size. When that fits, which is the usual case, the
 		// store is not read: the list of missing chunks costs a query per file.
 		if (!budget.tooLarge(lish.chunkSize)) return undefined;
 		let largest = 0;
-		// A file's first chunk is its largest.
-		for (const fileIndex of lostFiles) largest = Math.max(largest, expectedChunkLength(lish, fileIndex, 0));
 		for (const chunk of this.deps.dataServer.getMissingChunks(this.deps.lishID)) largest = Math.max(largest, reservedLength(lish, chunk));
 		return budget.tooLarge(largest);
 	}
@@ -780,18 +776,6 @@ export class ChunkDownloader {
 
 									// Step 2: Find and re-allocate missing files with progress
 									const missingFiles = await fileAllocator.findMissingFiles(lish);
-									// The limit may have been lowered since these files were written: creating
-									// them again would fill the disk for chunks that can no longer be asked for.
-									const refusal = this.oversizedChunk(missingFiles);
-									if (refusal) {
-										// Stopping here skips the verification that would mark the lost files'
-										// chunks as missing. Left recorded as stored, they would not be fetched by a
-										// later start, which would create the files empty and call the download complete.
-										for (const fileIndex of missingFiles) dataServer.resetFileChunks(lishID, fileIndex);
-										this.deps.onSetError(refusal.code, refusal.detail);
-										aborted = true;
-										break;
-									}
 									if (missingFiles.length > 0) {
 										const totalMissingBytes = missingFiles.reduce((sum, fi) => sum + (lish.files?.[fi]?.size ?? 0), 0);
 										console.log(`[DL] ${missingFiles.length} files missing (${Math.round(totalMissingBytes / 1024 / 1024)}MB), allocating`);
