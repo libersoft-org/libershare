@@ -22,13 +22,18 @@
 	let { lishs, downloadPath, position, enableSharing, enableDownloading, onDone, onError }: Props = $props();
 	let overwriteQueue = $state<ILISH[]>([]);
 	let newLISHs = $state<ILISH[]>([]);
-	// LISHs that are not verified: the backend holds them until the user answers.
-	let held = $state<UnverifiedOffer[]>([]);
+	/** A LISH that is not verified, kept with what was sent for it until the user answers. */
+	interface HeldImport {
+		offer: UnverifiedOffer;
+		lish: ILISH;
+		overwrite: boolean | undefined;
+	}
+	let held = $state.raw<HeldImport[]>([]);
 	let processing = $state(true);
 	let currentOverwriteLISH = $derived(overwriteQueue.length > 0 ? overwriteQueue[0] : null);
 	// One answer covers every unsigned LISH; one whose signature or ID failed a check is asked about on its own.
-	let question = $derived.by<UnverifiedOffer[]>(() => {
-		const unsigned = held.filter(offer => offer.code === 'LISH_UNSIGNED');
+	let question = $derived.by<HeldImport[]>(() => {
+		const unsigned = held.filter(item => item.offer.code === 'LISH_UNSIGNED');
 		return unsigned.length > 0 ? unsigned : held.slice(0, 1);
 	});
 
@@ -43,13 +48,13 @@
 		}
 	}
 
-	async function importOne(lish: ILISH, overwrite?: boolean): Promise<void> {
+	async function importOne(lish: ILISH, overwrite?: boolean, acceptUnverified?: boolean): Promise<void> {
 		try {
-			await api.lishs.importFromJSON(JSON.stringify(lish), downloadPath, overwrite, enableSharing, enableDownloading);
+			await api.lishs.importFromJSON(JSON.stringify(lish), downloadPath, overwrite, enableSharing, enableDownloading, acceptUnverified);
 		} catch (error) {
 			const offer = unverifiedOffer(error, lish);
-			if (!offer?.token) throw error;
-			held = [...held, offer];
+			if (!offer || acceptUnverified) throw error;
+			held = [...held, { offer, lish, overwrite }];
 		}
 	}
 
@@ -88,8 +93,15 @@
 
 	async function answerQuestion(accept: boolean): Promise<void> {
 		const answered = question;
-		held = held.filter(offer => !answered.includes(offer));
-		await answerUnverifiedOffers(answered, accept);
+		held = held.filter(item => !answered.includes(item));
+		// Agreeing sends the same manifest again instead of naming the one the backend holds: it
+		// keeps only so many waiting and only for a while, and a backup can carry more than that.
+		if (accept) for (const item of answered) await importOne(item.lish, item.overwrite, true);
+		else
+			await answerUnverifiedOffers(
+				answered.map(item => item.offer),
+				false
+			);
 		if (held.length === 0) onDone();
 	}
 
@@ -123,5 +135,5 @@
 {:else if currentOverwriteLISH}
 	<ConfirmDialog title={$t('common.import')} message={$t('lish.import.confirmOverwrite', { name: currentOverwriteLISH.name || currentOverwriteLISH.id, id: currentOverwriteLISH.id })} confirmLabel={$t('common.yes')} cancelLabel={$t('common.no')} confirmIcon="/img/check.svg" cancelIcon="/img/cross.svg" {position} onConfirm={() => runImport(confirmOverwrite)} onBack={() => runImport(skipOverwrite)} />
 {:else if question[0]}
-	<UnverifiedLISHDialog offer={question[0]} message={question.length > 1 ? $t('lish.unverified.askManyUnsigned', { count: String(question.length) }) : undefined} {position} onAccept={() => runImport(() => answerQuestion(true))} onRefuse={() => runImport(() => answerQuestion(false))} />
+	<UnverifiedLISHDialog offer={question[0].offer} message={question.length > 1 ? $t('lish.unverified.askManyUnsigned', { count: String(question.length) }) : undefined} {position} onAccept={() => runImport(() => answerQuestion(true))} onRefuse={() => runImport(() => answerQuestion(false))} />
 {/if}

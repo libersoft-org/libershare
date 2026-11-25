@@ -86,7 +86,7 @@
 		api.lishs.get = async id => (id === 'existing-id' ? { id } : null);
 		api.lishs.importFromJSON = async (...args) => {
 			calls.push(['importFromJSON', ...args]);
-			if (held.has(JSON.parse(args[0]).id)) throw heldError(JSON.parse(args[0]).id);
+			if (held.has(JSON.parse(args[0]).id) && args[5] !== true) throw heldError(JSON.parse(args[0]).id);
 			return { lishID: JSON.parse(args[0]).id };
 		};
 		api.lishs.answerUnverified = async (...args) => {
@@ -309,17 +309,11 @@
 						assert(text().includes(get(t)('lish.unverified.askInvalidSignature', { name: 'forged' })), `The forged item is not asked about on its own: ${text()}`);
 						button('common.no').click();
 						for (let i = 0; i < 20 && !done; i++) await settle();
+						// Agreeing sends the manifest again, so it does not matter whether the backend still holds it.
+						const accepted = calls.filter(c => c[0] === 'importFromJSON' && c[6] === true).map(c => JSON.parse(c[1]).id);
 						const answers = calls.filter(c => c[0] === 'answerUnverified').map(c => [c[1], c[2]]);
-						assert(
-							done &&
-								JSON.stringify(answers) ===
-									JSON.stringify([
-										['token-unsigned-1', true],
-										['token-unsigned-2', true],
-										['token-forged', false],
-									]),
-							`Wrong answers: ${JSON.stringify(answers)}`
-						);
+						assert(done && JSON.stringify(accepted) === JSON.stringify(['unsigned-1', 'unsigned-2']), `Wrong items sent again: ${JSON.stringify(accepted)}`);
+						assert(JSON.stringify(answers) === JSON.stringify([['token-forged', false]]), `Wrong answers: ${JSON.stringify(answers)}`);
 						assert(!calls.some(c => c[0] === 'error'), `Import reported an error: ${JSON.stringify(calls)}`);
 					} finally {
 						held.clear();
