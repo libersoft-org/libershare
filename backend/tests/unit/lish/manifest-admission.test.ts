@@ -242,8 +242,8 @@ describe('a manifest waiting for the answer', () => {
 		/** An admission with the given limits; `tokenOf` asks about a manifest of `checksums` chunks under `id`. */
 		function limited(limits: { count?: number; bytes?: number; ttlMs?: number }) {
 			const admission = new ManifestAdmission<string>({ ttlMs: 60_000, count: 100, bytes: 1 << 30, ...limits });
-			const tokenOf = async (id: string, checksums = 1) => {
-				const lish = manifest({ id, files: [{ path: 'a.txt', size: 4 * checksums, checksums: Array.from({ length: checksums }, () => 'c'.repeat(64)) }] });
+			const tokenOf = async (id: string, checksums = 1, extra: Record<string, unknown> = {}) => {
+				const lish = manifest({ id, files: [{ path: 'a.txt', size: 4 * checksums, checksums: Array.from({ length: checksums }, () => 'c'.repeat(64)) }], ...extra });
 				return unverifiedLISHFromError(await admission.admit(lish, false, async () => id).catch(error => error))!.token!;
 			};
 			const stillHeld = async (token: string) =>
@@ -273,6 +273,15 @@ describe('a manifest waiting for the answer', () => {
 			const second = await tokenOf('second', 1000);
 			expect(await stillHeld(large)).toBe(false);
 			expect(await stillHeld(second)).toBe(true);
+		});
+
+		it('counts directories and links too, so a manifest made only of them is not held for free', async () => {
+			const { tokenOf, stillHeld } = limited({ bytes: 100_000 });
+			const entries = Array.from({ length: 1000 }, (_, i) => `${'d'.repeat(60)}${i}`);
+			const directories = await tokenOf('directories', 1, { directories: entries.map(path => ({ path })) });
+			const links = await tokenOf('links', 1, { links: entries.map(path => ({ path, target: path })) });
+			expect(await stillHeld(directories)).toBe(false);
+			expect(await stillHeld(links)).toBe(true);
 		});
 
 		it('still holds one manifest larger than the whole allowance, so the user can answer about it', async () => {

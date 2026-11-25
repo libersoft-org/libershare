@@ -25,6 +25,8 @@ const PENDING_LIMITS: PendingLimits = { ttlMs: 10 * 60 * 1000, count: 256, bytes
 function manifestWeight(lish: ILISH): number {
 	let weight = 1024;
 	for (const file of lish.files ?? []) weight += file.path.length + file.checksums.length * (file.checksums[0]?.length ?? 0);
+	for (const directory of lish.directories ?? []) weight += directory.path.length;
+	for (const link of lish.links ?? []) weight += link.path.length + link.target.length;
 	return weight;
 }
 
