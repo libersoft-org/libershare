@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { CodedError, ErrorCodes } from '@shared';
+import { encode as lpEncode } from 'it-length-prefixed';
+import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { LISHClient, handleLISHProtocol } from '../../../src/protocol/lish-protocol.ts';
 import { MAX_ACK_RESPONSE_SIZE, MAX_INBOUND_MESSAGE_SIZE, MAX_LIST_RESPONSE_SIZE } from '../../../src/protocol/constants.ts';
 
@@ -74,6 +76,36 @@ describe('LISHClient reply limits', () => {
 		const outcome = await Promise.race([codedError(new LISHClient(peer.stream).requestChunk('lish-a' as any, 'c1' as any, 1024 * 1024)), Bun.sleep(500).then(() => null)]);
 		expect(outcome?.code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
 		expect(peer.aborted()).toBeDefined();
+	});
+
+	it('fails the requests queued behind a refused reply instead of reading its body as their reply', async () => {
+		// The body of the oversized frame starts with a well-formed chunk reply of its own.
+		const inner = lpEncode.single(codecEncode({ data: new Uint8Array(8) })).subarray();
+		const body = new Uint8Array(3 * 1024 * 1024);
+		body.set(inner);
+		const prefix = varint(body.length);
+		const frame = new Uint8Array(prefix.length + body.length);
+		frame.set(prefix);
+		frame.set(body, prefix.length);
+		let wake!: () => void;
+		const stream = {
+			status: 'open',
+			send() {},
+			close: async () => {},
+			abort() {
+				this.status = 'aborted';
+				wake?.();
+			},
+			async *[Symbol.asyncIterator]() {
+				yield frame;
+				await new Promise<void>(resolve => (wake = resolve));
+			},
+		};
+		const client = new LISHClient(stream as any);
+		const first = codedError(client.requestChunk('lish-a' as any, 'c1' as any, 1024 * 1024));
+		const second = codedError(client.requestChunk('lish-a' as any, 'c2' as any, 1024 * 1024));
+		expect((await first).code).toBe(ErrorCodes.PEER_INVALID_REQUEST);
+		expect((await second).code).toBe(ErrorCodes.PEER_UNREACHABLE);
 	});
 
 	it('refuses a chunk reply past the chunk limit', async () => {
