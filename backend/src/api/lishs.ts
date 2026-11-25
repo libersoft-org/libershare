@@ -47,6 +47,14 @@ export interface ImportManifestOptions {
 interface ImportParams extends ImportManifestOptions {
 	downloadPath: string;
 }
+
+/**
+ * The options of an import request without the request itself: a manifest that waits for the
+ * user's answer keeps them, and must not keep the file content or JSON text it came in.
+ */
+function importOptions(p: ImportParams): ImportManifestOptions {
+	return { overwrite: p.overwrite, enableSharing: p.enableSharing, enableDownloading: p.enableDownloading, acceptUnverified: p.acceptUnverified };
+}
 interface ImportFromFileParams extends ImportParams {
 	filePath: string;
 }
@@ -504,7 +512,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['filePath', 'downloadPath']);
 		const lishs = await importLISHFromFile(Utils.expandHome(p.filePath));
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, importOptions(p));
 		return lastResponse;
 	}
 
@@ -516,7 +524,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		assert(p, ['json', 'downloadPath']);
 		const lishs = parseLISHFromJSON(p.json);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, importOptions(p));
 		return lastResponse;
 	}
 
@@ -529,7 +537,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		const content = await Utils.fetchURL(p.url);
 		const lishs = parseLISHFromJSON(content);
 		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, p);
+		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, importOptions(p));
 		return lastResponse;
 	}
 
