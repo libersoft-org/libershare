@@ -15,20 +15,23 @@ export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
 
 /**
  * Memory this process can really use: the machine's physical memory without swap, or the limit
- * of the container it runs in when that is lower.
+ * of the container it runs in when that is lower. Read from the files themselves on every call,
+ * so that a reset sees a container resized since the start.
  */
-export function usableMemoryBytes(): number {
-	let bytes = totalmem();
-	const constrained = process.constrainedMemory?.();
-	if (constrained && constrained < bytes) bytes = constrained;
-	if (process.platform === 'linux') {
-		// A system container shows its limit only here: totalmem() reports the host's memory there.
+export function usableMemoryBytes(total: number = totalmem(), read: (path: string) => string = path => readFileSync(path, 'utf8')): number {
+	const least = (bytes: number, limit: () => number): number => {
 		try {
-			const kB = Number(/^MemTotal:\s+(\d+) kB/m.exec(readFileSync('/proc/meminfo', 'utf8'))?.[1]);
-			if (kB > 0 && kB * 1024 < bytes) bytes = kB * 1024;
-		} catch {}
-	}
-	return bytes;
+			const value = limit();
+			return value > 0 && value < bytes ? value : bytes;
+		} catch {
+			return bytes; // no such file: another system, or the other cgroup version
+		}
+	};
+	let bytes = total;
+	// cgroup v2, then v1. A container without a limit says "max" or a number above any machine.
+	for (const file of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) bytes = least(bytes, () => Number(read(file)));
+	// A system container shows its limit only here: its cgroup says "max" and totalmem() reports the host.
+	return least(bytes, () => Number(/^MemTotal:\s+(\d+) kB/m.exec(read('/proc/meminfo'))?.[1]) * 1024);
 }
 
 /**
@@ -42,9 +45,20 @@ export function chunkInflightBudgetFor(memoryBytes: number): number {
 	return fifth > DEFAULT_MAX_MESSAGE_SIZE ? fifth : DEFAULT_MAX_MESSAGE_SIZE;
 }
 
-// Default bytes of chunk requests in flight across every download (network.chunkInflightBudgetBytes).
-// shortcut: worked out once when the process starts, so a reset to defaults in a container resized meanwhile uses the old size until a restart.
-export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = chunkInflightBudgetFor(usableMemoryBytes());
+let memorySource: () => number = () => usableMemoryBytes();
+
+/** Replace the memory reading the default budget is worked out from; no argument restores it. For tests. */
+export function useMemorySource(read: () => number = () => usableMemoryBytes()): void {
+	memorySource = read;
+}
+
+/**
+ * Default bytes of chunk requests in flight across every download
+ * (network.chunkInflightBudgetBytes), for the memory as it is now.
+ */
+export function defaultChunkInflightBudgetBytes(): number {
+	return chunkInflightBudgetFor(memorySource());
+}
 
 export interface SettingsData {
 	language: string;
@@ -241,7 +255,10 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
 		chunkWindowBytes: DEFAULT_CHUNK_WINDOW_BYTES,
-		chunkInflightBudgetBytes: DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES,
+		// A getter: every copy of the defaults (the first start, a reset, the values the settings screen offers) takes the memory as it is then.
+		get chunkInflightBudgetBytes(): number {
+			return defaultChunkInflightBudgetBytes();
+		},
 		allowRelay: false,
 		maxRelayReservations: DEFAULT_MAX_RELAY_RESERVATIONS,
 		useRelayClients: true,

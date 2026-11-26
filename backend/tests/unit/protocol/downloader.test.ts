@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { Downloader } from '../../../src/protocol/downloader.ts';
-import { DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES } from '../../../src/settings.ts';
+import { defaultChunkInflightBudgetBytes } from '../../../src/settings.ts';
 import type { IStoredLISH, LISHid, ChunkID } from '@shared';
 import { CodedError, ErrorCodes } from '@shared';
 import type { MissingChunk } from '../../../src/lish/data-server.ts';
@@ -737,7 +737,7 @@ describe('Downloader – oversized manifest across peers', () => {
 
 describe('Downloader – chunk larger than the in-flight budget', () => {
 	// One chunk above the default budget, whatever this machine's memory makes it, and a 100 B tail. Sizes only: no data is moved.
-	const HUGE = 2 * DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES;
+	const HUGE = 2 * defaultChunkInflightBudgetBytes();
 	const big = makeMissingChunk('big-chunk' as ChunkID, 0, 0);
 	const tail = makeMissingChunk('tail-chunk' as ChunkID, 0, 1);
 	let dir: string;

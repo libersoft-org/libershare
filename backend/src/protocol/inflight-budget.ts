@@ -1,5 +1,5 @@
 import { CodedError, ErrorCodes, formatSizeOverLimit } from '@shared';
-import { DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES, networkSetting } from '../settings.ts';
+import { defaultChunkInflightBudgetBytes, networkSetting } from '../settings.ts';
 
 interface Waiter {
 	readonly bytes: number;
@@ -146,5 +146,5 @@ export class ByteBudget {
 /** Bytes of chunks requested and not yet written, across every download in this process. */
 export const chunkInflightBudget: ByteBudget = new ByteBudget(() => {
 	const configured = networkSetting('chunkInflightBudgetBytes');
-	return typeof configured === 'number' && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES;
+	return typeof configured === 'number' && Number.isFinite(configured) && configured > 0 ? configured : defaultChunkInflightBudgetBytes();
 });

@@ -5,7 +5,7 @@ import { tmpdir, totalmem } from 'os';
 import { pipelineDepth } from '../../../src/protocol/chunk-downloader.ts';
 import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import { CHUNK_WINDOW_MAX_REQUESTS } from '../../../src/protocol/constants.ts';
-import { DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES, Settings, chunkInflightBudgetFor, usableMemoryBytes, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
+import { Settings, chunkInflightBudgetFor, defaultChunkInflightBudgetBytes, usableMemoryBytes, useMemorySource, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
 import { ErrorCodes } from '@shared';
 
 const MiB = 1024 * 1024;
@@ -81,17 +81,17 @@ describe('chunk window settings', () => {
 
 	it('refuses a per-peer window above the shared budget, from either side', async () => {
 		const settings = await create();
-		await expect(settings.set('network.chunkWindowBytes', DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES + MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
+		await expect(settings.set('network.chunkWindowBytes', defaultChunkInflightBudgetBytes() + MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		await expect(settings.set('network.chunkInflightBudgetBytes', 8 * MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		await expect(settings.set('network', { ...settings.get('network'), chunkWindowBytes: 32 * MiB, chunkInflightBudgetBytes: 16 * MiB })).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		expect(settings.get('network.chunkWindowBytes')).toBe(16 * MiB);
-		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
+		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(defaultChunkInflightBudgetBytes());
 	});
 
 	it('accepts a window equal to the budget', async () => {
 		const settings = await create();
-		await settings.set('network.chunkWindowBytes', DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
-		expect(settings.get('network.chunkWindowBytes')).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
+		await settings.set('network.chunkWindowBytes', defaultChunkInflightBudgetBytes());
+		expect(settings.get('network.chunkWindowBytes')).toBe(defaultChunkInflightBudgetBytes());
 	});
 
 	it('takes a fifth of the memory as the default budget, in whole megabytes and never below one largest message', () => {
@@ -103,15 +103,60 @@ describe('chunk window settings', () => {
 		expect(chunkInflightBudgetFor(Number.NaN)).toBe(128 * MiB);
 	});
 
-	it('stores the default budget of this machine on the first start and restores it on a reset', async () => {
-		const settings = await create();
+	it('reads the memory limit of a container, whichever way the system shows it', () => {
+		const GiB = 1024 * MiB;
+		const V2 = '/sys/fs/cgroup/memory.max';
+		const V1 = '/sys/fs/cgroup/memory/memory.limit_in_bytes';
+		const files =
+			(present: Record<string, string>) =>
+			(path: string): string => {
+				if (!(path in present)) throw new Error(`ENOENT: ${path}`);
+				return present[path]!;
+			};
+		const meminfo = (bytes: number): string => `MemTotal:       ${bytes / 1024} kB\nMemFree:          1024 kB\n`;
+		// None of the files: not Linux.
+		expect(usableMemoryBytes(64 * GiB, files({}))).toBe(64 * GiB);
+		// A limit in cgroup v2; the reported total is the host's.
+		expect(usableMemoryBytes(64 * GiB, files({ [V2]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
+		// A limit in cgroup v1, also when a v2 tree without a memory limit is mounted beside it.
+		expect(usableMemoryBytes(64 * GiB, files({ [V1]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
+		expect(usableMemoryBytes(64 * GiB, files({ [V2]: 'max\n', [V1]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
+		// No limit: "max" in v2, a number above any machine in v1.
+		expect(usableMemoryBytes(64 * GiB, files({ [V2]: 'max\n', [V1]: '9223372036854771712\n', '/proc/meminfo': meminfo(64 * GiB) }))).toBe(64 * GiB);
+		// A system container: its cgroup says "max" and only the reported total is its own.
+		expect(usableMemoryBytes(320 * GiB, files({ [V2]: 'max\n', '/proc/meminfo': meminfo(1536 * MiB) }))).toBe(1536 * MiB);
+		// This machine, read for real.
 		expect(usableMemoryBytes()).toBeGreaterThan(0);
 		expect(usableMemoryBytes()).toBeLessThanOrEqual(totalmem());
-		expect(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES).toBe(chunkInflightBudgetFor(usableMemoryBytes()));
-		expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).network.chunkInflightBudgetBytes).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
-		await settings.set('network.chunkInflightBudgetBytes', 64 * MiB);
-		await settings.reset({ applyRuntime: false });
-		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
+	});
+
+	it('stores the default budget on the first start and works it out again on a reset, from the memory as it is then', async () => {
+		const GiB = 1024 * MiB;
+		let memory = 4 * GiB;
+		useMemorySource(() => memory);
+		try {
+			const settings = await create();
+			const stored = (): number => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).network.chunkInflightBudgetBytes;
+			expect(stored()).toBe(819 * MiB);
+			// Less memory later leaves the stored value alone; only the defaults follow it.
+			memory = 512 * MiB;
+			expect(settings.get('network.chunkInflightBudgetBytes')).toBe(819 * MiB);
+			expect(settings.getDefaults().network.chunkInflightBudgetBytes).toBe(128 * MiB);
+			await settings.reset({ applyRuntime: false });
+			expect(stored()).toBe(128 * MiB);
+			// The reset under a write hold, as the factory reset does it.
+			memory = 2 * GiB;
+			const hold = await settings.holdWrites();
+			try {
+				await hold.reset();
+			} finally {
+				hold.release();
+			}
+			expect(stored()).toBe(409 * MiB);
+			expect(settings.get('network.chunkInflightBudgetBytes')).toBe(409 * MiB);
+		} finally {
+			useMemorySource();
+		}
 	});
 
 	it('refuses a window or budget that is not a positive whole number of bytes', async () => {
