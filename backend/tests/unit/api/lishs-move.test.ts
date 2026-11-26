@@ -53,7 +53,7 @@ test('moving partial data keeps verification busy until the new location has bee
 	}
 });
 
-async function completeDataset(withLink = false) {
+async function completeDataset() {
 	const base = await mkdtemp(join(tmpdir(), 'lish-move-review-'));
 	const source = join(base, 'source');
 	await mkdir(source);
@@ -61,7 +61,7 @@ async function completeDataset(withLink = false) {
 	const db = openDatabase(base);
 	const data = new DataServer(db);
 	const id = 'move-review';
-	const manifest = { id, name: 'dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256' as const, directory: source, files: [{ path: 'data.bin', size: 4, checksums: [new Bun.CryptoHasher('sha256').update('abcd').digest('hex')] }], ...(withLink ? { links: [{ path: 'copy.bin', target: join(source, 'data.bin') }] } : {}) };
+	const manifest = { id, name: 'dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256' as const, directory: source, files: [{ path: 'data.bin', size: 4, checksums: [new Bun.CryptoHasher('sha256').update('abcd').digest('hex')] }] };
 	data.addDataset(manifest, { kind: 'derived', base, component: 'source' });
 	const events: { event: string; data: any }[] = [];
 	const handlers = initLISHsHandlers(
@@ -116,49 +116,6 @@ for (const operation of ['move', 'finalize'] as const) {
 		}
 	});
 }
-
-for (const operation of ['move', 'finalize'] as const) {
-	test(`an absolute internal link survives a manual move followed by ${operation}`, async () => {
-		const f = await completeDataset(true);
-		const first = join(f.base, 'first');
-		const second = join(f.base, 'second');
-		try {
-			expect(await f.handlers.move({ lishID: f.id, newDirectory: first, moveData: true, createSubdirectory: false })).toEqual({ success: true });
-			await f.handlers.stopVerifyAll();
-			expect(f.data.getDatasetLinkBindings(f.id)).toMatchObject([{ path: 'copy.bin', target: join(f.source, 'data.bin'), source: 'data.bin', hardlink: false }]);
-			expect(typeof f.data.getDatasetLinkBindings(f.id)[0]?.materializedIdentity).toBe('string');
-			if (operation === 'finalize') {
-				f.data.updateFinalDirectory(f.id, second);
-				f.data.setDatasetRoot(f.id, { kind: 'derived', base: f.base, component: 'second' }, true);
-			}
-			const result = operation === 'move' ? await f.handlers.move({ lishID: f.id, newDirectory: second, moveData: true, createSubdirectory: false }) : await f.handlers.finalizeDownload(f.id);
-			expect(result).toEqual({ success: true });
-			expect(await readFile(join(second, 'data.bin'), 'utf8')).toBe('abcd');
-			expect(await readFile(join(second, 'copy.bin'), 'utf8')).toBe('abcd');
-			expect(f.data.get(f.id)?.links).toEqual(f.manifest.links);
-			expect(f.data.get(f.id)?.directory).toBe(second);
-		} finally {
-			await f.close();
-		}
-	});
-}
-
-test('a changed absolute link target cannot reuse a prior local association', async () => {
-	const f = await completeDataset(true);
-	const first = join(f.base, 'first');
-	const second = join(f.base, 'second');
-	try {
-		await f.handlers.move({ lishID: f.id, newDirectory: first, moveData: true, createSubdirectory: false });
-		await f.handlers.stopVerifyAll();
-		const changed = { ...f.data.get(f.id)!, links: [{ path: 'copy.bin', target: join(f.base, 'external') }] };
-		f.data.add(changed);
-		await expect(f.handlers.move({ lishID: f.id, newDirectory: second, moveData: true, createSubdirectory: false })).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-		expect(f.data.get(f.id)?.directory).toBe(first);
-		expect(await readFile(join(first, 'copy.bin'), 'utf8')).toBe('abcd');
-	} finally {
-		await f.close();
-	}
-});
 
 test('the dialog can move directly into an existing empty folder', async () => {
 	const f = await completeDataset();

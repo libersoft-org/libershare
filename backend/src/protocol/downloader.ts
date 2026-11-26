@@ -432,7 +432,7 @@ export class Downloader {
 		const ids = Array.isArray(networkIDs) ? [...networkIDs] : [networkIDs];
 		this.networkIDs = ids;
 		this.originalNetworkIDs = originalNetworkIDs ? [...originalNetworkIDs] : [...ids];
-		this.fileAllocator = new FileAllocator(this.datasetRoot, () => this.dataServer.getDatasetLinkBindings(this.lishID));
+		this.fileAllocator = new FileAllocator(this.datasetRoot);
 	}
 
 	async init(lishPath: string): Promise<void> {

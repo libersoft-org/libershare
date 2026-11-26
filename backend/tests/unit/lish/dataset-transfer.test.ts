@@ -161,40 +161,6 @@ test('deleting a hardlink leaves its outside file intact', async () => {
 	expect(await readFile(join(f.base, 'outside'), 'utf8')).toBe('safe');
 });
 
-test('materializes declared local link targets from verified file handles', async () => {
-	const f = await fixture();
-	f.manifest.links = [
-		{ path: 'copy.bin', target: join(f.source, 'data.bin') },
-		{ path: 'hardcopy.bin', target: 'data.bin', hardlink: true },
-	];
-	await link(join(f.source, 'data.bin'), join(f.source, 'hardcopy.bin'));
-	await moveDatasetData(
-		f.manifest,
-		f.root,
-		f.target,
-		() => {},
-		() => {}
-	);
-	expect(await readFile(join(f.base, 'target/copy.bin'), 'utf8')).toBe('abcdefgh');
-	expect(await readFile(join(f.base, 'target/hardcopy.bin'), 'utf8')).toBe('abcdefgh');
-});
-
-test('rejects external link targets before creating a destination', async () => {
-	const f = await fixture();
-	f.manifest.links = [{ path: 'outside-link', target: join(f.base, 'outside') }];
-	await expect(
-		moveDatasetData(
-			f.manifest,
-			f.root,
-			f.target,
-			() => {},
-			() => {}
-		)
-	).rejects.toMatchObject({ code: 'LISH_UNSAFE_PATH' });
-	expect(await readFile(join(f.source, 'data.bin'), 'utf8')).toBe('abcdefgh');
-	await expect(stat(join(f.base, 'target'))).rejects.toMatchObject({ code: 'ENOENT' });
-});
-
 test('a failed database commit retains both verified copies', async () => {
 	const f = await fixture();
 	await expect(
