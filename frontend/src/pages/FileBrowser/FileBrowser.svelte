@@ -11,7 +11,7 @@
 	import { pushBreadcrumb, popBreadcrumb } from '../../scripts/navigation.ts';
 	import { api } from '../../scripts/api.ts';
 	import { getParentPath, loadDirectoryFromAPI, createParentEntry, isAtRoot, getCurrentDirName, buildDirectoryActions, buildFilterActions, deleteFileOrDirectory, createDirectory, openFile, renameFile, getFileSystemInfo, joinPathWithSeparator, getFileActions, type LoadDirectoryOptions } from '../../scripts/fileBrowser.ts';
-	import { scrollToElement, formatSize } from '../../scripts/utils.ts';
+	import { formatSize } from '../../scripts/utils.ts';
 	import { type StorageItemData } from '../../scripts/storage.ts';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Input from '../../components/Input/Input.svelte';
@@ -73,7 +73,13 @@
 	let showActions = $state(false);
 	let actionsScope: ReturnType<typeof NavScope> | undefined = $state();
 	let showFilterPanel = $state(false);
-	let itemElements: HTMLElement[] = $state([]);
+	// Only the rows near the viewport are in the DOM; a folder can hold tens of thousands of entries.
+	// shortcut: the list is as tall as all rows, so past the browser's element height limit (hundreds of thousands of rows) its end cannot be scrolled to; page the listing then.
+	const OVERSCAN_ROWS = 10;
+	let itemsEl: HTMLElement | undefined = $state();
+	let rowHeight = $state(0);
+	let listScrollTop = $state(0);
+	let listHeight = $state(0);
 	let currentPath = $state<string>('');
 	let parentPath = $state<string | null>(null);
 	let items = $state<StorageItemData[]>([]);
@@ -128,11 +134,32 @@
 		return items.filter(item => item.name === '..' || item.name.toLowerCase().includes(q));
 	});
 	let selectedItem = $derived(filteredItems[selectedIndex]);
+	// A list that is not height-limited by its page reports its whole content as its height.
+	let visibleRows = $derived(rowHeight ? Math.ceil(Math.min(listHeight, window.innerHeight) / rowHeight) : 50);
+	// Always an even row: the table stripes its rows by their place among the drawn ones, so a row keeps its stripe only while an even number of rows is left out above it.
+	let firstRow = $derived(rowHeight ? Math.max(0, Math.min(filteredItems.length - 1, Math.floor(listScrollTop / rowHeight)) - OVERSCAN_ROWS) & ~1 : 0);
+	let lastRow = $derived(Math.min(filteredItems.length, firstRow + visibleRows + 2 * OVERSCAN_ROWS));
+
+	// Rows are sized in vh, so their height is read from the first one drawn, again after a resize.
+	$effect(() => {
+		void listHeight;
+		const row = !loading && filteredItems.length > 0 ? itemsEl?.querySelector('.row') : null;
+		if (!row || !itemsEl) return;
+		const height = row.getBoundingClientRect().height;
+		const resized = height !== rowHeight;
+		rowHeight = height;
+		// The list may have been cut short or replaced without a scroll event.
+		listScrollTop = itemsEl.scrollTop;
+		// The scroll position stands for a row only at the height it was set with: unknown for the first folder, other after a resize.
+		if (resized) tick().then(scrollToSelected);
+	});
 
 	function handleNameFilterChange(_value: string): void {
 		// nameFilter is bound; just reset selection on filter change
 		selectedIndex = 0;
 		showActions = false;
+		// A shorter list is otherwise left scrolled to where the longer one was cut.
+		tick().then(scrollToSelected);
 	}
 	// Directory toolbar actions
 	let directoryActions = $derived(buildDirectoryActions($t, filesOnly, showAllFiles, fileFilter, fileFilterName, selectDirectoryButton, customFilter ?? undefined, currentPath, showNameFilter, !!onShare));
@@ -182,7 +209,12 @@
 	}
 
 	function scrollToSelected(): void {
-		scrollToElement(itemElements, selectedIndex);
+		if (!itemsEl || !rowHeight) return;
+		// A glide over rows that are not drawn shows an empty list and takes seconds in a big folder, so a far row is jumped to.
+		const drawn = selectedIndex >= firstRow && selectedIndex < lastRow;
+		itemsEl.scrollTo({ top: selectedIndex * rowHeight - (itemsEl.clientHeight - rowHeight) / 2, behavior: drawn ? 'smooth' : 'instant' });
+		// Draw the rows at the landing place now, not a frame later when the scroll event arrives.
+		if (!drawn) listScrollTop = itemsEl.scrollTop;
 	}
 
 	// Keep a scroll under a stale cursor from stealing selection. While a panel is open,
@@ -791,10 +823,6 @@
 		return currentPath;
 	}
 
-	export function getItemElements(): HTMLElement[] {
-		return itemElements;
-	}
-
 	onMount(() => {
 		// The sub-areas are NavScopes in the markup and registered themselves before this runs.
 		activateArea(`${areaID}-list`);
@@ -853,6 +881,13 @@
 		flex: 1;
 		overflow-y: auto;
 		font-size: 1.4vh;
+	}
+
+	/* Only some rows are drawn and each is placed by one row height, so every row is exactly that tall, whatever font its text falls back to. */
+	.items :global(.row) {
+		box-sizing: border-box;
+		height: 5.5vh;
+		overflow: hidden;
 	}
 
 	.items .loading {
@@ -953,19 +988,22 @@
 								<Cell align="right" desktopOnly>{$t('common.size')}</Cell>
 								<Cell align="right" desktopOnly>{$t('localStorage.modified')}</Cell>
 							</Header>
-							<div class="items">
+							<div class="items" bind:this={itemsEl} bind:clientHeight={listHeight} onscroll={() => (listScrollTop = itemsEl?.scrollTop ?? 0)}>
 								{#if loading}
 									<div class="loading">
 										<Spinner size="8vh" />
 									</div>
-								{:else if error}
-									{#each filteredItems as item, index (item.id)}
-										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
-									{/each}
 								{:else}
-									{#each filteredItems as item, index (item.id)}
-										<StorageItem bind:el={itemElements[index]} name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
-									{/each}
+									<!-- Padding stands in for the rows above that are not drawn, so the drawn ones are counted from the first; a spacer stands in for those below, none after the last row, so it stays :last-child. -->
+									<div style:padding-top="{firstRow * rowHeight}px">
+										{#each filteredItems.slice(firstRow, lastRow) as item, offset (item.id)}
+											{@const index = firstRow + offset}
+											<StorageItem name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+										{/each}
+										{#if lastRow < filteredItems.length}
+											<div style:height="{(filteredItems.length - lastRow) * rowHeight}px"></div>
+										{/if}
+									</div>
 								{/if}
 							</div>
 						</Table>

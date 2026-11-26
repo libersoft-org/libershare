@@ -243,11 +243,121 @@
 				await press('down');
 				assert(selectedAction() === label('fileBrowser.editFile'), `Down after the click: ${selectedAction()}`);
 			});
+			await test('a folder with thousands of entries draws only the rows near the viewport and the list keys still reach them', async () => {
+				await unmount(component);
+				// The list scrolls only inside a page of limited height, as in the app.
+				root.style.height = '600px';
+				listings['/home/user/big'] = Array.from({ length: 20000 }, (_, index) => ({ name: `entry-${String(index).padStart(5, '0')}.txt`, path: `/home/user/big/entry-${index}.txt`, type: 'file', size: 1 }));
+				component = await open({ initialPath: '/home/user/big' });
+				assert(rows().length > 1 && rows().length < 200, `Drew ${rows().length} rows of 20001`);
+				// The list scrolls smoothly, so the selected row is drawn a few frames after the key.
+				const selects = async text => {
+					for (let wait = 0; wait < 100 && !selectedRowText().includes(text); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+					return selectedRowText().includes(text);
+				};
+				await press('end');
+				assert(await selects('entry-19999.txt'), `End selected ${selectedRowText()}`);
+				assert(rows().length < 200, `Drew ${rows().length} rows at the end`);
+				await press('pageUp');
+				assert(await selects('entry-19989.txt'), `Page up selected ${selectedRowText()}`);
+				for (const char of 'entry-1') emitTypedChar(char);
+				assert(await selects('entry-10000.txt'), `Typing selected ${selectedRowText()}`);
+				await press('home');
+				assert(await selects('..'), `Home selected ${selectedRowText()}`);
+			});
+			await test('a far row is jumped to at once, not glided to', async () => {
+				const items = root.querySelector('.items');
+				// No waiting here: a glide over thousands of rows that are not drawn would still be on its way.
+				await press('end');
+				assert(selectedRowText().includes('entry-19999.txt'), `End drew ${rows().length} rows and selected "${selectedRowText()}"`);
+				assert(items.scrollTop + items.clientHeight >= items.scrollHeight - 2, `End left the list at ${items.scrollTop} of ${items.scrollHeight}`);
+				await press('home');
+				assert(selectedRow() === 0 && items.scrollTop === 0, `Home left the list at ${items.scrollTop} with row ${selectedRow()} selected`);
+			});
+			await test('the selected row stays in view when the rows change height', async () => {
+				const items = root.querySelector('.items');
+				await press('end', 'pageUp');
+				assert(selectedRowText().includes('entry-19989.txt'), `Selected "${selectedRowText()}"`);
+				// Rows are sized in vh: taller rows in a shorter list stand in for a resized window.
+				const style = document.head.appendChild(document.createElement('style'));
+				style.textContent = '.items .row { height: 110px !important; }';
+				root.style.height = '500px';
+				const inView = () => {
+					const row = rows()[selectedRow()]?.getBoundingClientRect();
+					const box = items.getBoundingClientRect();
+					return !!row && row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+				};
+				for (let wait = 0; wait < 40 && !inView(); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+				const shown = inView();
+				const firstDrawn = rows()[0]?.textContent.trim();
+				style.remove();
+				root.style.height = '600px';
+				assert(shown, `After the resize the list starts at "${firstDrawn}" and the selected row is not in view`);
+			});
+			await test('a far row found by typing lands in view even when the text of the rows wants more height', async () => {
+				const items = root.querySelector('.items');
+				// The last test gave the rows their own height back; the list measures them in the next frame.
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				await press('home');
+				// A name in a script the font does not cover is drawn in a taller fallback font; larger text stands in for it.
+				const style = document.head.appendChild(document.createElement('style'));
+				style.textContent = '.items .row .name span, .items .row .content { font-size: 4vh; }';
+				// The letters an earlier test typed are forgotten 800 ms after the last one; until then these would be added to them.
+				await new Promise(resolve => setTimeout(resolve, 900));
+				for (const char of 'entry-19') emitTypedChar(char);
+				const inView = () => {
+					const row = rows()[selectedRow()]?.getBoundingClientRect();
+					const box = items.getBoundingClientRect();
+					return !!row && row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+				};
+				for (let wait = 0; wait < 60 && !(selectedRowText().includes('entry-19000.txt') && inView()); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+				const found = selectedRowText();
+				const shown = inView();
+				const heights = new Set(rows().map(row => Math.round(row.getBoundingClientRect().height)));
+				style.remove();
+				assert(found.includes('entry-19000.txt') && shown, `Typing selected "${found}", in view: ${shown}`);
+				assert(heights.size === 1, `The drawn rows are ${[...heights].join(', ')} px tall`);
+			});
+			await test('a row keeps its stripe while the list scrolls', async () => {
+				const items = root.querySelector('.items');
+				const height = rows()[0].getBoundingClientRect().height;
+				const stripe = async name => {
+					for (let wait = 0; wait < 40 && !rows().some(row => row.textContent.includes(name)); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+					const row = rows().find(candidate => candidate.textContent.includes(name));
+					return row ? getComputedStyle(row).backgroundColor : 'not drawn';
+				};
+				// Half a row in, so that rounding the scroll position never decides which row is the first.
+				items.scrollTop = 5000.5 * height;
+				const before = await stripe('entry-05010.txt');
+				assert(before.startsWith('rgb'), `The row is ${before} at ${items.scrollTop} of ${items.scrollHeight}, drawn from "${rows()[0]?.textContent.trim()}"`);
+				for (const step of [1, 2, 3]) {
+					items.scrollTop = (5000.5 + step) * height;
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					const after = await stripe('entry-05010.txt');
+					assert(after === before, `Scrolled by ${step} rows, the row went from ${before} to ${after}`);
+				}
+			});
+			await test('typing in the name filter shows the top of the shorter list', async () => {
+				const items = root.querySelector('.items');
+				// The last test gave the rows their own height back; the list measures them in the next frame.
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				await press('home', 'up');
+				await walkToolbarTo(label('fileBrowser.showNameFilter'));
+				await press('confirmDown', 'confirmUp');
+				const input = root.querySelector('.name-filter-row input');
+				input.blur();
+				await press('down', 'end');
+				assert(selectedRowText().includes('entry-19999.txt'), `End selected "${selectedRowText()}"`);
+				input.value = 'entry-1';
+				input.dispatchEvent(new Event('input', { bubbles: true }));
+				for (let wait = 0; wait < 40 && items.scrollTop !== 0; wait++) await new Promise(resolve => setTimeout(resolve, 50));
+				assert(rows().length > 1 && items.scrollTop === 0, `The filtered list of ${rows().length} drawn rows is scrolled to ${items.scrollTop}`);
+			});
 		} finally {
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 13 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 19 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
