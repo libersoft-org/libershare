@@ -1,4 +1,5 @@
 import { CString, type Library } from 'bun:ffi';
+import { productName } from '@shared';
 import { loadSystemLibrary } from '../library.ts';
 import { CoreFoundation, type CFRef, type CFValue } from './cf.ts';
 
@@ -67,7 +68,7 @@ export class DarwinNetworkSession {
 			library = loadSystemLibrary(SYSTEM_CONFIGURATION, symbols);
 			this.library = library;
 			this.sc = library.symbols;
-			const name = this.cf.createString('LiberShare network settings');
+			const name = this.cf.createString(`${productName} network settings`);
 			this.preferences = this.cf.own(this.sc.SCPreferencesCreate(0n, name, 0n));
 			this.store = this.cf.own(this.sc.SCDynamicStoreCreate(0n, name, null, null));
 		} catch (error) {
