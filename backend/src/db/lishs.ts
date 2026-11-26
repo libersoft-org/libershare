@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { type IStoredLISH, type LISHid } from '@shared';
+import { CodedError, ErrorCodes, isVerifiedLISH, type IStoredLISH, type LISHChecks, type LISHid } from '@shared';
 import { getInternalID } from './lishs-schema.ts';
 
 // Schema/DDL + migrations (and the shared getInternalID resolver) live in
@@ -22,12 +22,45 @@ export function lishExists(db: Database, lishID: LISHid): boolean {
 	return (row?.c ?? 0) > 0;
 }
 
-export function addLISH(db: Database, lish: IStoredLISH): void {
+/** Options of {@link addLISH}. */
+export interface AddLISHOptions {
+	/** Refuse with `LISH_ALREADY_EXISTS` when the ID is already stored (checked inside the write). */
+	readonly requireNew?: boolean;
+	/**
+	 * What checking the manifest found when the user added it. A manifest that claimed a signature
+	 * and failed a check is stored as it came, and these failed checks are what tells it from a
+	 * verified one; without them the row keeps what it has.
+	 */
+	readonly checks?: LISHChecks;
+}
+
+/** The two checks of a signed manifest as bits: 1 the signature matches, 2 the ID belongs to the publisher. */
+function failedChecksBits(checks: LISHChecks): number | null {
+	if (!checks.signed || isVerifiedLISH(checks)) return null;
+	return (checks.signatureValid ? 1 : 0) | (checks.idMatchesPublisher ? 2 : 0);
+}
+
+/** How a refusal names a publisher: unsigned, verified, or only named by a manifest that failed a check. */
+export function describePublisher(publisher: string | null, verified: boolean): string {
+	if (publisher === null) return 'unsigned';
+	return verified ? publisher : `${publisher} (not verified)`;
+}
+
+export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions = {}): void {
 	const tx = db.transaction(() => {
+		// The final check against concurrent writers: whatever was verified before an await, the row
+		// as it is now decides. An item keeps for its whole life the publisher its manifest names
+		// (or stays unsigned), and whether that publisher was verified.
+		const stored = db.query<{ publisher: string | null; signature_checks: number | null }, [string]>('SELECT publisher, signature_checks FROM lishs WHERE lish_id = ?').get(lish.id);
+		if (stored && options.requireNew) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
+		const publisher = lish.publisher ?? null;
+		// A write that gives no checks comes from a caller that takes only verified or unsigned manifests.
+		const verified = publisher !== null && (options.checks === undefined || isVerifiedLISH(options.checks));
+		if (stored && (stored.publisher !== publisher || (stored.publisher !== null && stored.signature_checks === null) !== verified)) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${describePublisher(stored.publisher, stored.signature_checks === null)}, received ${describePublisher(publisher, verified)}`);
 		// Upsert main record — preserves upload_enabled/download_enabled on conflict
 		db.run(
-			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version, nonce)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(lish_id) DO UPDATE SET
 			   name = excluded.name,
 			   description = excluded.description,
@@ -35,9 +68,17 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 			   chunk_size = excluded.chunk_size,
 			   checksum_algo = excluded.checksum_algo,
 			   directory = excluded.directory,
-			   final_directory = excluded.final_directory`,
-			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null]
+			   final_directory = excluded.final_directory,
+			   publisher = excluded.publisher,
+			   signature = excluded.signature,
+			   version = excluded.version,
+			   nonce = excluded.nonce`,
+			[lish.id, lish.name ?? null, lish.description ?? null, lish.created ?? null, lish.chunkSize, lish.checksumAlgo, lish.directory ?? null, lish.finalDirectory ?? null, publisher, lish.signature ?? null, lish.version ?? null, lish.nonce ?? null]
 		);
+		if (options.checks) db.run('UPDATE lishs SET signature_checks = ? WHERE lish_id = ?', [failedChecksBits(options.checks), lish.id]);
+		// A signed body is replaced whole: a collection it leaves out is empty, never "keep the old
+		// rows", or the stored body would no longer match its signature.
+		if (lish.signature !== undefined) lish = { ...lish, files: lish.files ?? [], directories: lish.directories ?? [], links: lish.links ?? [] };
 		const internalID = getInternalID(db, lish.id as LISHid)!;
 
 		// Replace child records only when replacement data is provided (prevents wiping download progress)

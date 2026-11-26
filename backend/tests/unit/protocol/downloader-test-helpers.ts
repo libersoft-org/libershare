@@ -126,6 +126,16 @@ export class MockDataServer {
 		return this.storedLishs.get(lishID) ?? null;
 	}
 
+	getPublisher(lishID: LISHid): string | null | undefined {
+		const stored = this.storedLishs.get(lishID);
+		return stored ? (stored.publisher ?? null) : undefined;
+	}
+
+	/** Every item of this mock counts as verified, so the publisher it names is the verified one. */
+	getNamedPublisher(lishID: LISHid): string | null | undefined {
+		return this.getPublisher(lishID);
+	}
+
 	isCompleteLISH(lish: IStoredLISH): boolean {
 		return this.completeLishs.has(lish.id);
 	}

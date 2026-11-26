@@ -11,6 +11,7 @@ import { peerIdFromString as peerIDFromString } from '@libp2p/peer-id';
 import { join } from 'path';
 import { trace } from '../logger.ts';
 import { DataServer } from '../lish/data-server.ts';
+import { signManifestAs } from '../lish/manifest-signature.ts';
 import { type Settings } from '../settings.ts';
 import { LISH_PROTOCOL, handleLISHProtocol } from './lish-protocol.ts';
 import { buildLibp2pConfig, PEERSTORE_MAX_PEER_AGE_MS } from './network-config.ts';
@@ -19,7 +20,7 @@ import { type WantMessage } from './downloader.ts';
 import { lishTopic, LISH_TOPIC_PREFIX } from './constants.ts';
 import { getLocalCidrs, shouldDenyDial } from './address-filter.ts';
 import { canonicalMultiaddr, extractDestinationPeerID } from './multiaddr-utils.ts';
-import { CodedError, ErrorCodes, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
+import { CodedError, ErrorCodes, type ILISH, type NetworkNodeInfo, type PeerConnectionInfo, type IMeshHealth, type BootstrapStatus, type BootstrapPeerDialStatus, type BootstrapPeerOrigin } from '@shared';
 import { Circuit } from '@multiformats/multiaddr-matcher';
 import { createTopicScoreParams } from '@libp2p/gossipsub/score';
 import { type MeshPeer, type SubscriptionChangeData } from '@libp2p/gossipsub';
@@ -3927,6 +3928,28 @@ export class Network {
 		if (!this.node || !this.currentPrivateKey) return null;
 		const bytes = privateKeyToProtobuf(this.currentPrivateKey);
 		return { peerID: this.node.peerId.toString(), privateKeyBytes: bytes };
+	}
+
+	/**
+	 * Sign a manifest as its publisher with the node identity. The key is captured once, so the
+	 * `publisher` written into the manifest and the signature always belong to the same key even
+	 * if the identity is replaced meanwhile. Only manifest bytes are ever signed with it.
+	 */
+	async signManifest(lish: ILISH): Promise<ILISH> {
+		return signManifestAs(this.signingKey(), lish);
+	}
+
+	/** Throws what {@link signManifest} would throw right now, so a caller can refuse before long work. */
+	assertCanSign(): void {
+		this.signingKey();
+	}
+
+	private signingKey(): PrivateKey {
+		// Only a running node: while starting, stopping or after a failed stop the key still exists.
+		const key = this.isRunning() && this.node ? this.currentPrivateKey : null;
+		if (!key) throw new CodedError(ErrorCodes.NETWORK_NOT_RUNNING);
+		if (key.type !== 'Ed25519') throw new CodedError(ErrorCodes.LISH_SIGNING_UNSUPPORTED_KEY, key.type);
+		return key;
 	}
 
 	/**

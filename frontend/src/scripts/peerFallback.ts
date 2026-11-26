@@ -2,6 +2,7 @@
  * Peer fallback loop shared by the search-result actions (add to sharing, load detail).
  * Pure module — no Svelte imports — so the retry classification is unit-testable.
  */
+import { unverifiedLISHFromError } from '@shared';
 
 /** A single peer offering a LISH, as listed in a search result. */
 export interface PeerRef {
@@ -24,33 +25,53 @@ export const FALLBACK_DEADLINE_MS = 5 * 60 * 1000;
  * caller explicitly flagged `tryNextPeer`. Local errors (e.g. LISH already added)
  * are not retryable — they would fail identically on every peer.
  *
- * `LISH_CHUNK_SIZE_TOO_LARGE` counts as local: the chunk size is written in the LISH
- * itself, so every honest peer answers with the same value. Walking the whole peer list
- * only makes the user watch each row fail before the identical error appears at the end.
+ * A manifest refused for its signature, publisher or shape is the fault of the peer that
+ * served it, so the next peer is asked, as `LISH_NETWORK_PROTOCOL.md` describes.
+ *
+ * `LISH_CHUNK_SIZE_TOO_LARGE` asks the next peer too, as the downloader does: any peer can
+ * claim an over-limit chunk size under this ID, so one answer does not settle the LISH.
+ * When no peer gives the LISH, the loop ends with that error.
+ *
+ * A signed manifest that fails a check (`LISH_INVALID_SIGNATURE`, `LISH_ID_MISMATCH`) may be
+ * one peer's doing, so the next peer is asked before the user is. An unsigned manifest
+ * (`LISH_UNSIGNED`) is what every peer of an unsigned LISH serves: the user is asked at once.
  */
 export function isRetryablePeerError(error: unknown): boolean {
 	if ((error as { tryNextPeer?: boolean } | null)?.tryNextPeer) return true;
 	const code = (error as { code?: unknown } | null)?.code;
 	if (typeof code !== 'string') return false;
-	return code.startsWith('PEER_');
+	return code.startsWith('PEER_') || PEER_MANIFEST_REFUSALS.has(code);
 }
+
+function isOverLimitChunkSize(error: unknown): boolean {
+	return (error as { code?: unknown } | null)?.code === 'LISH_CHUNK_SIZE_TOO_LARGE';
+}
+
+const PEER_MANIFEST_REFUSALS: ReadonlySet<string> = new Set(['LISH_INVALID_SIGNATURE', 'LISH_ID_MISMATCH', 'LISH_PUBLISHER_MISMATCH', 'LISH_INVALID_MANIFEST', 'LISH_CHUNK_SIZE_TOO_LARGE']);
 
 /**
  * Try each peer offering a LISH in turn until one answers, returning its result.
  * Realises the card's "take it from the first peer; if it times out, the next, and so on"
  * fallback: `getPeerLish` / `addPeerLish` target a single peer, so the loop provides the
  * resilience. Only retryable failures (see {@link isRetryablePeerError}) move on to the
- * next peer — local errors surface immediately. Throws the last error if every peer failed;
- * an empty peer list rejects immediately, so callers should guard it with their own UX.
+ * next peer — local errors surface immediately. Throws the last error if every peer failed,
+ * except that an over-limit chunk size from any peer wins: it is the one the user can act on,
+ * and a peer that later cannot be reached must not hide it. After it comes the manifest the
+ * backend is holding for the user's answer, for the same reason. An empty peer list rejects
+ * immediately, so callers should guard it with their own UX.
  *
  * `onStatus` reports per-peer progress for the peer table rows: `downloading` when an
  * attempt starts, then `downloaded` or `unavailable` with its outcome. Statuses are not
  * cleared when the loop ends — the outcome stays visible — except after a non-retryable
  * error, where the in-flight peer gets `null`: the failure is local, so branding the peer
- * unavailable would be wrong. Callers reset all statuses when they start a new run.
+ * unavailable would be wrong. An over-limit chunk size moves on to the next peer but also
+ * gets `null`, as every honest peer of such a LISH answers the same. Callers reset all
+ * statuses when they start a new run.
  */
 export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID: string, networkID: string) => Promise<T>, onStatus?: (index: number, status: PeerAttemptStatus | null) => void, deadlineMs: number = FALLBACK_DEADLINE_MS): Promise<T> {
 	let lastErr: unknown = new Error('no peers');
+	let overLimit: unknown;
+	let unverified: unknown;
 	const deadline = performance.now() + deadlineMs;
 	for (let i = 0; i < peers.length; i++) {
 		if (i > 0 && performance.now() >= deadline) break;
@@ -65,9 +86,14 @@ export async function withPeerFallback<T>(peers: readonly PeerRef[], op: (peerID
 				onStatus?.(i, null);
 				throw e;
 			}
-			onStatus?.(i, 'unavailable');
+			if (isOverLimitChunkSize(e)) {
+				overLimit = e;
+				onStatus?.(i, null);
+			} else onStatus?.(i, 'unavailable');
+			// The backend holds one manifest per LISH, the latest: an earlier answer of this kind is gone by now.
+			if (unverifiedLISHFromError(e)?.token) unverified = e;
 			lastErr = e;
 		}
 	}
-	throw lastErr;
+	throw overLimit ?? unverified ?? lastErr;
 }

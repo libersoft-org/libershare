@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILinkEntry, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
+import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILinkEntry, type ILISHSummary, type ILISHDetail, type LISHChecks, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
 import { getVerificationProgress, getFileVerificationProgress } from './lishs-verification.ts';
 
 interface LISHRow {
@@ -12,6 +12,10 @@ interface LISHRow {
 	checksum_algo: string;
 	directory: string | null;
 	final_directory: string | null;
+	publisher: string | null;
+	signature: string | null;
+	version: number | null;
+	nonce: string | null;
 }
 
 interface LISHFileRow {
@@ -30,6 +34,7 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 
 	return {
 		id: row.lish_id,
+		...(row.version != null ? { version: row.version } : {}),
 		name: row.name ?? undefined,
 		description: row.description ?? undefined,
 		created: row.created ?? '',
@@ -41,6 +46,7 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 		...(directories.length > 0 ? { directories } : {}),
 		...(links.length > 0 ? { links } : {}),
 		...(chunks.length > 0 ? { chunks } : {}),
+		...(row.publisher != null && row.signature != null ? { publisher: row.publisher, signature: row.signature, ...(row.nonce != null ? { nonce: row.nonce } : {}) } : {}),
 	};
 }
 
@@ -107,7 +113,7 @@ function getHaveChunksList(db: Database, internalID: number): string[] {
 
 /** Returns the full stored LISH (including files, directories, links, have-chunks) or null. */
 export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
-	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null; version: number | null; nonce: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version, nonce FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 	return buildStoredLISH(db, row);
 }
@@ -119,16 +125,25 @@ export interface LISHMeta {
 	chunkSize: number;
 	checksumAlgo: HashAlgorithm;
 	directory: string | null;
+	/** The publisher the manifest was verified as; `null` when it is unsigned or failed a check. */
+	publisher: string | null;
+	/** The publisher the manifest names, verified or not; `null` when it is unsigned. */
+	namedPublisher: string | null;
 }
 
 /**
  * Returns a lightweight metadata-only view of a LISH (no files/directories/links).
- * Used by callers that only need directory, chunkSize, and checksumAlgo (e.g. chunk I/O).
+ * Used by callers that only need directory, chunkSize, checksumAlgo or publisher (e.g. chunk I/O).
  */
 export function getLISHMeta(db: Database, lishID: LISHid): LISHMeta | null {
-	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null; publisher: string | null; signature_checks: number | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory, publisher, signature_checks FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
-	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory };
+	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory, publisher: verifiedPublisher(row.publisher, row.signature_checks), namedPublisher: row.publisher };
+}
+
+/** A manifest is stored as it came, so a row has a publisher whenever it is signed; the failed checks say when that publisher is only named. */
+function verifiedPublisher(publisher: string | null, failed: number | null): string | null {
+	return failed == null ? publisher : null;
 }
 
 /** Returns summary rows for all stored LISHs, with optional sorting. */
@@ -168,6 +183,7 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 				total_downloaded_bytes: number;
 				error_code: string | null;
 				error_detail: string | null;
+				publisher: string | null;
 			},
 			[]
 		>(
@@ -185,7 +201,8 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 			l.total_uploaded_bytes,
 			l.total_downloaded_bytes,
 			l.error_code,
-			l.error_detail
+			l.error_detail,
+			CASE WHEN l.signature_checks IS NULL THEN l.publisher END AS publisher
 		FROM lishs l
 		LEFT JOIN (
 			SELECT id_lishs, SUM(size) AS total_size, COUNT(*) AS file_count
@@ -222,12 +239,13 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 		totalDownloadedBytes: r.total_downloaded_bytes,
 		errorCode: r.error_code ?? undefined,
 		errorDetail: r.error_detail ?? undefined,
+		...(r.publisher != null ? { publisher: r.publisher } : {}),
 	}));
 }
 
 /** Returns detailed view of a LISH including file-level verification progress, or null. */
 export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null {
-	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; total_uploaded_bytes: number; total_downloaded_bytes: number }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, total_uploaded_bytes, total_downloaded_bytes FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; total_uploaded_bytes: number; total_downloaded_bytes: number; publisher: string | null; signature_checks: number | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, total_uploaded_bytes, total_downloaded_bytes, publisher, signature_checks FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 
 	const files = getFiles(db, row.id);
@@ -258,17 +276,28 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 		totalChunks: vp.totalChunks,
 		totalUploadedBytes: row.total_uploaded_bytes,
 		totalDownloadedBytes: row.total_downloaded_bytes,
+		...(verifiedPublisher(row.publisher, row.signature_checks) != null ? { publisher: row.publisher! } : {}),
+		checks: storedChecks(row.publisher, row.signature_checks),
 	};
+}
+
+/**
+ * The checks of a stored item. A row keeps the failed checks of a signed manifest the user added
+ * anyway; a signed row without them passed every check, and any other row is unsigned.
+ */
+function storedChecks(publisher: string | null, failed: number | null): LISHChecks {
+	if (failed != null) return { signed: true, signatureValid: (failed & 1) !== 0, idMatchesPublisher: (failed & 2) !== 0 };
+	return publisher != null ? { signed: true, signatureValid: true, idMatchesPublisher: true } : { signed: false };
 }
 
 /** Returns all stored LISHs in insertion order (for startup hydration). */
 export function listAllStoredLISHs(db: Database): IStoredLISH[] {
-	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs ORDER BY added ASC').all();
+	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null; version: number | null; nonce: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version, nonce FROM lishs ORDER BY added ASC').all();
 	return rows.map(r => buildStoredLISH(db, r));
 }
 
 /** Returns LISHs that have a non-null directory (i.e. are bound to a local dataset path). */
 export function getDatasets(db: Database): IStoredLISH[] {
-	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs WHERE directory IS NOT NULL ORDER BY added ASC').all();
+	const rows = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null; publisher: string | null; signature: string | null; version: number | null; nonce: string | null }, []>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version, nonce FROM lishs WHERE directory IS NOT NULL ORDER BY added ASC').all();
 	return rows.map(r => buildStoredLISH(db, r));
 }

@@ -9,6 +9,8 @@ import { DataServer } from '../../../src/lish/data-server.ts';
 import { Settings } from '../../../src/settings.ts';
 import { initLISHsHandlers } from '../../../src/api/lishs.ts';
 import { initLISHnetsHandlers } from '../../../src/api/lishnets.ts';
+import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
+import { fixedIDOf, signFixed } from '../helpers/signing.ts';
 
 /**
  * Adding another peer's LISH, end to end, with the store that actually keeps it — and a
@@ -23,7 +25,12 @@ import { initLISHnetsHandlers } from '../../../src/api/lishnets.ts';
  * there alone would leave this test green.
  */
 
-const LISH_ID = 'add-peer-real-import-test';
+// Signed, so the add needs no answer from the user and runs through in one call.
+const key = await generateKeyPairFromSeed(
+	'Ed25519',
+	Uint8Array.from({ length: 32 }, (_, i) => i + 1)
+);
+const LISH_ID = fixedIDOf(key);
 
 let dataDir: string;
 let downloadDir: string;
@@ -35,15 +42,18 @@ let lishnets: ReturnType<typeof initLISHnetsHandlers>;
 /** Releases the manifest response the peer is holding back. */
 let deliverManifest: () => void;
 
-function manifest(): unknown {
-	return {
-		id: LISH_ID,
-		created: '2026-01-01T00:00:00.000Z',
-		chunkSize: 1024,
-		checksumAlgo: 'sha256',
-		name: 'Add peer real import',
-		files: [{ path: 'a.bin', size: 1024, checksums: ['deadbeef'] }],
-	};
+function manifest(): Promise<unknown> {
+	return signFixed(
+		{
+			id: LISH_ID,
+			created: '2026-01-01T00:00:00.000Z',
+			chunkSize: 1024,
+			checksumAlgo: 'sha256',
+			name: 'Add peer real import',
+			files: [{ path: 'a.bin', size: 1024, checksums: ['deadbeef'] }],
+		} as never,
+		key
+	);
 }
 
 /** A stream that answers the manifest request only once `deliverManifest` is called. */
@@ -53,7 +63,7 @@ function heldStream(): any {
 	});
 	async function* source() {
 		await held;
-		yield lpEncode.single(codecEncode({ manifest: manifest() })).subarray();
+		yield lpEncode.single(codecEncode({ manifest: await manifest() })).subarray();
 	}
 	return { status: 'open', send() {}, close: async () => {}, [Symbol.asyncIterator]: source };
 }

@@ -111,7 +111,7 @@ export class APIClient {
 					const pending = this.pending.get(msg.id);
 					if (pending) {
 						this.pending.delete(msg.id);
-						if (msg.error) pending.reject(this.error(String(msg.error)));
+						if (msg.error) pending.reject(Object.assign(this.error(String(msg.error)), { code: msg.error, detail: msg.errorDetail }));
 						else pending.resolve(msg.result);
 					}
 				} else if (msg.event) {

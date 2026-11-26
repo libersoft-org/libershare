@@ -116,7 +116,7 @@ function preClaimedChunksJSON(): string {
 
 describe('lishs.importFromJSON', () => {
 	it('drops an imported finalDirectory on a share-only import', async () => {
-		await handlers.importFromJSON({ json: hostileManifestJSON(), downloadPath: downloadDir, enableSharing: true });
+		await handlers.importFromJSON({ json: hostileManifestJSON(), downloadPath: downloadDir, enableSharing: true, acceptUnverified: true });
 		const stored = dataServer.get(IMPORT_ID);
 		expect(stored).not.toBeNull();
 		expect(stored!.finalDirectory).toBeUndefined();
@@ -125,7 +125,7 @@ describe('lishs.importFromJSON', () => {
 	});
 
 	it('does not let an imported chunk list pre-flag chunks as downloaded', async () => {
-		await handlers.importFromJSON({ json: preClaimedChunksJSON(), downloadPath: downloadDir, enableSharing: true });
+		await handlers.importFromJSON({ json: preClaimedChunksJSON(), downloadPath: downloadDir, enableSharing: true, acceptUnverified: true });
 		const added = broadcasts.find(b => b.event === 'lishs:add' && b.data?.id === CHUNK_IMPORT_ID);
 		expect(added).toBeDefined();
 		expect(added!.data.totalChunks).toBe(2);

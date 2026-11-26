@@ -2,7 +2,16 @@
 import * as readline from 'readline';
 import { join } from 'path';
 import { APIClient, withToken, redactTokens, displayURL } from './api-client';
-import { API, DEFAULT_API_URL, type NetworkMutationResponse, type SetLISHNetworkEnabledResponse } from '@shared';
+import { API, DEFAULT_API_URL, unverifiedLISHFromError, type NetworkMutationResponse, type SetLISHNetworkEnabledResponse, type UnverifiedLISH, type UnverifiedLISHCode } from '@shared';
+
+const ACCEPT_UNVERIFIED = '--accept-unverified';
+
+/** One line saying why a LISH is not verified. */
+function unverifiedReason(unverified: UnverifiedLISH & { code: UnverifiedLISHCode }): string {
+	if (unverified.code === 'LISH_INVALID_SIGNATURE') return `the signature does not match: the content changed after signing, or ${unverified.publisher ?? 'the stated publisher'} did not sign it`;
+	if (unverified.code === 'LISH_ID_MISMATCH') return `the ID does not belong to ${unverified.publisher ?? 'the publisher'}, who signed it`;
+	return 'it is not signed, so nobody vouches for what is in it';
+}
 
 const HELP = `
 Commands:
@@ -33,7 +42,9 @@ Commands:
   fs.mkdir <path>                   Create directory
   fs.delete <path>                  Delete file or directory
 
-  download <lishPath>              Download from .lish file
+  download [--accept-unverified] <lishPath>
+                                   Download from .lish file; the flag says you agree to
+                                   download a LISH that is unsigned or fails a signature check
   help                              Show this help
   quit                              Exit
 `;
@@ -397,15 +408,25 @@ async function main(): Promise<void> {
 
 				// ============ Top-level ============
 				case 'download': {
-					if (!arg) {
-						console.log('Usage: download <lishPath>');
+					const acceptUnverified = parts[1] === ACCEPT_UNVERIFIED;
+					const lishPath = acceptUnverified ? parts.slice(2).join(' ') : arg;
+					if (!lishPath) {
+						console.log(`Usage: download [${ACCEPT_UNVERIFIED}] <lishPath>`);
 						break;
 					}
 					const networkID = await getFirstNetworkID();
 					if (!networkID) break;
-					console.log(`Downloading: ${arg}`);
-					const result = await api.transfer.download(networkID, arg);
-					console.log(`✓ Download started. Directory: ${result.downloadDir}`);
+					console.log(`Downloading: ${lishPath}`);
+					try {
+						const result = await api.transfer.download(networkID, lishPath, acceptUnverified);
+						console.log(`✓ Download started. Directory: ${result.downloadDir}`);
+					} catch (error) {
+						// The backend adds a LISH that is not verified only when told the user agreed.
+						const unverified = unverifiedLISHFromError(error);
+						if (!unverified) throw error;
+						console.log(`✗ Not downloaded: ${unverifiedReason(unverified)}`);
+						console.log(`  To download it anyway: download ${ACCEPT_UNVERIFIED} ${lishPath}`);
+					}
 					break;
 				}
 

@@ -66,6 +66,7 @@ export const notificationTimeout = writable(5);
 export const defaultMinifyJSON = writable(false);
 export const defaultCompress = writable(false);
 export const defaultCompressionAlgorithm = writable<CompressionAlgorithm>('gzip');
+export const defaultSign = writable(false);
 
 /**
  * Master switch for mouse support. When false, MouseManager skips listener
@@ -168,6 +169,7 @@ export async function loadSettings(options: { throwOnError?: boolean } = {}): Pr
 		defaultMinifyJSON.set(settings.export.minifyJSON);
 		defaultCompress.set(settings.export.compress);
 		defaultCompressionAlgorithm.set(settings.export.compressionAlgorithm);
+		defaultSign.set(settings.export.sign === true);
 
 		// Input
 		inputInitialDelay.set(settings.input.initialDelay);
@@ -393,6 +395,10 @@ export function setDefaultCompress(enabled: boolean): void {
 
 export function setDefaultCompressionAlgorithm(algorithm: CompressionAlgorithm): void {
 	updateSetting(defaultCompressionAlgorithm, 'export.compressionAlgorithm', algorithm);
+}
+
+export function setDefaultSign(enabled: boolean): void {
+	updateSetting(defaultSign, 'export.sign', enabled);
 }
 
 // Volume helpers. The +/- controls update the local store immediately (drives

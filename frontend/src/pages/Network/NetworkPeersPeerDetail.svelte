@@ -9,6 +9,9 @@
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type PeerListEntry, type PeerLishEntry } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { unverifiedOffer, type UnverifiedOffer } from '../../scripts/lishVerification.ts';
+	import { answerUnverifiedOffers } from '../../scripts/lishUnverifiedAnswer.ts';
+	import UnverifiedLISHDialog from '../../components/Dialog/UnverifiedLISHDialog.svelte';
 	import { tick } from 'svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
@@ -22,17 +25,38 @@
 		peer: PeerListEntry;
 		networkID: string;
 		highlightLishID?: string | undefined;
+		/** Publisher of the search row that led here (`null` = unsigned); undefined when not from search. */
+		highlightPublisher?: string | null | undefined;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, peer, networkID, highlightLishID, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, peer, networkID, highlightLishID, highlightPublisher, onBack }: Props = $props();
+
+	/** The search target is the (ID, publisher) pair, not the ID alone. */
+	function isTarget(lish: PeerLishEntry): boolean {
+		return lish.id === highlightLishID && (highlightPublisher === undefined || (lish.publisher ?? null) === highlightPublisher);
+	}
+
+	/**
+	 * Publisher every manifest for this row must carry. The search target keeps the expectation the
+	 * user picked it by, even when this peer now reports someone else; other rows use their own.
+	 */
+	function expectedPublisherFor(lish: PeerLishEntry): string | null {
+		if (lish.id === highlightLishID && highlightPublisher !== undefined) return highlightPublisher;
+		return lish.publisher ?? null;
+	}
+
 	let lishs = $state<PeerLishEntry[] | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let addingLish = $state<string | null>(null);
+	// The unverified LISH the user is being asked about before it is added.
+	let offer = $state<UnverifiedOffer | null>(null);
 	// Per-row DOM refs so we can scroll the highlighted LISH into view once results load.
 	let itemEls = $state<Record<string, HTMLDivElement | undefined>>({});
 	// Detail view state
 	let selectedLish = $state<PeerLishEntry | null>(null);
+	// This peer lists the searched ID under a publisher other than the one the user picked.
+	let targetPublisherDiffers = $derived(highlightPublisher !== undefined && !!lishs?.some(lish => lish.id === highlightLishID && !isTarget(lish)));
 
 	async function loadLishs(): Promise<void> {
 		loading = true;
@@ -52,7 +76,7 @@
 	// Scroll the row of `highlightLishID` (if set and present) into view. The visual ring
 	// (PeerDetailLishItem `highlight` prop) tells the user which LISH was the search target.
 	function scrollToHighlight(): void {
-		if (!highlightLishID || !lishs) return;
+		if (!highlightLishID || !lishs?.some(isTarget)) return;
 		const el = itemEls[highlightLishID];
 		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}
@@ -60,8 +84,23 @@
 	async function addToDownloads(lish: PeerLishEntry): Promise<void> {
 		addingLish = lish.id;
 		try {
-			await api.lishnets.addPeerLish(lish.id, peer.peerID, networkID);
+			await api.lishnets.addPeerLish(lish.id, peer.peerID, networkID, expectedPublisherFor(lish));
 			addNotification($t('network.lishAdded', { name: lish.name || lish.id }), 'success');
+		} catch (e: any) {
+			// The manifest is not verified: the backend holds it and the user decides.
+			offer = unverifiedOffer(e, lish);
+			if (!offer?.token) addNotification(translateError(e), 'error');
+		}
+		addingLish = null;
+	}
+
+	async function answerOffer(accept: boolean): Promise<void> {
+		const answered = offer;
+		offer = null;
+		if (!answered) return;
+		addingLish = accept ? answered.id : null;
+		try {
+			if (await answerUnverifiedOffers([answered], accept)) addNotification($t('network.lishAdded', { name: answered.name }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		}
@@ -176,7 +215,7 @@
 </style>
 
 {#if lishDetailSubPage.active && selectedLish}
-	<PeerDetailLish {areaID} {position} lish={selectedLish} peerID={peer.peerID} {networkID} onBack={() => void handleLishDetailBack()} />
+	<PeerDetailLish {areaID} {position} lish={selectedLish} expectedPublisher={expectedPublisherFor(selectedLish)} peerID={peer.peerID} {networkID} onBack={() => void handleLishDetailBack()} />
 {:else}
 	<div class="peer-detail">
 		<div class="container">
@@ -201,12 +240,18 @@
 			{:else if lishs.length === 0}
 				<Alert type="warning" message={$t('network.noSharedLishs')} />
 			{:else}
+				{#if targetPublisherDiffers}
+					<Alert type="warning" message={$t('lish.otherPublisherOnPeer')} />
+				{/if}
 				<div class="lishs">
 					{#each lishs as lish, i (lish.id)}
-						<PeerDetailLishItem bind:el={itemEls[lish.id]} name={lish.name || $t('network.unnamed')} id={lish.id} totalSize={lish.totalSize} rowY={i + 1} disabled={addingLish === lish.id} highlight={highlightLishID === lish.id} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
+						<PeerDetailLishItem bind:el={itemEls[lish.id]} name={lish.name || $t('network.unnamed')} id={lish.id} totalSize={lish.totalSize} publisher={lish.publisher} rowY={i + 1} disabled={addingLish === lish.id} highlight={isTarget(lish)} onAdd={() => addToDownloads(lish)} onDetails={() => openLishDetail(lish)} />
 					{/each}
 				</div>
 			{/if}
 		</div>
 	</div>
+{/if}
+{#if offer}
+	<UnverifiedLISHDialog {offer} {position} onAccept={() => answerOffer(true)} onRefuse={() => answerOffer(false)} />
 {/if}

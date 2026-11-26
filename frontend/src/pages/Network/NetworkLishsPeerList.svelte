@@ -8,8 +8,11 @@
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { api } from '../../scripts/api.ts';
 	import { withPeerFallback, type PeerAttemptStatus } from '../../scripts/peerFallback.ts';
+	import { unverifiedOffer, type UnverifiedOffer } from '../../scripts/lishVerification.ts';
+	import { answerUnverifiedOffers } from '../../scripts/lishUnverifiedAnswer.ts';
+	import UnverifiedLISHDialog from '../../components/Dialog/UnverifiedLISHDialog.svelte';
 	import { formatSize } from '../../scripts/utils.ts';
-	import { type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail, type ManifestProgressEvent } from '@shared';
+	import { isVerifiedLISH, type LishSearchResult, type LISHNetworkConfig, type IPeerLishDetail, type ManifestProgressEvent } from '@shared';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Icon from '../../components/Icon/Icon.svelte';
@@ -25,11 +28,15 @@
 		row: LishSearchResult;
 		networks: LISHNetworkConfig[];
 		onBack: () => void;
-		onOpenPeer: (peerID: string, networkID: string, lishID: string) => void;
+		onOpenPeer: (peerID: string, networkID: string, lishID: string, publisher: string | null) => void;
 	}
 	let { areaID, position = LAYOUT.content, row, networks, onBack, onOpenPeer }: Props = $props();
+	// The publisher this row was picked by; an unsigned row expects an unsigned manifest (`null`).
+	let expectedPublisher = $derived(row.publisher ?? null);
 
 	let adding = $state(false);
+	// The unverified LISH the user is being asked about before it is added.
+	let offer = $state<UnverifiedOffer | null>(null);
 	let loadingDetail = $state(false);
 	// Add and Details share the peer-fallback loop and its per-row status column, so they
 	// must not run concurrently — one finishing would clear/overwrite the other's state.
@@ -79,7 +86,7 @@
 	}
 
 	function makeOpenHandler(peerID: string, networkID: string): () => void {
-		return () => onOpenPeer(peerID, networkID, row.id);
+		return () => onOpenPeer(peerID, networkID, row.id, expectedPublisher);
 	}
 
 	/** Run the shared peer-fallback loop over this row's peers, driving the per-row statuses. */
@@ -97,8 +104,24 @@
 		if (busy || row.peers.length === 0) return;
 		adding = true;
 		try {
-			await tryPeers((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID));
+			await tryPeers((peerID, networkID) => api.lishnets.addPeerLish(row.id, peerID, networkID, expectedPublisher));
 			addNotification($t('network.lishAdded', { name: row.name || row.id }), 'success');
+		} catch (e: any) {
+			// No peer gave a verified manifest: the backend holds one and the user decides.
+			offer = unverifiedOffer(e, row);
+			if (!offer?.token) addNotification(translateError(e), 'error');
+		} finally {
+			adding = false;
+		}
+	}
+
+	async function answerOffer(accept: boolean): Promise<void> {
+		const answered = offer;
+		offer = null;
+		if (!answered?.token) return;
+		adding = accept;
+		try {
+			if (await answerUnverifiedOffers([answered], accept)) addNotification($t('network.lishAdded', { name: answered.name }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		} finally {
@@ -119,11 +142,20 @@
 		if (busy || row.peers.length === 0) return;
 		loadingDetail = true;
 		try {
+			// A signed manifest that fails a check may be one peer's doing: it is shown only when no peer has a better one.
+			let failedChecks: IPeerLishDetail | null = null;
 			const loadedDetail = await tryPeers(async (peerID, networkID) => {
-				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID);
+				const d = await api.lishnets.getPeerLish(row.id, peerID, networkID, expectedPublisher);
 				// A null answer means this peer had nothing for us — flag it so the next peer is tried.
 				if (!d) throw Object.assign(new Error($t('network.peerDeclined')), { tryNextPeer: true });
+				if (d.checks.signed && !isVerifiedLISH(d.checks)) {
+					failedChecks ??= d;
+					throw Object.assign(new Error($t('lish.checks.unverified')), { tryNextPeer: true });
+				}
 				return d;
+			}).catch(e => {
+				if (failedChecks) return failedChecks;
+				throw e;
 			});
 			const { controller } = nav;
 			const selectedY = controller.selectedPosition?.[1] ?? 0;
@@ -272,6 +304,7 @@
 			<div class="lish-info">
 				<div><span class="label">{$t('common.name')}:</span> <span class="value">{row.name ?? $t('network.unnamed')}</span></div>
 				<div><span class="label">{$t('network.lishID')}:</span> <span class="value value-mono">{row.id}</span></div>
+				<div><span class="label">{$t('lish.reportedPublisher')}:</span> <span class="value value-mono">{row.publisher ?? $t('lish.unsigned')}</span></div>
 			</div>
 		{/if}
 
@@ -311,3 +344,6 @@
 		</Table>
 	</div>
 </div>
+{#if offer}
+	<UnverifiedLISHDialog {offer} {position} onAccept={() => answerOffer(true)} onRefuse={() => answerOffer(false)} />
+{/if}

@@ -1,7 +1,7 @@
 # LISH data structure format specification
 
 **Created**: 24 October 2025
-**Last update**: 29 October 2025
+**Last update**: 8 November 2026
 
 ## Overview
 
@@ -24,7 +24,8 @@ This specification describes the logical structure, with JSON examples for clari
 
 ```typescript
 interface ILISH {
-	id: string; // Unique UUID for this LISH (required)
+	version?: number; // Manifest format version, an integer; currently 1 (required when signed, see below)
+	id: string; // Unique UUID for this LISH (required); derived from the publisher when signed, see below
 	name?: string; // LISH name (optional)
 	description?: string; // Free-form text description such as author, notes, etc. (optional)
 	created?: string; // ISO 8601 timestamp in UTC when LISH was created (optional)
@@ -33,8 +34,66 @@ interface ILISH {
 	directories?: IDirectoryEntry[]; // Array of directories (optional)
 	files?: IFileEntry[]; // Array of files (optional)
 	links?: ILinkEntry[]; // Array of symbolic links and hard links (optional)
+	publisher?: string; // Peer ID of the publisher who signed the manifest (optional, with `nonce` and `signature`)
+	nonce?: string; // 128 random bits the ID is derived from, base64url without padding (optional, with `publisher`)
+	signature?: string; // Ed25519 signature of the whole manifest, base64url without padding (optional, with `publisher`)
 }
 ```
+
+### Format version
+
+`version` is an integer naming the version of this format the manifest follows. The current version is `1`, and new manifests always carry it.
+
+- A manifest without `version` was made before the field existed and is read as version 1; it cannot be signed
+- A manifest with a version this node does not know (anything other than a positive integer up to the current version) is rejected: a newer format may change what its fields mean
+- A signed manifest must carry `version`, and it is part of the signed bytes, so the signature also fixes which rules the manifest follows
+
+### Publisher signature
+
+A LISH may be signed by its publisher. `publisher`, `nonce` and `signature` are either all present or all absent; an unsigned LISH has none of them.
+
+- `publisher` is the canonical base58btc string of an Ed25519 libp2p Peer ID. The public key is embedded in it, so anyone can verify the signature without another lookup
+- `nonce` is 16 random bytes, encoded as base64url without padding (22 characters)
+- `signature` is the 64-byte Ed25519 signature, encoded as base64url without padding (86 characters)
+
+**ID of a signed LISH.** Signing replaces the ID with one derived from the publisher:
+
+- take SHA-256 over the `publisher` string followed by the `nonce` string, both as the ASCII text the manifest carries, with nothing between them
+- keep the first 16 bytes, set the version to 8 and the variant to `10` (RFC 9562), and write them as a UUID
+
+The 122 remaining bits are the check. A receiver recomputes the ID from `publisher` and `nonce` and compares; an ID that differs was not made for that publisher. Anyone can compute an ID for any Peer ID, so the ID alone proves nothing: it counts together with that publisher's signature. The ID is not a content hash, and one publisher can sign two different manifests under one ID.
+
+An unsigned LISH keeps a random version 4 UUID. A version 8 UUID without a signature is a manifest whose signature was taken off.
+
+**Signed bytes.** The signature covers the UTF-8 bytes of the canonical JSON of the manifest, with nothing before or after it:
+
+- the manifest without `signature` and without local fields (`directory`, `finalDirectory`, `chunks`); `version`, `id`, `publisher` and `nonce` are included
+- `directories`, `files` and `links` are always present (an absent collection is written as `[]`), entries in the order given
+- `hardlink` is always present on a link (`false` when absent)
+- optional fields that are absent are left out (an empty `name` or `description` counts as absent); `null` is never allowed
+- object keys sorted by UTF-16 code unit order, no whitespace, strings and numbers serialized as by `JSON.stringify`; numbers are safe integers
+
+**Strict shape.** A signed manifest is rejected when it has a field not defined by this specification (in the root or in any entry; the local fields `directory`, `finalDirectory` and `chunks` are allowed in the root because they are left out of the signed bytes), a `null` value, a timestamp that is not ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS[.fraction]Z`), `permissions` outside `^[0-7]{1,4}$`, a non-boolean `hardlink`, a missing or unknown `version`, or a `publisher` / `nonce` / `signature` of the wrong shape. Unsigned manifests keep the looser rules above.
+
+**Verification.** Every place that takes a manifest in (import, a `.lish` file to download, a manifest from a peer, a preview) runs three checks:
+
+| Check | Passes when |
+| --- | --- |
+| signed | the manifest carries `publisher`, `nonce` and `signature` |
+| signature matches | the signature is the publisher's, over the signed bytes |
+| ID belongs to the publisher | the ID is the one `publisher` and `nonce` derive |
+
+The last two are judged on their own, so a manifest can fail one or both. A LISH is verified only when all three pass.
+
+- When a user adds a LISH that is not verified, the node asks first and adds it only after the user agrees. Over the API such an add is refused with `LISH_UNSIGNED`, `LISH_INVALID_SIGNATURE` or `LISH_ID_MISMATCH` (the first check that failed); the `detail` is JSON with the three `checks`, the `publisher` the manifest names and, when the node keeps the manifest for the answer, a `token`. `lishs.answerUnverified` with that token adds exactly the manifest the question was about, or lets it go. What is kept waits ten minutes for the answer; the node keeps at most 256 open questions and about 256 MiB in all, and lets the oldest go first. Calls that carry the manifest themselves (`lishs.importFromFile`, `lishs.importFromJSON`, `transfer.download`) also take `acceptUnverified: true` for a user who agreed beforehand. A request that carries several manifests adds none of them before the answer when one is not verified. Its one `token` stands for the whole request: the refusal names the first manifest that failed a check, or else the first unsigned one, and the answer adds all the manifests as they were read, without reading the file or the address again
+- A manifest the node fetches on its own, with nobody to ask, is taken only when it is unsigned or verified; a signed one that fails a check is the fault of the peer that sent it
+- A LISH added without being verified is stored and served exactly as it was received, with its `publisher`, `nonce` and `signature`: the node changes nothing in a manifest, it only remembers which checks failed. Whoever gets the manifest from that node checks it again and finds the same
+- A node that already stores a LISH ID keeps for the life of the item the publisher its manifest names and whether that publisher was verified: a manifest under the same ID from another publisher, unsigned for a signed item, or verified for one that failed a check (and each the other way round), is refused, whatever the user agreed to
+- A broken shape is refused outright; the user's agreement never covers it
+
+For signed creation over the local API, call `lishs.createSigned` with the usual creation parameters and `sign: true`. This method is available on servers that support signed creation and returns the confirmed `publisher`. Unsigned creation uses `lishs.create`.
+
+A direct download with `transfer.download` stores the verified manifest and its chunk records together. For an existing ID, the file must match the stored signature and the dataset must be in the server's managed download directory. A file that failed a check is taken for an existing ID only when it is the very manifest stored under it. Use the stored transfer controls for datasets imported into another directory.
 
 ### Directory entry
 
@@ -116,6 +175,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 
 ```json
 {
+	"version": 1,
 	"id": "34aacabb-9c6f-42a2-aaf4-61fc89c45056",
 	"name": "Project Documentation",
 	"description": "User manual and guides - created by John Doe",
@@ -185,6 +245,7 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 - ✅ Creation and modification timestamps
 - ✅ Arbitrary chunk sizes
 - ✅ Multiple hash algorithms for checksums
+- ✅ Optional publisher signature (Ed25519, node identity)
 
 ## Notes
 

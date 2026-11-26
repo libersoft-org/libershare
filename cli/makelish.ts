@@ -11,6 +11,7 @@ interface IArgs {
 	url?: string;
 	addToSharing?: boolean;
 	minifyJSON?: boolean;
+	sign?: boolean;
 	compress?: boolean;
 	compressionAlgorithm?: CompressionAlgorithm;
 }
@@ -32,6 +33,8 @@ function showHelp(): void {
 	console.log('  --threads <number>      Number of worker threads (optional, default: 0 = auto detect by CPU cores)');
 	console.log('  --url <url>             Backend WebSocket URL (default: ' + DEFAULT_API_URL + '); reads LISH_TOKEN');
 	console.log('  --add-to-sharing        Add to sharing after creation (default: false)');
+	console.log('  --sign                  Sign the manifest with the backend node identity (default: false)');
+	console.log('                          The signature publicly links the LISH to the node Peer ID');
 	console.log('  --minify-json           Minify JSON output (default: false)');
 	console.log('  --compress              Compress LISH file (default algorithm: gzip)');
 	console.log('  --compression <algo>    Compress LISH file with the given algorithm (implies --compress)');
@@ -69,6 +72,10 @@ function parseArgs(args: string[]): IArgs {
 		const arg = args[i]!;
 		if (arg === '--add-to-sharing') {
 			parsed.addToSharing = true;
+			continue;
+		}
+		if (arg === '--sign') {
+			parsed.sign = true;
 			continue;
 		}
 		if (arg === '--minify-json') {
@@ -152,6 +159,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	const client = new APIClient(serverURL);
 	const addToSharing = args.addToSharing || false;
 	const minifyJSON = args.minifyJSON || false;
+	const sign = args.sign || false;
 	const compress = args.compress || false;
 	const compressionAlgorithm: CompressionAlgorithm = args.compressionAlgorithm ?? 'gzip';
 	const lishFile = args.output;
@@ -168,6 +176,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	console.log('\x1b[33mThreads:\x1b[0m              ' + threads + (threads === 0 ? ' (auto detect)' : ''));
 	console.log('\x1b[33mServer:\x1b[0m               ' + displayURL(serverURL));
 	if (addToSharing) console.log('\x1b[33mAdd to sharing:\x1b[0m       yes');
+	if (sign) console.log('\x1b[33mSign:\x1b[0m                 yes');
 	if (minifyJSON) console.log('\x1b[33mMinify JSON:\x1b[0m          yes');
 	if (compress) console.log('\x1b[33mCompress:\x1b[0m              ' + compressionAlgorithm);
 	console.log('');
@@ -212,7 +221,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 	await api.subscribe('lishs.create:progress');
 
 	try {
-		const result = await api.lishs.create(inputPath, lishFile, addToSharing, undefined, name, description, algo, chunkSize, threads, minifyJSON, compress, compressionAlgorithm);
+		const result = await api.lishs.create(inputPath, lishFile, addToSharing, undefined, name, description, algo, chunkSize, threads, minifyJSON, compress, compressionAlgorithm, sign);
 		if (lastProgress) process.stdout.write('\n');
 
 		const endTime = Date.now();
@@ -225,6 +234,7 @@ async function makeLISH(args: IArgs): Promise<void> {
 		console.log('');
 		console.log('\x1b[33mLISH ID:\x1b[0m              ' + result.lishID);
 		if (result.lishFile) console.log('\x1b[33mLISH file:\x1b[0m            ' + result.lishFile);
+		if (result.publisher) console.log('\x1b[33mSigned by:\x1b[0m            ' + result.publisher);
 		console.log('');
 		console.log('\x1b[33mEnd time:\x1b[0m             ' + new Date().toLocaleString());
 		console.log('\x1b[33mElapsed time:\x1b[0m         ' + timeStr);

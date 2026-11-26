@@ -203,7 +203,7 @@ for (const closing of ['eof', 'eof-output-error', 'session', 'fatal'] as const) 
 			await child.open(1);
 			const lishID = randomUUID();
 			const manifest = { id: lishID, name: 'Queued IPC import', created: new Date().toISOString(), chunkSize: 65536, checksumAlgo: 'sha256', files: [{ path: 'payload.bin', size: 1, checksums: [createHash('sha256').update('x').digest('hex')] }] };
-			await child.send(IPC_KIND.Text, 1, Buffer.from(JSON.stringify({ id: 'held-import', method: 'lishs.importFromJSON', params: { json: JSON.stringify(manifest), downloadPath: join(child.root, 'downloadPath'), enableSharing: false, enableDownloading: false } })));
+			await child.send(IPC_KIND.Text, 1, Buffer.from(JSON.stringify({ id: 'held-import', method: 'lishs.importFromJSON', params: { json: JSON.stringify(manifest), downloadPath: join(child.root, 'downloadPath'), enableSharing: false, enableDownloading: false, acceptUnverified: true } })));
 			await child.until(() => (existsSync(join(gate, 'accepted')) ? true : undefined));
 			expect(JSON.parse(readFileSync(join(gate, 'accepted'), 'utf8'))).toEqual({ id: 'held-import', requests: 1, lockHeld: true });
 			if (closing !== 'session') {

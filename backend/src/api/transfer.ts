@@ -16,6 +16,7 @@ import type { Settings } from '../settings.ts';
 import { Utils } from '../utils.ts';
 import { setPeerEmit, startPeerEmitter, subscribePeers, unsubscribePeers, getDebugSnapshot } from '../protocol/peer-tracker.ts';
 import { type ProgressInfo } from '../protocol/progress-reporter.ts';
+import { withLISHOwnership } from '../lish/lish-ownership.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
 type BroadcastFn = (event: string, data: any) => void;
@@ -36,7 +37,7 @@ interface ActiveTransfer {
 }
 
 interface TransferHandlers {
-	download: (p: { networkID: string; lishPath: string }, client: any) => Promise<DownloadResponse>;
+	download: (p: { networkID: string; lishPath: string; acceptUnverified?: boolean }, client: any) => Promise<DownloadResponse>;
 	disableDownload: (p: { lishID: string }) => { success: boolean };
 	enableDownload: (p: { lishID: string }, client?: any) => Promise<{ success: boolean }>;
 	disableUpload: (p: { lishID: string }) => { success: boolean };
@@ -470,7 +471,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		recovery.start(lishID, errorCode, prev);
 	}
 
-	async function download(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
+	async function download(p: { networkID: string; lishPath: string; acceptUnverified?: boolean }, client: any): Promise<DownloadResponse> {
 		const leave = transferAdmission.tryEnter();
 		if (!leave) throw new CodedError(ErrorCodes.DOWNLOAD_ERROR, 'Transfers are paused during factory reset');
 		try {
@@ -480,44 +481,26 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 		}
 	}
 
-	async function downloadAdmitted(p: { networkID: string; lishPath: string }, client: any): Promise<DownloadResponse> {
+	async function downloadAdmitted(p: { networkID: string; lishPath: string; acceptUnverified?: boolean }, client: any): Promise<DownloadResponse> {
 		assert(p, ['networkID', 'lishPath']);
 		const network = networks.getRunningNetwork();
-		const downloadDir = join(dataDir, 'downloads', Date.now().toString());
-		const downloader = new Downloader(downloadDir, network, dataServer, p.networkID);
-		await downloader.init(p.lishPath);
-		const lishID = downloader.getLISHID();
-		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
-		if (!claim.claimed) return { downloadDir: claim.downloader.getDownloadDirectory() };
-
-		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
-
-		downloader.setProgressCallback?.((info: ProgressInfo) => {
-			send('transfer.download:progress', buildDownloadProgressEvent(dataServer, lishID, info));
-		});
-		downloader.setRetryCallback?.(info => {
-			if (info.resolved) send('transfer.download:resumed', { lishID });
-			else send('transfer.download:retrying', { lishID, ...info });
-		});
-
-		const lifecycle = downloader
-			.download()
-			.then(() => {
-				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
-			})
-			.catch(err => {
-				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
-				if (err instanceof CodedError && err.code === ErrorCodes.DOWNLOAD_CANCELLED) return;
-				const code = err instanceof CodedError ? err.code : ErrorCodes.DOWNLOAD_ERROR;
-				const detail = err instanceof CodedError ? err.detail : err.message;
-				dataServer.setError(lishID, code, detail);
-				downloadEnabledLishs.delete(lishID);
-				persistDownloadEnabled?.(lishID, false);
-				send('transfer.download:error', { error: code, errorDetail: detail, lishID });
-				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
+		const downloader = new Downloader(join(dataDir, 'downloads', Date.now().toString()), network, dataServer, p.networkID);
+		let claim: Awaited<ReturnType<typeof claimActiveDownloader<Downloader>>>;
+		try {
+			await downloader.init(p.lishPath, p.acceptUnverified === true);
+			claim = await withLISHOwnership(downloader.getLISHID(), async () => {
+				await downloader.prepareLocalDownload();
+				return claimActiveDownloader(activeDownloaders, downloader.getLISHID(), downloader);
 			});
-		trackDownloadLifecycle(lifecycle);
+		} catch (error) {
+			await downloader.destroy();
+			throw error;
+		}
+		const lishID = downloader.getLISHID();
+		const downloadDir = claim.downloader.getDownloadDirectory();
+		if (!claim.claimed) return { downloadDir };
+
+		launchClaimedDownloader(downloader, client, dataServer.getPublisher(lishID) != null);
 		return { downloadDir };
 	}
 
@@ -620,11 +603,17 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 	/** No await between the final validity check and synchronous registration in claimActiveDownloader. */
 	async function launchPreparedDownloader(lishID: string, prepared: PreparedStoredDownloader, disabled: boolean, client?: any): Promise<Downloader> {
 		const downloader = prepared.downloader;
-		const downloadDir = downloader.getDownloadDirectory();
 		const refusal = storedStartRefusal(lishID, prepared, disabled);
 		if (refusal) return abandonStoredDownload(lishID, prepared, refusal);
 		const claim = await claimActiveDownloader(activeDownloaders, lishID, downloader);
 		if (!claim.claimed) return claim.downloader;
+		launchClaimedDownloader(downloader, client, true, disabled);
+		return downloader;
+	}
+
+	function launchClaimedDownloader(downloader: Downloader, client: any, finalize: boolean, disabled = false): void {
+		const lishID = downloader.getLISHID();
+		const downloadDir = downloader.getDownloadDirectory();
 		const send = broadcast ?? ((event: string, data: any) => emit(client, event, data));
 		downloader.setProgressCallback?.((info: ProgressInfo) => {
 			send('transfer.download:progress', buildDownloadProgressEvent(dataServer, lishID, info));
@@ -639,7 +628,7 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 			.then(async () => {
 				if (activeDownloaders.get(lishID) === downloader) activeDownloaders.delete(lishID);
 				send('transfer.download:complete', buildDownloadCompleteEvent(dataServer, downloadDir, lishID));
-				if (finalizeDownloadAdmitted) {
+				if (finalize && finalizeDownloadAdmitted) {
 					try {
 						await finalizeDownloadAdmitted(lishID);
 					} catch (err) {
@@ -659,7 +648,6 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 				startRecoveryIfEnabled(lishID, code, { downloadEnabled: true, uploadEnabled: getEnabledUploads().has(lishID) });
 			});
 		trackDownloadLifecycle(lifecycle);
-		return downloader;
 	}
 
 	/**

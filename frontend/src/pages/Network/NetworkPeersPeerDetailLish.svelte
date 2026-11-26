@@ -8,6 +8,9 @@
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import { type PeerLishEntry, type IPeerLishDetail } from '@shared';
 	import { api } from '../../scripts/api.ts';
+	import { unverifiedOffer, type UnverifiedOffer } from '../../scripts/lishVerification.ts';
+	import { answerUnverifiedOffers } from '../../scripts/lishUnverifiedAnswer.ts';
+	import UnverifiedLISHDialog from '../../components/Dialog/UnverifiedLISHDialog.svelte';
 	import ButtonBar from '../../components/Buttons/ButtonBar.svelte';
 	import Button from '../../components/Buttons/Button.svelte';
 	import Alert from '../../components/Alert/Alert.svelte';
@@ -17,21 +20,25 @@
 		areaID: string;
 		position?: Position | undefined;
 		lish: PeerLishEntry;
+		/** Publisher the manifest must carry: a Peer ID, or `null` for an unsigned item. */
+		expectedPublisher: string | null;
 		peerID: string;
 		networkID: string;
 		onBack?: (() => void) | undefined;
 	}
-	let { areaID, position = LAYOUT.content, lish, peerID, networkID, onBack }: Props = $props();
+	let { areaID, position = LAYOUT.content, lish, expectedPublisher, peerID, networkID, onBack }: Props = $props();
 	let detail = $state<IPeerLishDetail | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let adding = $state(false);
+	// The unverified LISH the user is being asked about before it is added.
+	let offer = $state<UnverifiedOffer | null>(null);
 
 	async function loadDetail(): Promise<void> {
 		loading = true;
 		error = '';
 		try {
-			detail = await api.lishnets.getPeerLish(lish.id, peerID, networkID);
+			detail = await api.lishnets.getPeerLish(lish.id, peerID, networkID, expectedPublisher);
 		} catch (e: any) {
 			error = translateError(e);
 			detail = null;
@@ -42,8 +49,23 @@
 	async function addToDownloads(): Promise<void> {
 		adding = true;
 		try {
-			await api.lishnets.addPeerLish(lish.id, peerID, networkID);
+			await api.lishnets.addPeerLish(lish.id, peerID, networkID, expectedPublisher);
 			addNotification($t('network.lishAdded', { name: lish.name || lish.id }), 'success');
+		} catch (e: any) {
+			// The manifest is not verified: the backend holds it and the user decides.
+			offer = unverifiedOffer(e, lish);
+			if (!offer?.token) addNotification(translateError(e), 'error');
+		}
+		adding = false;
+	}
+
+	async function answerOffer(accept: boolean): Promise<void> {
+		const answered = offer;
+		offer = null;
+		if (!answered) return;
+		adding = accept;
+		try {
+			if (await answerUnverifiedOffers([answered], accept)) addNotification($t('network.lishAdded', { name: answered.name }), 'success');
 		} catch (e: any) {
 			addNotification(translateError(e), 'error');
 		}
@@ -117,3 +139,6 @@
 		{/if}
 	</div>
 </div>
+{#if offer}
+	<UnverifiedLISHDialog {offer} {position} onAccept={() => answerOffer(true)} onRefuse={() => answerOffer(false)} />
+{/if}

@@ -46,13 +46,13 @@ describe('failed import directories', () => {
 
 	it('leaves the directories it created, parents included', async () => {
 		const downloadPath = join(base, 'new-parent', 'nested');
-		await expect(handlers.importManifest(manifest('fresh'), downloadPath, { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
+		await expect(handlers.importManifest(manifest('fresh'), downloadPath, { enableSharing: false, enableDownloading: false, acceptUnverified: true })).rejects.toThrow('disk refused the write');
 		expect(existsSync(join(downloadPath, 'fresh'))).toBe(true);
 	});
 
 	it('keeps a directory that already existed', async () => {
 		mkdirSync(join(base, 'kept'), { recursive: true });
-		await expect(handlers.importManifest(manifest('kept'), base, { enableSharing: false, enableDownloading: false })).rejects.toThrow('disk refused the write');
+		await expect(handlers.importManifest(manifest('kept'), base, { enableSharing: false, enableDownloading: false, acceptUnverified: true })).rejects.toThrow('disk refused the write');
 		expect(existsSync(join(base, 'kept'))).toBe(true);
 	});
 });
@@ -87,7 +87,7 @@ describe('failed overwrite import', () => {
 		dataServer.add(original as never);
 		// A regular file where the download directory's parent should be: mkdir must fail.
 		writeFileSync(join(base, 'blocker'), 'not a directory');
-		await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, join(base, 'blocker'), { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow();
+		await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, join(base, 'blocker'), { overwrite: true, enableSharing: false, enableDownloading: false, acceptUnverified: true })).rejects.toThrow();
 		expect(dataServer.get('kept-record' as never)?.name).toBe('kept-record');
 	});
 
@@ -97,7 +97,7 @@ describe('failed overwrite import', () => {
 		// The database refuses the new row itself, after the old one was already deleted.
 		db.run("CREATE TRIGGER refuse_replacement BEFORE INSERT ON lishs WHEN NEW.name = 'replacement' BEGIN SELECT RAISE(ABORT, 'refused'); END");
 		try {
-			await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toThrow('refused');
+			await expect(handlers.importManifest({ ...original, name: 'replacement' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false, acceptUnverified: true })).rejects.toThrow('refused');
 			expect(dataServer.get('kept-on-write' as never)?.name).toBe('kept-on-write');
 			expect(dataServer.get('kept-on-write' as never)?.files?.length).toBe(1);
 		} finally {
@@ -109,7 +109,7 @@ describe('failed overwrite import', () => {
 		const original = { id: 'kept-file-target', name: 'original', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }], directory: join(base, 'original') };
 		dataServer.add(original as never);
 		writeFileSync(join(base, 'file-target'), 'existing data');
-		await expect(handlers.importManifest({ ...original, name: 'file-target' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false })).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
+		await expect(handlers.importManifest({ ...original, name: 'file-target' } as never, base, { overwrite: true, enableSharing: false, enableDownloading: false, acceptUnverified: true })).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSAFE_PATH });
 		expect(dataServer.get('kept-file-target' as never)?.name).toBe('original');
 		expect(readFileSync(join(base, 'file-target'), 'utf8')).toBe('existing data');
 	});
@@ -124,7 +124,7 @@ describe('failed overwrite import', () => {
 			await Settings.create(dataDir)
 		);
 		const manifest = { id: 'committed', name: 'committed', created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', files: [{ path: 'a.bin', size: 1024, checksums: ['c0'] }] };
-		await expect(h.importManifest(manifest as never, base, { enableSharing: false, enableDownloading: false })).rejects.toThrow('broadcast failed');
+		await expect(h.importManifest(manifest as never, base, { enableSharing: false, enableDownloading: false, acceptUnverified: true })).rejects.toThrow('broadcast failed');
 		expect(dataServer.get('committed' as never)?.directory).toBe(join(base, 'committed'));
 		expect(existsSync(join(base, 'committed'))).toBe(true);
 	});

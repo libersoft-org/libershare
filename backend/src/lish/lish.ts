@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate } from '@shared';
+import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate, isVerifiedLISH, LISH_FORMAT_VERSION, type LISHChecks } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -40,7 +40,8 @@ function formatTimestamp(date: Date): string {
 }
 
 // Helper to extract permission bits from mode and format as octal string (remove file type bits)
-function getPermissions(mode: number): string {
+/** Octal permission bits of a file mode, without leading zeros (`0o044` gives `"44"`). */
+export function getPermissions(mode: number): string {
 	const perms = mode & 0o777; // Keep only the last 9 bits (rwxrwxrwx)
 	return perms.toString(8); // Convert to octal string
 }
@@ -362,6 +363,7 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 	const created = new Date().toISOString();
 	const lishID = id || globalThis.crypto.randomUUID();
 	const lish: ILISH = {
+		version: LISH_FORMAT_VERSION,
 		id: lishID,
 		name,
 		description,
@@ -492,8 +494,9 @@ export function parseLISHFromJSON(json: string): ILISH[] {
 
 /**
  * Summary of a structurally valid manifest for display: files without their checksums, totals.
+ * `checks` is what {@link ManifestAdmission.check} found for it.
  */
-export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
+export function summarizeManifest(manifest: ILISH, checks: LISHChecks): IPeerLishDetail {
 	const files = (manifest.files ?? []).map(f => ({ path: f.path, size: f.size, ...entryMetadata(f, ['permissions', 'modified', 'created']) }));
 	return {
 		id: manifest.id,
@@ -510,6 +513,9 @@ export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
 		files,
 		directories: (manifest.directories ?? []).map(d => ({ path: d.path, ...entryMetadata(d, ['permissions', 'modified', 'created']) })),
 		links: (manifest.links ?? []).map(l => ({ path: l.path, target: l.target, ...entryMetadata(l, ['hardlink', 'modified', 'created']) })),
+		checks,
+		// `publisher` is a verified one; a manifest that failed a check only names its publisher.
+		...(manifest.publisher ? { [isVerifiedLISH(checks) ? 'publisher' : 'namedPublisher']: manifest.publisher } : {}),
 	};
 }
 

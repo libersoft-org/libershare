@@ -1,5 +1,6 @@
 <script lang="ts" module>
-	import { type IPeerLishDetail, isISODate } from '@shared';
+	import { type IPeerLishDetail, isISODate, isVerifiedLISH } from '@shared';
+	import { checkRows, verificationKey } from '../../scripts/lishVerification.ts';
 	import { formatSize, formatDateTime } from '../../scripts/utils.ts';
 
 	interface TreeNode {
@@ -73,16 +74,29 @@
 		return isISODate(value) ? formatDateTime(value) : undefined;
 	}
 
-	/** One row of the summary box; `value` undefined marks a field that does not hold what it should. */
+	/**
+	 * One row of the summary box; `value` undefined marks a field that does not hold what it should.
+	 * A `check` row shows a mark instead of a value, `passed` says which.
+	 */
 	interface InfoRow {
 		labelKey: string;
 		value: string | number | undefined;
-		kind: 'text' | 'mono' | 'description';
+		kind: 'text' | 'mono' | 'description' | 'check';
+		/** Translation key shown as the value. */
+		valueKey?: string;
+		/** A check that passed, or a state that is in order; `false` is drawn as a failure. */
+		passed?: boolean;
 	}
 
 	function infoRows(d: IPeerLishDetail): InfoRow[] {
 		const rows: InfoRow[] = [{ labelKey: 'network.lishID', value: d.id, kind: 'mono' }];
 		if (d.name) rows.push({ labelKey: 'common.name', value: d.name, kind: 'text' });
+		// One word first: verified only when every check below it passed.
+		rows.push({ labelKey: 'lish.checks.verification', value: undefined, valueKey: verificationKey(d.checks), kind: 'text', passed: isVerifiedLISH(d.checks) });
+		for (const check of checkRows(d.checks)) rows.push({ labelKey: check.labelKey, value: undefined, kind: 'check', passed: check.passed });
+		// "Signed by" is earned by a verified signature; any other publisher is only what the manifest says.
+		if (d.publisher) rows.push({ labelKey: 'lish.signedBy', value: d.publisher, kind: 'mono' });
+		else if (d.namedPublisher) rows.push({ labelKey: 'lish.reportedPublisher', value: d.namedPublisher, kind: 'mono' });
 		if (d.description) rows.push({ labelKey: 'common.description', value: d.description, kind: 'description' });
 		rows.push({ labelKey: 'network.created', value: fieldText(d.created, 'date'), kind: 'text' });
 		rows.push({ labelKey: 'network.totalSize', value: formatSize(d.totalSize), kind: 'text' });
@@ -108,6 +122,7 @@
 
 <script lang="ts">
 	import { t } from '../../scripts/language.ts';
+	import Icon from '../../components/Icon/Icon.svelte';
 	import Table from '../../components/Table/Table.svelte';
 	import TableRow from '../../components/Table/TableRow.svelte';
 	import TableCell from '../../components/Table/TableCell.svelte';
@@ -179,6 +194,11 @@
 		white-space: pre-wrap;
 	}
 
+	/* The icon centres itself in whatever it is given, so give it only its own width. */
+	.info-section .value.mark {
+		display: inline-flex;
+	}
+
 	.entry-details {
 		display: flex;
 		flex-direction: column;
@@ -248,7 +268,13 @@
 			{#each summary as row, i (row.labelKey)}
 				<TableRow position={[0, baseY + i]}>
 					<TableCell align="right" wrap><span class="label">{$t(row.labelKey)}:</span></TableCell>
-					<TableCell wrap><span class="value" class:mono={row.kind === 'mono'} class:description={row.kind === 'description'} class:invalid={row.value === undefined}>{row.value ?? $t('lish.entryInvalidValue')}</span></TableCell>
+					{#if row.kind === 'check'}
+						<TableCell><span class="value mark"><Icon img={row.passed ? '/img/check.svg' : '/img/cross.svg'} alt={$t(row.passed ? 'common.yes' : 'common.no')} size="2vh" padding="0" colorVariable={row.passed ? '--color-success' : '--color-error'} /></span></TableCell>
+					{:else if row.valueKey}
+						<TableCell wrap><span class="value" class:invalid={row.passed === false}>{$t(row.valueKey)}</span></TableCell>
+					{:else}
+						<TableCell wrap><span class="value" class:mono={row.kind === 'mono'} class:description={row.kind === 'description'} class:invalid={row.value === undefined}>{row.value ?? $t('lish.entryInvalidValue')}</span></TableCell>
+					{/if}
 				</TableRow>
 			{/each}
 		</Table>

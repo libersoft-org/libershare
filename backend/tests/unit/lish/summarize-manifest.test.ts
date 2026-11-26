@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { summarizeManifest } from '../../../src/lish/lish.ts';
 import type { ILISH } from '@shared';
+import { UNSIGNED } from '../helpers/signing.ts';
 
 function manifest(): ILISH {
 	return {
@@ -21,7 +22,7 @@ function manifest(): ILISH {
 
 describe('summarizeManifest', () => {
 	it('counts chunks and totals without passing the checksums on', () => {
-		const detail = summarizeManifest(manifest());
+		const detail = summarizeManifest(manifest(), UNSIGNED);
 		expect(detail.totalChunks).toBe(3);
 		expect(detail.totalSize).toBe(2560);
 		expect(detail.fileCount).toBe(2);
@@ -37,12 +38,15 @@ describe('summarizeManifest', () => {
 	it('passes on only metadata of the right kind and names the rest', () => {
 		// Written by anyone: the structure check leaves these fields alone, the display must not trust them.
 		const bad = { toString: 0, valueOf: 0 } as unknown as string;
-		const detail = summarizeManifest({
-			...manifest(),
-			files: [{ path: 'a.bin', size: 10, checksums: ['aa'], created: bad, modified: 'not a date', permissions: '0640' }],
-			directories: [{ path: 'dir', permissions: 755 as unknown as string, created: '2020-01-02T03:04:05.000Z', extra: 'dropped' } as never],
-			links: [{ path: 'dir/link', target: 'a.bin', hardlink: 'yes' as unknown as boolean, modified: null as unknown as string }],
-		});
+		const detail = summarizeManifest(
+			{
+				...manifest(),
+				files: [{ path: 'a.bin', size: 10, checksums: ['aa'], created: bad, modified: 'not a date', permissions: '0640' }],
+				directories: [{ path: 'dir', permissions: 755 as unknown as string, created: '2020-01-02T03:04:05.000Z', extra: 'dropped' } as never],
+				links: [{ path: 'dir/link', target: 'a.bin', hardlink: 'yes' as unknown as boolean, modified: null as unknown as string }],
+			},
+			UNSIGNED
+		);
 		expect(detail.files).toEqual([{ path: 'a.bin', size: 10, permissions: '0640', invalidFields: ['modified', 'created'] }]);
 		expect(detail.directories).toEqual([{ path: 'dir', created: '2020-01-02T03:04:05.000Z', invalidFields: ['permissions'] }]);
 		expect(detail.links).toEqual([{ path: 'dir/link', target: 'a.bin', invalidFields: ['hardlink', 'modified'] }]);
@@ -51,17 +55,17 @@ describe('summarizeManifest', () => {
 	it('takes only ISO 8601 text as a date', () => {
 		// Date.parse alone accepts all of these.
 		for (const notISO of ['1', '2026', 'Jan 1 2026', '2026/01/01', '2026-13-01']) {
-			const detail = summarizeManifest({ ...manifest(), files: [{ path: 'a.bin', size: 10, checksums: ['aa'], modified: notISO }] });
+			const detail = summarizeManifest({ ...manifest(), files: [{ path: 'a.bin', size: 10, checksums: ['aa'], modified: notISO }] }, UNSIGNED);
 			expect(detail.files[0]).toEqual({ path: 'a.bin', size: 10, invalidFields: ['modified'] });
 		}
 		for (const iso of ['2026-01-01', '2026-01-01T10:20', '2026-01-01T10:20:30+02:00', '2026-01-01T10:20:30.123Z']) {
-			expect(summarizeManifest({ ...manifest(), files: [{ path: 'a.bin', size: 10, checksums: ['aa'], modified: iso }] }).files[0]).toEqual({ path: 'a.bin', size: 10, modified: iso });
+			expect(summarizeManifest({ ...manifest(), files: [{ path: 'a.bin', size: 10, checksums: ['aa'], modified: iso }] }, UNSIGNED).files[0]).toEqual({ path: 'a.bin', size: 10, modified: iso });
 		}
 	});
 
 	it('summarizes a manifest without files as empty', () => {
 		const { files: _files, directories: _directories, links: _links, ...bare } = manifest();
-		const detail = summarizeManifest(bare);
+		const detail = summarizeManifest(bare, UNSIGNED);
 		expect(detail).toMatchObject({ totalChunks: 0, totalSize: 0, fileCount: 0, directoryCount: 0, files: [], directories: [], links: [] });
 	});
 });

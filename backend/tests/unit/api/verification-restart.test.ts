@@ -136,7 +136,7 @@ it('an import admitted before pause can enqueue verification but cannot start it
 		const importing = f.handlers.runMutation(async () => {
 			admitted.resolve();
 			await releaseImport.promise;
-			return f.handlers.importManifestAdmitted(manifest, f.directory);
+			return f.handlers.importManifestAdmitted(manifest, f.directory, { acceptUnverified: true });
 		});
 		await admitted.promise;
 		const paused = f.handlers.pauseForNetworkRestart();

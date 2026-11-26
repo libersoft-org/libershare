@@ -26,6 +26,13 @@ const errorCodes = [
 	'LISH_UNSUPPORTED_CHECKSUM',
 	'LISH_UNEXPECTED_ARRAY',
 	'LISH_CREATE_CANCELLED',
+	'LISH_INVALID_SIGNATURE',
+	'LISH_PUBLISHER_MISMATCH',
+	'LISH_ID_MISMATCH',
+	'LISH_UNSIGNED',
+	'LISH_CONFIRMATION_EXPIRED',
+	'LISH_SIGNING_UNSUPPORTED_KEY',
+	'LISH_SIGNING_UNSUPPORTED_SERVER',
 	'PATH_ACCESS_DENIED',
 	'INVALID_FILE_INDEX',
 	// Longer than every responder will accept, so it is refused where the user can be told
@@ -144,9 +151,12 @@ export const ErrorCodes: { [K in ErrorCode]: K } = Object.fromEntries(errorCodes
 export class CodedError extends Error {
 	readonly code: ErrorCode;
 	readonly detail?: string | undefined;
+	/** The error this one stands for, when it is reported under a different code. */
+	declare readonly cause?: unknown;
 
-	constructor(code: ErrorCode, detail?: string) {
+	constructor(code: ErrorCode, detail?: string, options?: { cause?: unknown }) {
 		super(detail ? `${code}: ${detail}` : code);
+		if (options && 'cause' in options) Object.defineProperty(this, 'cause', { value: options.cause, enumerable: false, configurable: true, writable: true });
 		this.code = code;
 		this.detail = detail;
 	}
