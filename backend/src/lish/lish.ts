@@ -1,5 +1,5 @@
 import * as fsPromises from 'node:fs/promises';
-import { dirname, isAbsolute, relative, sep } from 'node:path';
+import { dirname } from 'node:path';
 import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
@@ -57,7 +57,6 @@ function getPermissions(mode: number): string {
 interface FileStats {
 	isFile(): boolean;
 	isDirectory(): boolean;
-	isSymbolicLink(): boolean;
 	size: number;
 	mode: number;
 	mtime: Date;
@@ -72,17 +71,16 @@ function exactSize(size: bigint, fullPath: string): number {
 }
 
 // Helper to get file/directory stats
-async function getStats(fullPath: string, followLinks = true): Promise<FileStats> {
+async function getStats(fullPath: string): Promise<FileStats> {
 	let stat: import('node:fs').BigIntStats;
 	try {
-		stat = await (followLinks ? fsPromises.stat(fullPath, { bigint: true }) : fsPromises.lstat(fullPath, { bigint: true }));
+		stat = await fsPromises.stat(fullPath, { bigint: true });
 	} catch (e) {
 		throw new CodedError(ErrorCodes.PATH_ACCESS_DENIED, fullPath);
 	}
 	return {
 		isFile: () => stat.isFile(),
 		isDirectory: () => stat.isDirectory(),
-		isSymbolicLink: () => stat.isSymbolicLink(),
 		size: stat.isFile() ? exactSize(stat.size, fullPath) : 0,
 		mode: Number(stat.mode & 0o7777n),
 		mtime: stat.mtime,
@@ -222,12 +220,18 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 		const fullPath = `${dirPath}/${entry}`;
 		let stat: FileStats;
 		try {
-			stat = await getStats(fullPath, false);
+			stat = await getStats(fullPath);
 		} catch {
 			continue;
 		}
-		if (stat.isSymbolicLink()) continue;
-		if (stat.isDirectory()) {
+		// Check symlink
+		let isSymlink = false;
+		try {
+			const lstat = await fsPromises.lstat(fullPath);
+			isSymlink = lstat.isSymbolicLink();
+		} catch {}
+		if (isSymlink) continue;
+		else if (stat.isDirectory()) {
 			const subFiles = await scanFiles(fullPath, basePath, chunkSize, inodeMap, signal);
 			result.push(...subFiles);
 		} else if (stat.isFile()) {
@@ -275,28 +279,27 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	for (const entry of scannedPaths) {
 		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
-		const stat = await getStats(fullPath, false);
-		if (stat.isSymbolicLink()) {
+		const stat = await getStats(fullPath);
+		// Check if it's a symlink using lstat (lstat does NOT follow symlinks, stat does)
+		let isSymlink = false;
+		try {
+			const lstat = await fsPromises.lstat(fullPath);
+			isSymlink = lstat.isSymbolicLink();
+		} catch (e) {
+			// Can't determine, treat as not a symlink
+		}
+		if (isSymlink) {
+			// Handle symbolic link - read the link target
 			try {
-				// Resolve within the dataset so the exported manifest carries no absolute target.
-				const resolvedTarget = await fsPromises.realpath(fullPath);
-				const target = relative(await fsPromises.realpath(basePath), resolvedTarget);
-				if (!target || isAbsolute(target) || target === '..' || target.startsWith('..' + sep)) {
-					console.warn(`Warning: skipping symlink ${fullPath}, its target is outside the shared folder`);
-					continue;
-				}
-				const targetStats = await fsPromises.stat(resolvedTarget);
-				if (!targetStats.isFile()) {
-					console.warn(`Warning: skipping symlink ${fullPath}, its target is not a file`);
-					continue;
-				}
+				// Unfortunately Bun doesn't expose readlink directly, so we use realpath
+				const target = await fsPromises.realpath(fullPath);
 				links.push({
 					path: getRelativePath(fullPath, basePath),
 					target: normalizePath(target),
-					modified: formatTimestamp(targetStats.mtime),
-					created: formatTimestamp(targetStats.birthtime || targetStats.mtime),
+					modified: formatTimestamp(new Date(stat.mtime)),
+					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
 				});
-			} catch {
+			} catch (e) {
 				console.warn(`Warning: Could not read symlink ${fullPath}`);
 			}
 		} else if (stat.isDirectory()) {
@@ -420,22 +423,14 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
 		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
+		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));
 		files.sort((a, b) => a.path.localeCompare(b.path));
+		links.sort((a, b) => a.path.localeCompare(b.path));
+		// Only add arrays if they have content
 		if (directories.length > 0) lish.directories = directories;
 		if (files.length > 0) lish.files = files;
-		if (links.length > 0) {
-			// A symlink to a hardlinked copy must point to the file both names share.
-			const hardlinkTargets = new Map(links.filter(link => link.hardlink).map(link => [link.path, link.target]));
-			const filePaths = new Set(files.map(file => file.path));
-			const includedLinks = links.filter(link => {
-				if (!link.hardlink) link.target = hardlinkTargets.get(link.target) ?? link.target;
-				if (filePaths.has(link.target)) return true;
-				console.warn(`Warning: skipping link ${link.path}, its target is absent from the manifest`);
-				return false;
-			});
-			if (includedLinks.length > 0) lish.links = includedLinks.sort((a, b) => a.path.localeCompare(b.path));
-		}
+		if (links.length > 0) lish.links = links;
 	} else throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE);
 	return lish;
 }
