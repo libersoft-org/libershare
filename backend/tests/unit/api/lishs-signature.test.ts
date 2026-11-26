@@ -304,6 +304,17 @@ describe('adding a manifest that is not verified', () => {
 		expect(dataServer.get(plainID)).toMatchObject({ name: 'Plain' });
 	});
 
+	it('lets go of a question an import raised while maintenance was pausing', async () => {
+		const lishs = handlers();
+		// The import is past the gate when the pause begins, and raises its question only after that.
+		const importing = asked(lishs.importManifest(manifest(), downloadDir));
+		await lishs.pauseMutations();
+		const question = await importing;
+		lishs.resumeMutations();
+		await expect(lishs.answerUnverified({ token: question.token!, accept: true })).rejects.toMatchObject({ code: ErrorCodes.LISH_CONFIRMATION_EXPIRED });
+		expect(dataServer.get(ID)).toBeFalsy();
+	});
+
 	it('never lets the agreement cover a broken shape', async () => {
 		const lishs = handlers();
 		const signed = await sign(manifest(), keyA);

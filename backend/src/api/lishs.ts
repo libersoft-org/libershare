@@ -997,9 +997,10 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	}
 
 	async function pauseMutations(): Promise<void> {
-		// A question left open is about a state that maintenance is about to change or wipe.
-		admission.clear();
 		await mutationAdmission.closeAndDrain();
+		// A question left open is about a state that maintenance is about to change or wipe. Cleared
+		// only now: an import already past the gate may still raise one while it drains.
+		admission.clear();
 	}
 
 	async function pauseForNetworkRestart(): Promise<void> {
