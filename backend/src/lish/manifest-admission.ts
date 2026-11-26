@@ -23,12 +23,24 @@ const PENDING_LIMITS: PendingLimits = { ttlMs: 10 * 60 * 1000, count: 256, bytes
  * a manifest should have, so a field nobody expects, or one longer than it should be, counts too.
  * Every object and every value counts for something, so empty ones cannot pile up for free.
  */
-function heldWeight(value: unknown): number {
-	if (typeof value === 'string') return 16 + value.length;
-	if (typeof value !== 'object' || value === null) return 8;
-	let weight = 32;
-	if (Array.isArray(value)) for (const item of value) weight += heldWeight(item);
-	else for (const key in value) weight += key.length + heldWeight((value as Record<string, unknown>)[key]);
+function heldWeight(held: unknown): number {
+	let weight = 0;
+	// A list of its own rather than recursion: a field nobody defined can nest deeper than the call stack.
+	const todo: unknown[] = [held];
+	while (todo.length > 0) {
+		const value = todo.pop();
+		if (typeof value === 'string') weight += 16 + value.length;
+		else if (typeof value !== 'object' || value === null) weight += 8;
+		else {
+			weight += 32;
+			if (Array.isArray(value)) for (const item of value) todo.push(item);
+			else
+				for (const key in value) {
+					weight += key.length;
+					todo.push((value as Record<string, unknown>)[key]);
+				}
+		}
+	}
 	return weight;
 }
 

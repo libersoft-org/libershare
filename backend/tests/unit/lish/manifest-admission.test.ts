@@ -310,6 +310,13 @@ describe('a manifest waiting for the answer', () => {
 			}
 		});
 
+		it('weighs a manifest nested deeper than the call stack goes', async () => {
+			const { tokenOf, stillHeld } = limited({});
+			let nested: unknown = 'x';
+			for (let depth = 0; depth < 50_000; depth++) nested = [nested];
+			expect(await stillHeld(await tokenOf('deep', 1, { unknown: nested }))).toBe(true);
+		});
+
 		it('weighs a question about several manifests by all of them', async () => {
 			const admission = new ManifestAdmission<string>({ ttlMs: 60_000, count: 100, bytes: 100_000 });
 			const token = async (ids: string[]) => {
