@@ -338,6 +338,8 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 	if (!description) delete lish.description;
 	const stat = await getStats(inputPath);
 	if (stat.isFile()) {
+		// A link to a file is not shared on its own either. A folder picked through a link stays a valid root.
+		if ((await fsPromises.lstat(inputPath)).isSymbolicLink()) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE);
 		// Single file processing
 		const totalChunks = Math.ceil(stat.size / chunkSize);
 		// Get filename from path
