@@ -313,6 +313,23 @@ describe('adding a manifest that is not verified', () => {
 		}
 	});
 
+	it('a waiting request of several manifests does not keep the text it was read from', async () => {
+		const lishs = handlers();
+		// Asked from a function of its own, so nothing of the request stays on this one's stack.
+		const ask = async () => {
+			const params = { json: JSON.stringify([manifest(), manifest({ id: plainID, name: 'Plain' })]), downloadPath: downloadDir };
+			return { token: (await asked(lishs.importFromJSON(params))).token!, params: new WeakRef(params) };
+		};
+		const { token, params } = await ask();
+		// Collection takes a moment; a request the open question holds on to would never go.
+		for (let tries = 0; tries < 50 && params.deref(); tries++) {
+			await Bun.sleep(10);
+			Bun.gc(true);
+		}
+		expect(params.deref()).toBeUndefined();
+		expect(await lishs.answerUnverified({ token, accept: false })).toBeNull();
+	});
+
 	it('names the manifest that failed a check among several unverified ones, and a no adds none', async () => {
 		const lishs = handlers();
 		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };

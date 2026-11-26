@@ -507,9 +507,12 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	/** Import every manifest of one request, in order. */
 	async function importEach(lishs: ILISH[], p: ImportParams): Promise<ImportLISHResponse> {
 		const opts = importOptions(p);
+		// Taken out of the request here: what waits for the answer must not keep `p`, which for an
+		// import from JSON carries the whole text next to the manifests parsed from it.
+		const { downloadPath } = p;
 		const importAll = async (each: ImportManifestOptions): Promise<ImportLISHResponse> => {
 			let lastResponse!: ImportLISHResponse;
-			for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, each);
+			for (const lish of lishs) lastResponse = await importCommon(lish, downloadPath, each);
 			return lastResponse;
 		};
 		if (lishs.length <= 1) return importAll(opts);
