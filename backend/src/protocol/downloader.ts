@@ -647,8 +647,10 @@ export class Downloader {
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
-				// Folders are created only by an allocation, so a manifest without files always gets one.
-				if (missingBeforeAlloc.length > 0 || (!this.needsManifest && !this.lish.files?.length)) {
+				// Folders are created only by an allocation, so a missing one calls for it as a missing file does.
+				const allocate = missingBeforeAlloc.length > 0 || (!this.needsManifest && (await this.fileAllocator.hasMissingDirectories(this.lish)));
+				if (this.destroyed) return;
+				if (allocate) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });
 					await this.fileAllocator.allocateStructure(this.lish, (p: AllocationProgress) => this.emitAllocProgress(p, totalChunksForProgress), this.abortController.signal);

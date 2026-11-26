@@ -5,7 +5,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type DownloadResponse, CodedError, ErrorCodes, isMetadataOnly } from '@shared';
 import { Downloader } from '../protocol/downloader.ts';
 import { conservativeDatasetRoot } from '../lish/dataset-root.ts';
-import { storedDatasetFilesPresent } from '../lish/stored-dataset.ts';
+import { storedDatasetFilesPresent, storedDatasetFoldersPresent } from '../lish/stored-dataset.ts';
 import { getActiveUploads, disableUpload, enableUpload, getEnabledUploads, setUploadRecoveryHooks, clearAllUploads } from '../protocol/lish-protocol.ts';
 import { join, dirname } from 'path';
 import { access, constants } from 'fs/promises';
@@ -883,6 +883,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 						console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but files missing on disk, resetting for re-download`);
 						dataServer.resetVerification(p.lishID);
 						// Fall through to start download — verify in ENOENT recovery will set accurate per-file state
+					} else if (!(await storedDatasetFoldersPresent(dataServer, lish))) {
+						// Only a folder is gone: fall through, the download creates it again and the files keep their state.
+						console.warn(`[Transfer] ${p.lishID.slice(0, 8)}: DB says complete but a folder is missing on disk, creating it again`);
 					} else {
 						const send = broadcast ?? (() => {});
 						send('transfer.download:enabled', { lishID: p.lishID });
@@ -1221,8 +1224,9 @@ export function initTransferHandlers(networks: Networks, dataServer: DataServer,
 							}
 						}
 					}
-					if (onDisk) return { kind: 'complete' };
-					dataServer.resetVerification(lishID);
+					// A missing folder alone leaves the files as they are: the resumed download only creates it again.
+					if (onDisk && (!lish.directory || (await storedDatasetFoldersPresent(dataServer, lish).catch(() => false)))) return { kind: 'complete' };
+					if (!onDisk) dataServer.resetVerification(lishID);
 				}
 				const joined = getJoinedEnabledNetworkIDs(networks);
 				if (joined.length === 0) return { kind: 'suspend', networkIDs: [] };

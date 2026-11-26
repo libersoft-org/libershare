@@ -90,6 +90,26 @@ export class FileAllocator {
 		}
 	}
 
+	/** Whether a folder the manifest declares is missing on disk. Read-only, like findMissingFiles. */
+	async hasMissingDirectories(lish: IStoredLISH): Promise<boolean> {
+		if (!lish.directories?.length) return false;
+		validateDatasetNamespace(lish);
+		let dataset: SafeDataset;
+		try {
+			dataset = await openDataset(this.root);
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') return true;
+			throw error;
+		}
+		try {
+			await dataset.prepare(lish);
+			for (const directory of lish.directories) if (!(await dataset.statDirectory(directory.path))) return true;
+			return false;
+		} finally {
+			await dataset.close();
+		}
+	}
+
 	/**
 	 * Initial allocation: create all `lish.directories` entries, then zero-fill
 	 * every file in `lish.files` that is missing or has a wrong size.
