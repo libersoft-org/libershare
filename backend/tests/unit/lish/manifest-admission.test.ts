@@ -353,22 +353,6 @@ describe('a manifest waiting for the answer', () => {
 	});
 });
 
-describe('ManifestAdmission.storable', () => {
-	it('keeps a verified and an unsigned manifest as they are', async () => {
-		const signed = await sign(manifest());
-		expect(ManifestAdmission.storable(signed, VERIFIED)).toBe(signed);
-		const unsigned = manifest();
-		expect(ManifestAdmission.storable(unsigned, UNSIGNED)).toBe(unsigned);
-	});
-
-	it('keeps a manifest that failed a check as an unsigned body', async () => {
-		const forged = await changed();
-		const stored = ManifestAdmission.storable(forged, await ManifestAdmission.check(forged));
-		expect(stored).toEqual({ ...manifest(), id: FIXED_ID, name: 'Other' });
-		expect(await ManifestAdmission.check(stored)).toEqual(UNSIGNED);
-	});
-});
-
 describe('deriveLISHID', () => {
 	it('matches a fixed vector and has the form of a version 8 UUID', () => {
 		const id = deriveLISHID(PUBLISHER, TEST_NONCE);

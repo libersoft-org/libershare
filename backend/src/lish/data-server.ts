@@ -76,9 +76,14 @@ export class DataServer {
 		return getLISH(this.db, lishID);
 	}
 
-	/** The stored publisher (null when unsigned), or undefined when the LISH is not stored. Reads one row. */
+	/** The publisher a stored LISH was verified as (null when it is unsigned or failed a check), or undefined when the LISH is not stored. Reads one row. */
 	getPublisher(lishID: LISHid): string | null | undefined {
 		return getLISHMeta(this.db, lishID)?.publisher;
+	}
+
+	/** The publisher a stored LISH names, verified or not (null when unsigned), or undefined when the LISH is not stored. Reads one row. */
+	getNamedPublisher(lishID: LISHid): string | null | undefined {
+		return getLISHMeta(this.db, lishID)?.namedPublisher;
 	}
 
 	list(): IStoredLISH[] {

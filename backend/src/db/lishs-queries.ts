@@ -125,7 +125,10 @@ export interface LISHMeta {
 	chunkSize: number;
 	checksumAlgo: HashAlgorithm;
 	directory: string | null;
+	/** The publisher the manifest was verified as; `null` when it is unsigned or failed a check. */
 	publisher: string | null;
+	/** The publisher the manifest names, verified or not; `null` when it is unsigned. */
+	namedPublisher: string | null;
 }
 
 /**
@@ -133,9 +136,14 @@ export interface LISHMeta {
  * Used by callers that only need directory, chunkSize, checksumAlgo or publisher (e.g. chunk I/O).
  */
 export function getLISHMeta(db: Database, lishID: LISHid): LISHMeta | null {
-	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null; publisher: string | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory, publisher FROM lishs WHERE lish_id = ?').get(lishID);
+	const row = db.query<{ id: number; lish_id: string; chunk_size: number; checksum_algo: string; directory: string | null; publisher: string | null; signature_checks: number | null }, [string]>('SELECT id, lish_id, chunk_size, checksum_algo, directory, publisher, signature_checks FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
-	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory, publisher: row.publisher };
+	return { internalID: row.id, lishID: row.lish_id, chunkSize: row.chunk_size, checksumAlgo: row.checksum_algo as HashAlgorithm, directory: row.directory, publisher: verifiedPublisher(row.publisher, row.signature_checks), namedPublisher: row.publisher };
+}
+
+/** A manifest is stored as it came, so a row has a publisher whenever it is signed; the failed checks say when that publisher is only named. */
+function verifiedPublisher(publisher: string | null, failed: number | null): string | null {
+	return failed == null ? publisher : null;
 }
 
 /** Returns summary rows for all stored LISHs, with optional sorting. */
@@ -194,7 +202,7 @@ export function listLISHSummaries(db: Database, sortBy?: LISHSortField, sortOrde
 			l.total_downloaded_bytes,
 			l.error_code,
 			l.error_detail,
-			l.publisher
+			CASE WHEN l.signature_checks IS NULL THEN l.publisher END AS publisher
 		FROM lishs l
 		LEFT JOIN (
 			SELECT id_lishs, SUM(size) AS total_size, COUNT(*) AS file_count
@@ -268,19 +276,18 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 		totalChunks: vp.totalChunks,
 		totalUploadedBytes: row.total_uploaded_bytes,
 		totalDownloadedBytes: row.total_downloaded_bytes,
-		...(row.publisher != null ? { publisher: row.publisher } : {}),
+		...(verifiedPublisher(row.publisher, row.signature_checks) != null ? { publisher: row.publisher! } : {}),
 		checks: storedChecks(row.publisher, row.signature_checks),
 	};
 }
 
 /**
- * The checks of a stored item. A row keeps its publisher only when every check passed, and keeps
- * the failed checks of a signed manifest the user added anyway; any other row is unsigned.
+ * The checks of a stored item. A row keeps the failed checks of a signed manifest the user added
+ * anyway; a signed row without them passed every check, and any other row is unsigned.
  */
 function storedChecks(publisher: string | null, failed: number | null): LISHChecks {
-	if (publisher != null) return { signed: true, signatureValid: true, idMatchesPublisher: true };
-	if (failed == null) return { signed: false };
-	return { signed: true, signatureValid: (failed & 1) !== 0, idMatchesPublisher: (failed & 2) !== 0 };
+	if (failed != null) return { signed: true, signatureValid: (failed & 1) !== 0, idMatchesPublisher: (failed & 2) !== 0 };
+	return publisher != null ? { signed: true, signatureValid: true, idMatchesPublisher: true } : { signed: false };
 }
 
 /** Returns all stored LISHs in insertion order (for startup hydration). */

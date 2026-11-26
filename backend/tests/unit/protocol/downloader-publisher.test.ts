@@ -206,14 +206,14 @@ describe('a local .lish file', () => {
 
 	it('never overrides the stored publisher', async () => {
 		const stored = (await sign(manifest(), keyA)) as IStoredLISH;
-		// Whatever the user agreed to, a file that is not verified downloads as an unsigned one, and the stored item has A.
+		// Whatever the user agreed to, a file that is not verified has no verified publisher, and the stored item has A.
 		for (const file of [await signKeepingID(manifest(), keyQ), { ...(await sign(manifest(), keyA)), name: 'Changed' }, manifest()]) {
 			await expect(initFrom(file, stored, true)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 		}
 		await initFrom(await sign(manifest(), keyA), stored);
 	});
 
-	it('refuses a file that is not verified until the user agrees, then takes it as an unsigned one', async () => {
+	it('refuses a file that is not verified until the user agrees, then takes it as it is, with no verified publisher', async () => {
 		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };
 		const refusal = unverifiedLISHFromError(await initFrom(forged, null).catch(error => error))!;
 		expect(refusal).toMatchObject({ code: 'LISH_INVALID_SIGNATURE', checks: { signed: true, signatureValid: false, idMatchesPublisher: true }, publisher: A });
@@ -223,7 +223,7 @@ describe('a local .lish file', () => {
 		await expect(initFrom(manifest(), null)).rejects.toMatchObject({ code: ErrorCodes.LISH_UNSIGNED });
 		const accepted = priv(await initFrom(forged, null, true));
 		expect(accepted['localPublisher']).toBeNull();
-		expect(accepted['lish']).toEqual({ ...manifest(), name: 'Changed', version: 1 });
+		expect(accepted['lish']).toEqual(forged);
 	});
 });
 

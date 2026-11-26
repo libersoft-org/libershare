@@ -176,7 +176,7 @@ Requests the list of LISHs the peer currently shares.
 - Entries that stop being advertised are omitted from later pages. Offsets may therefore have gaps. Entries added during the operation appear only in a new snapshot. A page with a continuation must make progress and contain at least one entry
 - New requesters also accept a complete legacy response from an older peer. They reject malformed pages, repeated entries, stale offsets and cursor loops. The reference client applies one 15-second deadline to the whole listing and bounds the sum of encoded response bytes by the existing configured maximum message size. Exceeding that byte budget returns `PEER_LIST_TOO_LARGE`, without partial results; it is not an entry-count limit
 - If one entry cannot fit in a page, the responder returns `PEER_LIST_TOO_LARGE`. Cancellation or a failed multi-page read aborts the stream so late replies cannot answer another request
-- `publisher` is only what the responder reports: nobody has checked a signature at this point. A responder reports it only for a LISH it holds verified. A requester drops an entry whose `publisher` is not a base58btc string, or whose `id` is not the one `publisher` and `nonce` derive (see ID of a signed LISH in `LISH_DATA_FORMAT.md`), and keeps the rest of the page: that publisher cannot have signed anything under that ID. Clients show a kept `publisher` as a reported one and verify it only with the manifest (`getLish`)
+- `publisher` is only what the responder reports: nobody has checked a signature at this point. A responder reports the publisher its stored manifest names, also for a LISH its user added without it being verified, since it serves that manifest as it was received. A requester drops an entry whose `publisher` is not a base58btc string, or whose `id` is not the one `publisher` and `nonce` derive (see ID of a signed LISH in `LISH_DATA_FORMAT.md`), and keeps the rest of the page: that publisher cannot have signed anything under that ID. Clients show a kept `publisher` as a reported one and verify it only with the manifest (`getLish`)
 
 ### getLish — fetch manifest
 
@@ -285,7 +285,7 @@ Sent by a peer in reply to a pubsub `searchLishs`, over a fresh stream to the se
 **Behavior**:
 
 - An empty `lishs` array is accepted by receivers as an explicit "no match" signal; the reference implementation sends no response at all instead of an empty result
-- The searcher groups results by the pair (`id`, `publisher`). Peers reporting different publishers under one ID give separate results, so a forged offer never merges into the original publisher's row; an entry with a malformed `publisher`, or with an `id` that `publisher` and `nonce` do not derive, is ignored
+- The searcher groups results by the pair (`id`, `publisher`). Peers reporting different publishers under one ID give separate results, so an offer under another publisher never merges into the original publisher's row; an entry with a malformed `publisher`, or with an `id` that `publisher` and `nonce` do not derive, is ignored. A peer whose manifest names the original publisher but fails the signature check is told apart only when its manifest is fetched
 
 ### Error codes
 

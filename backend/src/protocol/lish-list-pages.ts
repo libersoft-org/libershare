@@ -14,7 +14,7 @@ export interface LISHListEntry {
 	nonce?: string;
 }
 
-/** The row this node reports for an item it stores; only a verified item is stored with a publisher. */
+/** The row this node reports for an item it stores, with the publisher its manifest names: an item is stored as it came, so the row offers what the manifest will show. */
 export function listEntry(lish: IStoredLISH): LISHListEntry {
 	return {
 		id: lish.id,

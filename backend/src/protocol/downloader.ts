@@ -461,11 +461,15 @@ export class Downloader {
 	}
 
 	/**
-	 * Publisher every manifest for this download must carry: the one already stored (or `null`
-	 * for a stored unsigned item), or unknown before anything is stored.
+	 * Publisher every manifest for this download must carry: the one the stored item was verified
+	 * as, what the manifest in hand names before anything is stored, or unknown without one. A
+	 * stored item that is unsigned or failed a check gives `null`: its manifest came from the user,
+	 * and none fetched with nobody to ask may take its place.
 	 */
 	private expectedPublisher(): ExpectedPublisher {
-		return this.lish ? (this.lish.publisher ?? null) : undefined;
+		if (!this.lish) return undefined;
+		const stored = this.dataServer.getPublisher(this.lishID);
+		return stored !== undefined ? stored : (this.lish.publisher ?? null);
 	}
 
 	/**

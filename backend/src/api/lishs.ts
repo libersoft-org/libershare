@@ -12,6 +12,7 @@ import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
 import { openDataset, createDataset, validateDatasetNamespace, type DatasetRoot } from '../lish/safe-dataset-files.ts';
 import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
+import { describePublisher } from '../db/lishs.ts';
 import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
 import { ManifestAdmission, type ExpectedPublisher } from '../lish/manifest-admission.ts';
 import { withLISHOwnership } from '../lish/lish-ownership.ts';
@@ -440,23 +441,31 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		validateDatasetNamespace(lish);
 		datasetRootName(lish);
 		const refuseStored = (checks: LISHChecks): void => {
-			const stored = dataServer.getPublisher(lish.id);
-			if (stored === undefined) return;
+			if (dataServer.getNamedPublisher(lish.id) === undefined) return;
 			if (!overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
-			const publisher = isVerifiedLISH(checks) ? lish.publisher! : null;
-			if (stored !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
+			assertStoredPublisher(lish, checks);
 		};
 		// Owning the ID from there on: the stored state is re-read and a conflicting publisher refused
 		// before any existing work is stopped or any directory prepared.
 		return admission.admit(lish, opts.acceptUnverified === true, checks => withLISHOwnership(lish.id, () => importOwned(lish, checks, downloadPath, overwrite, opts.enableSharing, opts.enableDownloading)), refuseStored);
 	}
 
+	/**
+	 * A stored item keeps for life the publisher its manifest names and whether that publisher was
+	 * verified: refuse a manifest that differs in either from what the ID is stored with.
+	 */
+	function assertStoredPublisher(lish: ILISH, checks: LISHChecks): void {
+		const named = dataServer.getNamedPublisher(lish.id);
+		if (named === undefined) return;
+		const verified = dataServer.getPublisher(lish.id) != null;
+		const publisher = checks.signed ? lish.publisher! : null;
+		if (named !== publisher || verified !== isVerifiedLISH(checks)) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${describePublisher(named, verified)}, received ${describePublisher(publisher, isVerifiedLISH(checks))}`);
+	}
+
 	async function importOwned(lish: ILISH, checks: LISHChecks, downloadPath: string, overwrite: boolean, enableSharing?: boolean, enableDownloading?: boolean): Promise<ImportLISHResponse> {
-		// Only a verified manifest is stored with its publisher; any other is kept as an unsigned body.
-		const publisher = isVerifiedLISH(checks) ? lish.publisher! : null;
 		const existing = dataServer.get(lish.id);
 		if (existing && !overwrite) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
-		if (existing && (existing.publisher ?? null) !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${existing.publisher ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
+		assertStoredPublisher(lish, checks);
 		const dirName = datasetRootName(lish);
 		const finalRoot: DatasetRoot = { kind: 'derived', base: resolve(Utils.expandHome(downloadPath)), component: dirName };
 		const destinationBase = await openDataset({ kind: 'explicit', path: finalRoot.base }, true);
@@ -495,7 +504,9 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			links: lish.links ?? [],
 			directory,
 			...(enableDownloading ? { finalDirectory: datasetRootPath(finalRoot) } : {}),
-			...(publisher ? { publisher, nonce: lish.nonce!, signature: lish.signature! } : {}),
+			// A signed manifest is stored as it came, whatever its checks found: the failed checks are
+			// kept beside it, and nothing in what the user accepted is changed.
+			...(checks.signed ? { publisher: lish.publisher!, nonce: lish.nonce!, signature: lish.signature! } : {}),
 		};
 		if (existing) {
 			await stopDatasetWork(lish.id);

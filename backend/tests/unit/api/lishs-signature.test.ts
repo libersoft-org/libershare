@@ -7,6 +7,7 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { CodedError, ErrorCodes, signedManifestBytes, unverifiedLISHFromError, type ILISH } from '@shared';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
+import { listEntry } from '../../../src/protocol/lish-list-pages.ts';
 import { openDatabase } from '../../../src/db/database.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { DEFAULT_MAX_CHUNK_SIZE, Settings } from '../../../src/settings.ts';
@@ -256,23 +257,40 @@ describe('adding a manifest that is not verified', () => {
 		await expect(lishs.answerUnverified({ token: question.token!, accept: true })).rejects.toMatchObject({ code: ErrorCodes.LISH_CONFIRMATION_EXPIRED });
 	});
 
-	it('names the first failed check and keeps a manifest that failed one as an unsigned body', async () => {
+	it('names the first failed check and keeps a manifest that failed one as it came', async () => {
 		const lishs = handlers();
 		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };
 		const question = await asked(lishs.importManifest(forged, downloadDir));
 		expect(question).toMatchObject({ code: 'LISH_INVALID_SIGNATURE', checks: failedSignature, publisher: A });
 		await lishs.answerUnverified({ token: question.token!, accept: true });
-		// Nothing downstream may take the claimed publisher for a fact: it is not stored at all.
+		// Nothing of what the user accepted is changed: whoever gets it from here checks it and finds the same.
 		const stored = dataServer.get(ID)!;
-		expect(stored).toMatchObject({ name: 'Changed' });
-		expect(stored.publisher).toBeUndefined();
-		expect(stored.signature).toBeUndefined();
-		expect(stored.nonce).toBeUndefined();
+		expect(stored).toMatchObject({ name: 'Changed', publisher: A, nonce: forged.nonce, signature: forged.signature });
+		expect(await ManifestAdmission.check(stored)).toEqual(failedSignature);
+		expect(listEntry(stored)).toMatchObject({ publisher: A, nonce: forged.nonce });
+		// The publisher is only named, and nothing downstream takes it for a verified one.
+		expect(dataServer.getNamedPublisher(ID)).toBe(A);
 		expect(dataServer.getPublisher(ID)).toBeNull();
-		// The detail still says what failed.
+		expect(dataServer.listSummaries().find(item => item.id === ID)!.publisher).toBeUndefined();
 		const detail = (await lishs.get({ lishID: ID }))!;
 		expect(detail.checks).toEqual(failedSignature);
 		expect(detail.publisher).toBeUndefined();
+	});
+
+	it('keeps for life the publisher a stored item names and whether it was verified', async () => {
+		const lishs = handlers();
+		const signed = await sign(manifest(), keyA);
+		const forged = { ...signed, name: 'Changed' };
+		const mismatch = { code: ErrorCodes.LISH_PUBLISHER_MISMATCH };
+		await lishs.importManifest(forged, downloadDir, { acceptUnverified: true });
+		// Not the real one from the same publisher, not an unsigned one, whatever the user agreed to.
+		await expect(lishs.importManifest(signed, downloadDir, { overwrite: true })).rejects.toMatchObject(mismatch);
+		await expect(lishs.importManifest(manifest(), downloadDir, { overwrite: true, acceptUnverified: true })).rejects.toMatchObject(mismatch);
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Changed' });
+		// The same kind again may replace it.
+		await lishs.importManifest({ ...signed, name: 'Changed again' }, downloadDir, { overwrite: true, acceptUnverified: true });
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Changed again', publisher: A });
+		expect((await lishs.get({ lishID: ID }))!.checks).toEqual(failedSignature);
 	});
 
 	it("keeps which check failed for an ID that is not the signer's", async () => {
@@ -369,12 +387,16 @@ describe('adding a manifest that is not verified', () => {
 		await expect(lishs.importManifest(manifest({ name: 'Again' }), downloadDir)).rejects.toMatchObject({ code: ErrorCodes.LISH_ALREADY_EXISTS });
 	});
 
-	it('keeps the failed checks of a stored item when a later write gives none', async () => {
+	it('lets no manifest fetched without a user take the place of one that failed a check', async () => {
 		const lishs = handlers();
-		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };
-		await lishs.importManifest(forged, downloadDir, { acceptUnverified: true });
-		// The downloader storing a manifest it fetched on its own: an unsigned body, no checks.
-		dataServer.add({ ...manifest({ name: 'Changed' }), directory: dataServer.get(ID)!.directory } as never);
+		const signed = await sign(manifest(), keyA);
+		await lishs.importManifest({ ...signed, name: 'Changed' }, downloadDir, { acceptUnverified: true });
+		const directory = dataServer.get(ID)!.directory;
+		const mismatch = expect.objectContaining({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		// The downloader stores what it fetched on its own with no checks: a verified manifest or an unsigned one.
+		expect(() => dataServer.add({ ...signed, directory } as never)).toThrow(mismatch);
+		expect(() => dataServer.add({ ...manifest(), directory } as never)).toThrow(mismatch);
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Changed' });
 		expect((await lishs.get({ lishID: ID }))!.checks).toEqual(failedSignature);
 	});
 });
@@ -568,6 +590,16 @@ describe('add from a peer checks the expected publisher', () => {
 		const signed = await sign(manifest(), keyA);
 		const lishnets = lishnetsOver({ ...signed, version: 2 });
 		await expect(lishnets.getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST, detail: 'unsupported manifest version 2' });
+	});
+
+	it('expects the publisher a stored item names, also when that item was not verified', async () => {
+		const forged = { ...(await sign(manifest(), keyA)), name: 'Forged' };
+		await handlers().importManifest(forged, downloadDir, { acceptUnverified: true });
+		// Another peer offers the same manifest. It is stored here as it came, so it reads as the same item.
+		const detail = await lishnetsOver(forged).getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' });
+		expect(detail).toMatchObject({ name: 'Forged', namedPublisher: A });
+		// A peer that took the signature off is refused, as for any stored item that names a publisher.
+		await expect(lishnetsOver(manifest({ name: 'stripped' })).getPeerLish({ lishID: ID, peerID: 'p', networkID: 'n' })).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 	});
 
 	it('without a picked row, expects the publisher already stored under the ID', async () => {

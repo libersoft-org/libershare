@@ -263,8 +263,8 @@ export function initLISHnetsHandlers(networks: Networks, dataServer: DataServer,
 	/** What the user picked the item by, else the publisher this node already stores under the ID. */
 	function expectedPublisherFor(p: PeerLishParams): ExpectedPublisher {
 		if (p.expectedPublisher !== undefined && p.expectedPublisher !== null && typeof p.expectedPublisher !== 'string') throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE, 'expectedPublisher must be a string or null');
-		// An ID already stored keeps its publisher, so the preview must not accept another one either.
-		const stored = dataServer.getPublisher(p.lishID);
+		// An ID already stored keeps the publisher its manifest names, so the preview must not accept another one either.
+		const stored = dataServer.getNamedPublisher(p.lishID);
 		return stored !== undefined ? stored : p.expectedPublisher;
 	}
 	/**

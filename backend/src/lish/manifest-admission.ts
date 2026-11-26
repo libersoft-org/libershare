@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { peerIdFromString } from '@libp2p/peer-id';
-import { CodedError, ErrorCodes, decodeSignature, isSignedLISH, isVerifiedLISH, signedManifestBytes, validateSignedLISHShape, type ILISH, type LISHChecks, type UnverifiedLISH } from '@shared';
+import { CodedError, ErrorCodes, decodeSignature, isSignedLISH, signedManifestBytes, validateSignedLISHShape, type ILISH, type LISHChecks, type UnverifiedLISH } from '@shared';
 import { lishIDMatchesPublisher } from './lish-id.ts';
 
 /**
@@ -188,16 +188,6 @@ export class ManifestAdmission<T> {
 	/** Let every waiting manifest go. */
 	clear(): void {
 		for (const lishID of [...this.pending.keys()]) this.drop(lishID);
-	}
-
-	/**
-	 * The manifest as this node stores and serves it. Only a verified manifest keeps its publisher:
-	 * an unverified one is kept as an unsigned body, so nothing downstream takes its claim for a fact.
-	 */
-	static storable<L extends ILISH>(lish: L, checks: LISHChecks): L {
-		if (isVerifiedLISH(checks) || !checks.signed) return lish;
-		const { publisher: _publisher, signature: _signature, nonce: _nonce, ...body } = lish;
-		return body as L;
 	}
 
 	private static unverified(lish: ILISH, checks: LISHChecks, fault: CodedError, token?: string): CodedError {

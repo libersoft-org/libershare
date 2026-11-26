@@ -11,14 +11,15 @@ import { getMaxChunkSize, toManifest } from './lish-protocol.ts';
 
 /**
  * Read the manifest a download starts from. A manifest that is not verified is refused unless the
- * user already agreed (`acceptUnverified`); it is then downloaded as an unsigned one.
+ * user already agreed (`acceptUnverified`). `publisher` is the verified one: `null` for a manifest
+ * that is unsigned or failed a check, which is then downloaded the way an unsigned one is.
  */
 export async function readLocalDownload(lishPath: string, acceptUnverified = false): Promise<{ lish: IStoredLISH; publisher: string | null }> {
 	const content = await Bun.file(lishPath).text();
 	const lish = validateImportedLISH(Utils.safeJSONParse(content, `LISH file: ${lishPath}`));
 	validateLISHStructure(lish, getMaxChunkSize());
 	const checks = await ManifestAdmission.gate(lish, acceptUnverified);
-	return isVerifiedLISH(checks) ? { lish: toManifest(lish), publisher: lish.publisher! } : { lish: ManifestAdmission.storable(lish, checks), publisher: null };
+	return { lish: toManifest(lish), publisher: isVerifiedLISH(checks) ? lish.publisher! : null };
 }
 
 export async function bindSignedDataset(dataServer: DataServer, lish: IStoredLISH, base: string): Promise<{ lish: IStoredLISH; root: DatasetRoot }> {

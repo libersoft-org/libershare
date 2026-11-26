@@ -27,8 +27,9 @@ export interface AddLISHOptions {
 	/** Refuse with `LISH_ALREADY_EXISTS` when the ID is already stored (checked inside the write). */
 	readonly requireNew?: boolean;
 	/**
-	 * What checking the manifest found when the user added it. Kept only for a manifest that claimed
-	 * a signature and failed a check; without it the row keeps what it has.
+	 * What checking the manifest found when the user added it. A manifest that claimed a signature
+	 * and failed a check is stored as it came, and these failed checks are what tells it from a
+	 * verified one; without them the row keeps what it has.
 	 */
 	readonly checks?: LISHChecks;
 }
@@ -39,14 +40,23 @@ function failedChecksBits(checks: LISHChecks): number | null {
 	return (checks.signatureValid ? 1 : 0) | (checks.idMatchesPublisher ? 2 : 0);
 }
 
+/** How a refusal names a publisher: unsigned, verified, or only named by a manifest that failed a check. */
+export function describePublisher(publisher: string | null, verified: boolean): string {
+	if (publisher === null) return 'unsigned';
+	return verified ? publisher : `${publisher} (not verified)`;
+}
+
 export function addLISH(db: Database, lish: IStoredLISH, options: AddLISHOptions = {}): void {
 	const tx = db.transaction(() => {
 		// The final check against concurrent writers: whatever was verified before an await, the row
-		// as it is now decides. An item keeps its publisher (or stays unsigned) for its whole life.
-		const stored = db.query<{ publisher: string | null }, [string]>('SELECT publisher FROM lishs WHERE lish_id = ?').get(lish.id);
+		// as it is now decides. An item keeps for its whole life the publisher its manifest names
+		// (or stays unsigned), and whether that publisher was verified.
+		const stored = db.query<{ publisher: string | null; signature_checks: number | null }, [string]>('SELECT publisher, signature_checks FROM lishs WHERE lish_id = ?').get(lish.id);
 		if (stored && options.requireNew) throw new CodedError(ErrorCodes.LISH_ALREADY_EXISTS, lish.id);
 		const publisher = lish.publisher ?? null;
-		if (stored && stored.publisher !== publisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored.publisher ?? 'unsigned'}, received ${publisher ?? 'unsigned'}`);
+		// A write that gives no checks comes from a caller that takes only verified or unsigned manifests.
+		const verified = publisher !== null && (options.checks === undefined || isVerifiedLISH(options.checks));
+		if (stored && (stored.publisher !== publisher || (stored.publisher !== null && stored.signature_checks === null) !== verified)) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${describePublisher(stored.publisher, stored.signature_checks === null)}, received ${describePublisher(publisher, verified)}`);
 		// Upsert main record — preserves upload_enabled/download_enabled on conflict
 		db.run(
 			`INSERT INTO lishs (lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory, publisher, signature, version, nonce)
