@@ -507,19 +507,18 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 	/** Import every manifest of one request, in order. */
 	async function importEach(lishs: ILISH[], p: ImportParams): Promise<ImportLISHResponse> {
 		const opts = importOptions(p);
-		// A question can hold one manifest, and answering it adds that one alone. So with several in
-		// a request, an unverified one is refused before anything is added: the caller asks its user
-		// and sends the request again with `acceptUnverified`.
-		if (lishs.length > 1) {
-			const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
-			for (const lish of lishs) {
-				validateLISHStructure(lish, maxChunkSize);
-				await ManifestAdmission.gate(lish, opts.acceptUnverified === true);
-			}
-		}
-		let lastResponse!: ImportLISHResponse;
-		for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, opts);
-		return lastResponse;
+		const importAll = async (each: ImportManifestOptions): Promise<ImportLISHResponse> => {
+			let lastResponse!: ImportLISHResponse;
+			for (const lish of lishs) lastResponse = await importCommon(lish, p.downloadPath, each);
+			return lastResponse;
+		};
+		if (lishs.length <= 1) return importAll(opts);
+		// With several in a request nothing is added before the user answers, and one question stands
+		// for all of them. The manifests wait here as they were read: the file or the address could
+		// hold something else by the time the answer comes.
+		const maxChunkSize: number = settings.get('network.maxChunkSize') ?? DEFAULT_MAX_CHUNK_SIZE;
+		for (const lish of lishs) validateLISHStructure(lish, maxChunkSize);
+		return admission.admitAll(lishs, opts.acceptUnverified === true, () => importAll({ ...opts, acceptUnverified: true }));
 	}
 
 	async function importFromFile(p: ImportFromFileParams): Promise<ImportLISHResponse> {

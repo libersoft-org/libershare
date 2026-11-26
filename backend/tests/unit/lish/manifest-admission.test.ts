@@ -310,6 +310,18 @@ describe('a manifest waiting for the answer', () => {
 			}
 		});
 
+		it('weighs a question about several manifests by all of them', async () => {
+			const admission = new ManifestAdmission<string>({ ttlMs: 60_000, count: 100, bytes: 100_000 });
+			const token = async (ids: string[]) => {
+				const lishs = ids.map(id => manifest({ id, description: 'x'.repeat(30_000) }));
+				return unverifiedLISHFromError(await admission.admitAll(lishs, false, async () => ids.join()).catch(error => error))!.token!;
+			};
+			const pair = await token(['one', 'two']);
+			const other = await token(['three', 'four']);
+			await expect(admission.answer(pair, true, resume => resume())).rejects.toMatchObject({ code: ErrorCodes.LISH_CONFIRMATION_EXPIRED });
+			expect(await admission.answer(other, true, resume => resume())).toBe('three,four');
+		});
+
 		it('still holds one manifest larger than the whole allowance, so the user can answer about it', async () => {
 			const { tokenOf, stillHeld } = limited({ bytes: 100_000 });
 			const earlier = await tokenOf('earlier');

@@ -146,6 +146,23 @@ export class ManifestAdmission<T> {
 	}
 
 	/**
+	 * {@link admit} for the manifests of one request. Nothing is added until all of them may be,
+	 * and one question stands for them all: its answer adds what was read for the request, never
+	 * what reading the source again would bring. The refusal names the first manifest that failed
+	 * a check, or else the first unsigned one, so the stronger warning is the one reported.
+	 */
+	async admitAll(lishs: readonly ILISH[], accepted: boolean, resume: () => Promise<T>): Promise<T> {
+		const unverified: Array<{ lish: ILISH; checks: LISHChecks; fault: CodedError }> = [];
+		for (const lish of lishs) {
+			const { checks, fault } = await ManifestAdmission.inspect(lish);
+			if (fault) unverified.push({ lish, checks, fault });
+		}
+		const named = unverified.find(item => item.checks.signed) ?? unverified[0];
+		if (named && !accepted) throw ManifestAdmission.unverified(named.lish, named.checks, named.fault, this.park(named.lish.id, lishs, resume));
+		return resume();
+	}
+
+	/**
 	 * The user's answer for a waiting manifest: add it, or let it go. `run` wraps the adding in
 	 * whatever the caller's own entry points run under. Returns `null` for a refusal.
 	 */

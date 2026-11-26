@@ -290,18 +290,42 @@ describe('adding a manifest that is not verified', () => {
 		expect(dataServer.get(ID)).toMatchObject({ name: 'Signed' });
 	});
 
-	it('refuses a request of several manifests before adding any, when one of them is not verified', async () => {
+	const plainID = '6f1e2d3c-4b5a-4978-8a6b-5c4d3e2f1a0b';
+
+	it('holds a request of several manifests as it was read, and a yes adds exactly those', async () => {
 		const lishs = handlers();
-		const plainID = '6f1e2d3c-4b5a-4978-8a6b-5c4d3e2f1a0b';
-		const json = JSON.stringify([await sign(manifest(), keyA), manifest({ id: plainID, name: 'Plain' })]);
-		// A question holds one manifest; answering it would add that one and leave the rest behind.
+		const signed = await sign(manifest(), keyA);
+		// What the address holds once the question is open: the same IDs, other content.
+		const bodies = [JSON.stringify([signed, manifest({ id: plainID, name: 'Plain' })]), JSON.stringify([signed, manifest({ id: plainID, name: 'Swapped' })])];
+		const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(bodies.shift()) });
+		try {
+			const question = await asked(lishs.importFromURL({ url: `http://127.0.0.1:${server.port}/items.lish`, downloadPath: downloadDir }));
+			expect(question).toMatchObject({ code: 'LISH_UNSIGNED', checks: UNSIGNED });
+			// Nothing of the request is added before the answer, the verified manifest included.
+			expect(dataServer.get(ID)).toBeFalsy();
+			await lishs.answerUnverified({ token: question.token!, accept: true });
+			expect(dataServer.getPublisher(ID)).toBe(A);
+			expect(dataServer.get(plainID)).toMatchObject({ name: 'Plain' });
+			// The address was read once.
+			expect(bodies).toHaveLength(1);
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	it('names the manifest that failed a check among several unverified ones, and a no adds none', async () => {
+		const lishs = handlers();
+		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };
+		const json = JSON.stringify([manifest({ id: plainID, name: 'Plain' }), forged]);
 		const question = await asked(lishs.importFromJSON({ json, downloadPath: downloadDir }));
-		expect(question).toMatchObject({ code: 'LISH_UNSIGNED', checks: UNSIGNED });
-		expect(question.token).toBeUndefined();
+		expect(question).toMatchObject({ code: 'LISH_INVALID_SIGNATURE', checks: failedSignature, publisher: A });
+		expect(await lishs.answerUnverified({ token: question.token!, accept: false })).toBeNull();
+		expect(dataServer.get(plainID)).toBeFalsy();
 		expect(dataServer.get(ID)).toBeFalsy();
+		// A caller whose user agreed beforehand is not asked.
 		await lishs.importFromJSON({ json, downloadPath: downloadDir, acceptUnverified: true });
-		expect(dataServer.getPublisher(ID)).toBe(A);
 		expect(dataServer.get(plainID)).toMatchObject({ name: 'Plain' });
+		expect(dataServer.get(ID)).toMatchObject({ name: 'Changed' });
 	});
 
 	it('lets go of a question an import raised while maintenance was pausing', async () => {
