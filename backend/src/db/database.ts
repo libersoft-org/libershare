@@ -38,7 +38,7 @@ export function getDatabase(): Database {
 
 /**
  * Remove every LISH row (and its `ON DELETE CASCADE` children: files, chunks,
- * directories, links). On-disk LISH data files are NOT touched. Used by the
+ * directories). On-disk LISH data files are NOT touched. Used by the
  * factory reset "downloads" category.
  *
  * Runs in a transaction so the row delete and the AUTOINCREMENT counter reset
@@ -49,7 +49,7 @@ export function getDatabase(): Database {
 export function clearLishData(database: Database): void {
 	const tx = database.transaction(() => {
 		database.run('DELETE FROM lishs');
-		database.run("DELETE FROM sqlite_sequence WHERE name IN ('lishs', 'lishs_files', 'lishs_chunks', 'lishs_directories', 'lishs_links')");
+		database.run("DELETE FROM sqlite_sequence WHERE name IN ('lishs', 'lishs_files', 'lishs_chunks', 'lishs_directories')");
 	});
 	tx();
 }

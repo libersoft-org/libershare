@@ -25,7 +25,6 @@ const detail = {
 		},
 	],
 	directories: [],
-	links: [],
 };
 
 // No chunk at all: one lists folders and is complete as it stands, the other lists nothing and waits for its manifest.

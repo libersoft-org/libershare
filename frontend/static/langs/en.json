@@ -325,10 +325,7 @@
 		"entryType": "Type",
 		"entryFile": "File",
 		"entryDirectory": "Directory",
-		"entryHardLink": "Hard link",
-		"entrySymbolicLink": "Symbolic link",
 		"entryPath": "Path",
-		"entryTarget": "Target",
 		"entryPermissions": "Permissions",
 		"entryInvalidValue": "Invalid value"
 	},

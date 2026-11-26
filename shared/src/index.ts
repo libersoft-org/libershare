@@ -183,7 +183,6 @@ export interface IPeerLishDetail {
 	directoryCount: number;
 	files: Array<{ path: string; size: number; permissions?: string; modified?: string; created?: string } & IInvalidEntryFields>;
 	directories: Array<import('./lish.ts').IDirectoryEntry & IInvalidEntryFields>;
-	links: Array<import('./lish.ts').ILinkEntry & IInvalidEntryFields>;
 }
 
 /** Marks the metadata of a summarized manifest entry that was left out because its value was invalid. */

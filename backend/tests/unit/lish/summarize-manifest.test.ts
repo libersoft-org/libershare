@@ -6,7 +6,7 @@ function manifest(): ILISH {
 	return {
 		id: 'a0000000-0000-4000-8000-000000000001',
 		name: 'Summary test',
-		description: 'Two files and a link',
+		description: 'Two files and a folder',
 		created: '2026-01-01T00:00:00.000Z',
 		chunkSize: 1024,
 		checksumAlgo: 'sha256',
@@ -15,7 +15,6 @@ function manifest(): ILISH {
 			{ path: 'empty.txt', size: 0, checksums: [] },
 		],
 		directories: [{ path: 'dir' }],
-		links: [{ path: 'dir/link', target: 'a.bin' }],
 	};
 }
 
@@ -26,7 +25,6 @@ describe('summarizeManifest', () => {
 		expect(detail.totalSize).toBe(2560);
 		expect(detail.fileCount).toBe(2);
 		expect(detail.directoryCount).toBe(1);
-		expect(detail.links).toEqual([{ path: 'dir/link', target: 'a.bin' }]);
 		expect(detail.files).toEqual([
 			{ path: 'dir/a.bin', size: 2560, modified: '2026-01-01T00:00:00.000Z' },
 			{ path: 'empty.txt', size: 0 },
@@ -41,11 +39,9 @@ describe('summarizeManifest', () => {
 			...manifest(),
 			files: [{ path: 'a.bin', size: 10, checksums: ['aa'], created: bad, modified: 'not a date', permissions: '0640' }],
 			directories: [{ path: 'dir', permissions: 755 as unknown as string, created: '2020-01-02T03:04:05.000Z', extra: 'dropped' } as never],
-			links: [{ path: 'dir/link', target: 'a.bin', hardlink: 'yes' as unknown as boolean, modified: null as unknown as string }],
 		});
 		expect(detail.files).toEqual([{ path: 'a.bin', size: 10, permissions: '0640', invalidFields: ['modified', 'created'] }]);
 		expect(detail.directories).toEqual([{ path: 'dir', created: '2020-01-02T03:04:05.000Z', invalidFields: ['permissions'] }]);
-		expect(detail.links).toEqual([{ path: 'dir/link', target: 'a.bin', invalidFields: ['hardlink', 'modified'] }]);
 	});
 
 	it('takes only ISO 8601 text as a date', () => {
@@ -60,8 +56,8 @@ describe('summarizeManifest', () => {
 	});
 
 	it('summarizes a manifest without files as empty', () => {
-		const { files: _files, directories: _directories, links: _links, ...bare } = manifest();
+		const { files: _files, directories: _directories, ...bare } = manifest();
 		const detail = summarizeManifest(bare);
-		expect(detail).toMatchObject({ totalChunks: 0, totalSize: 0, fileCount: 0, directoryCount: 0, files: [], directories: [], links: [] });
+		expect(detail).toMatchObject({ totalChunks: 0, totalSize: 0, fileCount: 0, directoryCount: 0, files: [], directories: [] });
 	});
 });
