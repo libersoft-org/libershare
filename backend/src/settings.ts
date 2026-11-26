@@ -450,9 +450,10 @@ let liveNetwork: (() => SettingsData['network']) | null = null;
 /**
  * Point {@link networkSetting} at the running Settings instance. Called once from
  * the entry point; every later settings write is picked up automatically because
- * the reader hits the live object rather than a copy.
+ * the reader hits the live object rather than a copy. A test that sets its own reader
+ * passes `null` when it is done, so the next test file starts from the defaults again.
  */
-export function useNetworkSettings(read: () => SettingsData['network']): void {
+export function useNetworkSettings(read: (() => SettingsData['network']) | null): void {
 	liveNetwork = read;
 }
 

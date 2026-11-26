@@ -21,7 +21,6 @@ const MANIFEST = {
 		{ path: 'b.bin', size: 10, checksums: ['h4'] },
 	],
 	directories: [{ path: 'dir', permissions: '0755', modified: '2026-01-02T00:00:00.000Z' }],
-	links: [{ path: 'dir/link', target: 'a.bin', hardlink: false, modified: '2026-01-02T00:00:00.000Z' }],
 } satisfies IStoredLISH;
 
 function handlersServing(manifest: IStoredLISH): ReturnType<typeof initLISHnetsHandlers> {
@@ -64,7 +63,6 @@ describe('lishnets.getPeerLish detail shape', () => {
 				{ path: 'b.bin', size: 10 },
 			],
 			directories: MANIFEST.directories,
-			links: MANIFEST.links,
 		});
 	});
 });

@@ -65,17 +65,6 @@ export function addLISH(db: Database, lish: IStoredLISH): void {
 				);
 			}
 		}
-
-		if (lish.links) {
-			db.run('DELETE FROM lishs_links WHERE id_lishs = ?', [internalID]);
-			for (const link of lish.links) {
-				db.run(
-					`INSERT INTO lishs_links (id_lishs, path, target, hardlink, modified, created)
-					 VALUES (?, ?, ?, ?, ?, ?)`,
-					[internalID, link.path, link.target, link.hardlink ? 1 : 0, link.modified ?? null, link.created ?? null]
-				);
-			}
-		}
 	});
 	tx();
 }

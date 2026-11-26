@@ -2,7 +2,7 @@ import { type DataServer } from '../lish/data-server.ts';
 import { type ILISH, type IStoredLISH, type ILISHFileInspection, type ILISHFileInspectionResult, type LISHid, type ILISHDetail, type ILISHListResult, type SuccessResponse, type CreateLISHResponse, type ImportLISHResponse, type LISHSortField, type SortOrder, type CompressionAlgorithm, DEFAULT_ALGO, compressionExtension, validateLISHStructure, formatSizeOverLimit, CodedError, ErrorCodes, productName } from '@shared';
 import { datasetRootName, datasetRootPath, conservativeDatasetRoot } from '../lish/dataset-root.ts';
 import { createLISH, exportLISHToFile, importLISHFromFile, parseLISHFromJSON, readLISHFile, runVerification, summarizeManifest, validateImportedLISH } from '../lish/lish.ts';
-import { DEFAULT_CHUNK_SIZE } from '@shared';
+import { DEFAULT_CHUNK_SIZE, isMetadataOnly } from '@shared';
 import { Utils } from '../utils.ts';
 import { type Settings, DEFAULT_MAX_CHUNK_SIZE } from '../settings.ts';
 import { setBusy, clearBusy, getBusyReason } from './busy.ts';
@@ -11,7 +11,6 @@ import { getDownloadEnabledLishs, destroyActiveDownloader, removeDownloadState, 
 import { readdir, stat, access } from 'fs/promises';
 import { join, dirname, resolve } from 'path';
 import { openDataset, createDataset, validateDatasetNamespace, type DatasetRoot } from '../lish/safe-dataset-files.ts';
-import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 import { deleteDatasetData, moveDatasetData, type DatasetMoveResult } from '../lish/dataset-transfer.ts';
 const assert = Utils.assertParams;
 type EmitFn = (client: any, event: string, data: any) => void;
@@ -280,6 +279,8 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 		console.log(`Creating LISH from: ${dataPath}, lishFile=${p.lishFile}, addToSharing=${addToSharing}, name=${p.name}, description=${p.description}`);
 		// 1. Create the LISH structure
 		const lish: IStoredLISH = await createLISH(dataPath, p.name, chunkSize, algorithm as any, threads, p.description, info => emit(client, 'lishs.create:progress', info), undefined, ac.signal);
+		// Nothing was listed at all: a receiver would take it for a placeholder and wait for a manifest forever.
+		if (isMetadataOnly(lish)) throw new CodedError(ErrorCodes.DIRECTORY_EMPTY);
 		// 2. Export to .lish(.gz) file if requested
 		let resultLISHFile: string | undefined;
 		if (p.lishFile) {
@@ -333,7 +334,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await removeDownloadState(p.lishID);
 			await stopDatasetWork(p.lishID);
 			clearBusy(p.lishID);
-			if (p.deleteData && lish.directory) await withChunkFilesClosed(p.lishID, () => deleteDatasetData(lish, storedRoot(lish), dataServer.getDatasetLinkBindings(p.lishID)));
+			if (p.deleteData && lish.directory) await withChunkFilesClosed(p.lishID, () => deleteDatasetData(lish, storedRoot(lish)));
 			const deleted = dataServer.delete(p.lishID);
 			if (deleted) {
 				console.log(`✓ LISH deleted: ${p.lishID}`);
@@ -346,7 +347,7 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			await stopDatasetWork(p.lishID);
 			setBusy(p.lishID, 'deleting');
 			try {
-				await withChunkFilesClosed(p.lishID, () => deleteDatasetData(lish, storedRoot(lish), dataServer.getDatasetLinkBindings(p.lishID)));
+				await withChunkFilesClosed(p.lishID, () => deleteDatasetData(lish, storedRoot(lish)));
 			} catch (error) {
 				clearBusy(p.lishID);
 				throw error;
@@ -430,7 +431,6 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			checksumAlgo: lish.checksumAlgo,
 			files: lish.files ?? [],
 			directories: lish.directories ?? [],
-			links: lish.links ?? [],
 			directory,
 			...(enableDownloading ? { finalDirectory: datasetRootPath(finalRoot) } : {}),
 		};
@@ -796,13 +796,13 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			assertOwner();
 			setBusy(p.lishID, 'moving');
 			broadcast('lishs:move:status', { lishID: p.lishID, moving: true });
-			const commit = (bindings?: readonly DatasetLinkBinding[]): void => {
+			const commit = (): void => {
 				assertOwner();
-				dataServer.relocateDataset(p.lishID, root, false, bindings);
+				dataServer.relocateDataset(p.lishID, root);
 				committed = true;
 			};
 			if (p.moveData && lish.directory) {
-				const result = await withChunkFilesClosed(p.lishID, () => moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source', dataServer.getDatasetLinkBindings(p.lishID)));
+				const result = await withChunkFilesClosed(p.lishID, () => moveDatasetData(lish, storedRoot(lish), root, commit, progress => broadcast('lishs:move:progress', { lishID: p.lishID, ...progress }), 'source'));
 				reportMoveCleanup(p.lishID, newDir, result);
 			} else {
 				const target = await openDataset(root, true);
@@ -861,12 +861,11 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 					lish,
 					storedRoot(lish),
 					targetRoot,
-					bindings => {
-						dataServer.relocateDataset(lishID, targetRoot, true, bindings);
+					() => {
+						dataServer.relocateDataset(lishID, targetRoot, true);
 					},
 					progress => broadcast('lishs:move:progress', { lishID, ...progress }),
-					'manifest',
-					dataServer.getDatasetLinkBindings(lishID)
+					'manifest'
 				)
 			);
 			reportMoveCleanup(lishID, finalDir, result);

@@ -56,15 +56,9 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 	// (e.g. `directories: {}`) would crash downstream for..of iteration in
 	// dataServer.add with a raw TypeError instead of a coded rejection.
 	if (lish.directories !== undefined && !Array.isArray(lish.directories)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'directories is not an array');
-	if (lish.links !== undefined && !Array.isArray(lish.links)) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'links is not an array');
 	for (const dir of lish.directories ?? []) {
 		if (!dir || typeof dir !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'directory entry is not an object');
 		checkEntryPath('directory', dir.path);
-	}
-	for (const link of lish.links ?? []) {
-		if (!link || typeof link !== 'object') throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'link entry is not an object');
-		checkEntryPath('link', link.path);
-		checkEntryPath('link target', link.target);
 	}
 	// Presence check, not truthiness: `files: null` (or any other falsy non-array) is a
 	// malformed manifest, only a genuinely absent field means metadata-only.
@@ -119,7 +113,7 @@ export function validateLISHStructure(lish: ILISH, maxChunkSize: number): void {
 			}
 		}
 	}
-	checkEntryTree(lish.directories ?? [], [...(lish.files ?? []), ...(lish.links ?? [])]);
+	checkEntryTree(lish.directories ?? [], lish.files ?? []);
 }
 
 /**
@@ -137,6 +131,14 @@ export function expectedChunkLength(lish: ILISH, fileIndex: number, chunkIndex: 
 	return Math.min(lish.chunkSize, size - chunkIndex * lish.chunkSize);
 }
 
+/**
+ * True for a LISH that lists nothing: no files and no directories. That is a placeholder
+ * still waiting for its real manifest; one holding only directories is complete as it stands.
+ */
+export function isMetadataOnly(lish: ILISH): boolean {
+	return !lish.files?.length && !lish.directories?.length;
+}
+
 export interface ILISH {
 	id: string;
 	name?: string | undefined;
@@ -146,7 +148,6 @@ export interface ILISH {
 	checksumAlgo: HashAlgorithm;
 	directories?: IDirectoryEntry[];
 	files?: IFileEntry[];
-	links?: ILinkEntry[];
 }
 // Extended interface for LISHs stored locally in the app (lishs.json)
 export interface IStoredLISH extends ILISH {
@@ -169,13 +170,6 @@ export interface IFileEntry {
 	modified?: string;
 	created?: string;
 	checksums: string[];
-}
-export interface ILinkEntry {
-	path: string;
-	target: string;
-	hardlink?: boolean;
-	modified?: string;
-	created?: string;
 }
 // Summary for the download list table (lightweight, no files/chunks)
 export type LISHSortField = 'created' | 'name' | 'totalSize' | 'fileCount';
@@ -218,7 +212,6 @@ export interface ILISHDetail {
 	directory?: string | undefined;
 	files: ILISHDetailFile[];
 	directories: IDirectoryEntry[];
-	links: ILinkEntry[];
 	verifiedChunks: number;
 	totalChunks: number;
 	totalUploadedBytes: number;

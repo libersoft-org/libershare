@@ -21,7 +21,7 @@
 	// Show "downloaded / total" format when downloading (progress < 100 and downloadedSize is provided)
 	let sizeDisplay = $derived(downloadedSize ? `${downloadedSize} / ${size}` : size);
 	let isFile = $derived(type === 'file');
-	let typeIcon = $derived(type === 'directory' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg');
+	let typeIcon = $derived(type === 'directory' ? '/img/directory.svg' : '/img/file.svg');
 	// With a position the row is selected through its NavArea, like TableRow decides it.
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);

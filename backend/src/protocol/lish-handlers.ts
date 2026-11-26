@@ -1,4 +1,5 @@
 import { existsSync } from 'fs';
+import { isMetadataOnly } from '@shared';
 import { trace } from '../logger.ts';
 import { type DataServer } from '../lish/data-server.ts';
 import { LISH_PROTOCOL, LISHClient, type HaveChunks, isUploadEnabled, isUploadAdvertisable } from './lish-protocol.ts';
@@ -141,14 +142,16 @@ export class LISHServingHandlers {
 			return;
 		}
 		const haveChunks = this.deps.dataServer.getHaveChunks(data.lishID);
-		if (haveChunks !== 'all' && haveChunks.size === 0) {
+		// A real manifest without a single chunk (folders only) is all there is to give; a placeholder holds nothing.
+		const wholeWithoutChunks = haveChunks !== 'all' && haveChunks.size === 0 && !isMetadataOnly(lish) && this.deps.dataServer.getAllChunkCount(data.lishID) === 0;
+		if (haveChunks !== 'all' && haveChunks.size === 0 && !wholeWithoutChunks) {
 			trace(`[NET] no chunks for ${data.lishID.slice(0, 8)}`);
 			return;
 		}
 		const node = this.deps.getNode();
 		if (!node) return;
 		const myAddrs = node.getMultiaddrs().map(ma => ma.toString());
-		const chunksPayload: HaveChunks = haveChunks === 'all' ? 'all' : Array.from(haveChunks);
+		const chunksPayload: HaveChunks = haveChunks === 'all' || wholeWithoutChunks ? 'all' : Array.from(haveChunks);
 		console.debug(`[NET] sending unicast HAVE to ${fromPeerID.slice(0, 12)} for ${data.lishID.slice(0, 8)}, chunks=${chunksPayload === 'all' ? 'ALL' : chunksPayload.length}`);
 		// Open a fresh LISH protocol stream to the requester and send the HAVE announcement.
 		// Errors are traced (not thrown) — a single unreachable requester mustn't break our own subscription.

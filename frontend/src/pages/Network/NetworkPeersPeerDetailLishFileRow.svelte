@@ -7,7 +7,7 @@
 	import { formatSize } from '../../scripts/utils.ts';
 	interface Props {
 		name: string;
-		type: 'dir' | 'file' | 'link';
+		type: 'dir' | 'file';
 		size: number;
 		depth: number;
 		rowY: number;
@@ -21,7 +21,7 @@
 	const navArea = getContext<NavAreaController | undefined>('navArea');
 	let position = $derived<NavPos>([0, rowY]);
 	let isSelected = $derived(navArea ? navArea.isSelected(position) : false);
-	let typeIcon = $derived(type === 'dir' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg');
+	let typeIcon = $derived(type === 'dir' ? '/img/directory.svg' : '/img/file.svg');
 	let iconColor = $derived(isSelected ? '--primary-background' : '--secondary-foreground');
 	let sizeDisplay = $derived(type === 'file' ? formatSize(size) : '');
 	let el = $state<HTMLElement | undefined>();

@@ -88,8 +88,7 @@ describe('validateLISHStructure', () => {
 
 describe('validateLISHStructure — optional arrays', () => {
 	it('rejects directories that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), directories: {} } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
-	it('rejects links that is not an array', () => expect(() => validateLISHStructure({ ...makeLish(), links: {} } as unknown as ILISH, MAX)).toThrow(ErrorCodes.LISH_INVALID_MANIFEST));
-	it('accepts absent directories and links', () => expect(() => validateLISHStructure(makeLish(), MAX)).not.toThrow());
+	it('accepts absent directories', () => expect(() => validateLISHStructure(makeLish(), MAX)).not.toThrow());
 });
 
 describe('validateLISHStructure — untrusted field types', () => {

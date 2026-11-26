@@ -5,11 +5,11 @@
 	interface TreeNode {
 		name: string;
 		children: TreeNode[];
-		type: 'dir' | 'file' | 'link';
+		type: 'dir' | 'file';
 		size: number;
 		path: string;
 		/** What the manifest says about the entry; absent for a folder only implied by the paths in it. */
-		entry?: { permissions?: string | undefined; modified?: string | undefined; created?: string | undefined; target?: string; hardlink?: boolean | undefined; invalidFields?: string[] | undefined } | undefined;
+		entry?: { permissions?: string | undefined; modified?: string | undefined; created?: string | undefined; invalidFields?: string[] | undefined } | undefined;
 	}
 	interface FlatRow {
 		node: TreeNode;
@@ -37,11 +37,6 @@
 			const parts = file.path.split('/');
 			const parentPath = parts.slice(0, -1).join('/');
 			ensureDir(parentPath).children.push({ name: parts[parts.length - 1] ?? '', children: [], type: 'file', size: file.size, path: file.path, entry: file });
-		}
-		for (const link of d.links) {
-			const parts = link.path.split('/');
-			const parentPath = parts.slice(0, -1).join('/');
-			ensureDir(parentPath).children.push({ name: (parts[parts.length - 1] ?? '') + ' → ' + link.target, children: [], type: 'link', size: 0, path: link.path, entry: link });
 		}
 
 		function sortTree(node: TreeNode): void {
@@ -139,14 +134,6 @@
 		expanded = expanded === key ? null : key;
 	}
 
-	/** Undefined for a link whose `hardlink` flag was invalid. */
-	function typeLabel(node: TreeNode): string | undefined {
-		if (node.type === 'dir') return $t('lish.entryDirectory');
-		if (node.type === 'file') return $t('lish.entryFile');
-		if (isInvalid(node, 'hardlink')) return undefined;
-		return node.entry?.hardlink === true ? $t('lish.entryHardLink') : $t('lish.entrySymbolicLink');
-	}
-
 	function isInvalid(node: TreeNode, field: string): boolean {
 		return node.entry?.invalidFields?.includes(field) ?? false;
 	}
@@ -227,11 +214,8 @@
 
 {#snippet entryDetailsView(node: TreeNode)}
 	<div class="entry-details">
-		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value" class:invalid={typeLabel(node) === undefined}>{typeLabel(node) ?? $t('lish.entryInvalidValue')}</span></div>
+		<div class="entry-row"><span class="label">{$t('lish.entryType')}:</span> <span class="value">{node.type === 'dir' ? $t('lish.entryDirectory') : $t('lish.entryFile')}</span></div>
 		<div class="entry-row"><span class="label">{$t('lish.entryPath')}:</span> <span class="value mono">{node.path}</span></div>
-		{#if node.entry?.target !== undefined}
-			<div class="entry-row"><span class="label">{$t('lish.entryTarget')}:</span> <span class="value mono">{node.entry.target}</span></div>
-		{/if}
 		{@render metaRow($t('lish.entryPermissions'), node.entry?.permissions, isInvalid(node, 'permissions'), 'text')}
 		{@render metaRow($t('network.created'), node.entry?.created, isInvalid(node, 'created'), 'date')}
 		{@render metaRow($t('localStorage.modified'), node.entry?.modified, isInvalid(node, 'modified'), 'date')}
