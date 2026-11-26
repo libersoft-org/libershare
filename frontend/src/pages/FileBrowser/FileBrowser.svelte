@@ -136,7 +136,8 @@
 	let selectedItem = $derived(filteredItems[selectedIndex]);
 	// A list that is not height-limited by its page reports its whole content as its height.
 	let visibleRows = $derived(rowHeight ? Math.ceil(Math.min(listHeight, window.innerHeight) / rowHeight) : 50);
-	let firstRow = $derived(rowHeight ? Math.max(0, Math.min(filteredItems.length - 1, Math.floor(listScrollTop / rowHeight)) - OVERSCAN_ROWS) : 0);
+	// Always an even row: the table stripes its rows by their place among the drawn ones, so a row keeps its stripe only while an even number of rows is left out above it.
+	let firstRow = $derived(rowHeight ? Math.max(0, Math.min(filteredItems.length - 1, Math.floor(listScrollTop / rowHeight)) - OVERSCAN_ROWS) & ~1 : 0);
 	let lastRow = $derived(Math.min(filteredItems.length, firstRow + visibleRows + 2 * OVERSCAN_ROWS));
 
 	// Rows are sized in vh, so their height is read from the first one drawn, again after a resize.
@@ -882,6 +883,13 @@
 		font-size: 1.4vh;
 	}
 
+	/* Only some rows are drawn and each is placed by one row height, so every row is exactly that tall, whatever font its text falls back to. */
+	.items :global(.row) {
+		box-sizing: border-box;
+		height: 5.5vh;
+		overflow: hidden;
+	}
+
 	.items .loading {
 		margin: 2vh;
 	}
@@ -986,17 +994,16 @@
 										<Spinner size="8vh" />
 									</div>
 								{:else}
-									<!-- Spacers stand in for the rows that are not drawn; none after the last row, so it stays :last-child. -->
-									{#if firstRow > 0}
-										<div style:height="{firstRow * rowHeight}px"></div>
-									{/if}
-									{#each filteredItems.slice(firstRow, lastRow) as item, offset (item.id)}
-										{@const index = firstRow + offset}
-										<StorageItem name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
-									{/each}
-									{#if lastRow < filteredItems.length}
-										<div style:height="{(filteredItems.length - lastRow) * rowHeight}px"></div>
-									{/if}
+									<!-- Padding stands in for the rows above that are not drawn, so the drawn ones are counted from the first; a spacer stands in for those below, none after the last row, so it stays :last-child. -->
+									<div style:padding-top="{firstRow * rowHeight}px">
+										{#each filteredItems.slice(firstRow, lastRow) as item, offset (item.id)}
+											{@const index = firstRow + offset}
+											<StorageItem name={item.name} type={item.type} link={item.link} broken={item.broken} size={item.size} modified={item.modified} selected={(active || actionsActive) && selectedIndex === index} isLast={index === filteredItems.length - 1} onclick={() => handleItemClick(index)} onmouseenter={() => handleItemHover(index)} />
+										{/each}
+										{#if lastRow < filteredItems.length}
+											<div style:height="{(filteredItems.length - lastRow) * rowHeight}px"></div>
+										{/if}
+									</div>
 								{/if}
 							</div>
 						</Table>

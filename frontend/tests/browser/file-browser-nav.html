@@ -280,7 +280,7 @@
 				assert(selectedRowText().includes('entry-19989.txt'), `Selected "${selectedRowText()}"`);
 				// Rows are sized in vh: taller rows in a shorter list stand in for a resized window.
 				const style = document.head.appendChild(document.createElement('style'));
-				style.textContent = '.items .row { padding-top: 30px !important; padding-bottom: 30px !important; }';
+				style.textContent = '.items .row { height: 110px !important; }';
 				root.style.height = '500px';
 				const inView = () => {
 					const row = rows()[selectedRow()]?.getBoundingClientRect();
@@ -293,6 +293,49 @@
 				style.remove();
 				root.style.height = '600px';
 				assert(shown, `After the resize the list starts at "${firstDrawn}" and the selected row is not in view`);
+			});
+			await test('a far row found by typing lands in view even when the text of the rows wants more height', async () => {
+				const items = root.querySelector('.items');
+				// The last test gave the rows their own height back; the list measures them in the next frame.
+				await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				await press('home');
+				// A name in a script the font does not cover is drawn in a taller fallback font; larger text stands in for it.
+				const style = document.head.appendChild(document.createElement('style'));
+				style.textContent = '.items .row .name span, .items .row .content { font-size: 4vh; }';
+				// The letters an earlier test typed are forgotten 800 ms after the last one; until then these would be added to them.
+				await new Promise(resolve => setTimeout(resolve, 900));
+				for (const char of 'entry-19') emitTypedChar(char);
+				const inView = () => {
+					const row = rows()[selectedRow()]?.getBoundingClientRect();
+					const box = items.getBoundingClientRect();
+					return !!row && row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+				};
+				for (let wait = 0; wait < 60 && !(selectedRowText().includes('entry-19000.txt') && inView()); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+				const found = selectedRowText();
+				const shown = inView();
+				const heights = new Set(rows().map(row => Math.round(row.getBoundingClientRect().height)));
+				style.remove();
+				assert(found.includes('entry-19000.txt') && shown, `Typing selected "${found}", in view: ${shown}`);
+				assert(heights.size === 1, `The drawn rows are ${[...heights].join(', ')} px tall`);
+			});
+			await test('a row keeps its stripe while the list scrolls', async () => {
+				const items = root.querySelector('.items');
+				const height = rows()[0].getBoundingClientRect().height;
+				const stripe = async name => {
+					for (let wait = 0; wait < 40 && !rows().some(row => row.textContent.includes(name)); wait++) await new Promise(resolve => setTimeout(resolve, 50));
+					const row = rows().find(candidate => candidate.textContent.includes(name));
+					return row ? getComputedStyle(row).backgroundColor : 'not drawn';
+				};
+				// Half a row in, so that rounding the scroll position never decides which row is the first.
+				items.scrollTop = 5000.5 * height;
+				const before = await stripe('entry-05010.txt');
+				assert(before.startsWith('rgb'), `The row is ${before} at ${items.scrollTop} of ${items.scrollHeight}, drawn from "${rows()[0]?.textContent.trim()}"`);
+				for (const step of [1, 2, 3]) {
+					items.scrollTop = (5000.5 + step) * height;
+					await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+					const after = await stripe('entry-05010.txt');
+					assert(after === before, `Scrolled by ${step} rows, the row went from ${before} to ${after}`);
+				}
 			});
 			await test('typing in the name filter shows the top of the shorter list', async () => {
 				const items = root.querySelector('.items');
@@ -314,7 +357,7 @@
 			if (component) await unmount(component);
 			wsClient.call = originalCall;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 17 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 19 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
