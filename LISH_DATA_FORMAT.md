@@ -5,7 +5,7 @@
 
 ## Overview
 
-LISH data structure format describes file and directory structures with checksums for content verification and integrity. It supports files, directories, and symbolic links with Unix-style permissions and timestamps.
+LISH data structure format describes file and directory structures with checksums for content verification and integrity. It supports files and directories with Unix-style permissions and timestamps.
 
 ## Representation
 
@@ -32,7 +32,6 @@ interface ILISH {
 	checksumAlgo: HashAlgorithm; // Hashing algorithm used (required)
 	directories?: IDirectoryEntry[]; // Array of directories (optional)
 	files?: IFileEntry[]; // Array of files (optional)
-	links?: ILinkEntry[]; // Array of symbolic links and hard links (optional)
 }
 ```
 
@@ -59,23 +58,6 @@ interface IFileEntry {
 	checksums: string[]; // Array of hex-encoded checksums for each chunk (required)
 }
 ```
-
-### Link entry
-
-```typescript
-interface ILinkEntry {
-	path: string; // Relative path of the link (required)
-	target: string; // Target path (required)
-	hardlink?: boolean; // True for hard links, false/undefined for symbolic links (optional, default: false)
-	modified?: string; // ISO 8601 timestamp in UTC of last modification (optional)
-	created?: string; // ISO 8601 timestamp in UTC of creation (optional)
-}
-```
-
-**Note**:
-
-- When `hardlink` is `true`, the `target` points to a file path in the `files` array (hard link)
-- When `hardlink` is `false` or undefined, the `target` is a filesystem path (symbolic link)
 
 ## Supported hash algorithms
 
@@ -157,21 +139,6 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 				"3a765cf06c5e6ed9..."
 			]
 		}
-	],
-	"links": [
-		{
-			"path": "docs/latest",
-			"target": "manual.pdf",
-			"modified": "2025-10-23T09:00:00.000Z",
-			"created": "2025-10-23T09:00:00.000Z"
-		},
-		{
-			"path": "docs/manual-copy.pdf",
-			"target": "docs/manual.pdf",
-			"hardlink": true,
-			"modified": "2025-10-21T09:45:00.000Z",
-			"created": "2025-10-21T09:45:00.000Z"
-		}
 	]
 }
 ```
@@ -180,7 +147,6 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 
 - ✅ Directories (including empty directories)
 - ✅ Files with chunked checksums
-- ✅ Symbolic / hard links
 - ✅ Unix file permissions (optional)
 - ✅ Creation and modification timestamps
 - ✅ Arbitrary chunk sizes
@@ -192,8 +158,9 @@ Files are divided into fixed-size chunks specified by `chunkSize` in LISH. Each 
 - Paths use forward slashes (`/`) as separators regardless of platform
 - Empty directories are explicitly listed to preserve structure
 - The LISH itself is not included in the file listings
+- Symbolic links and hard links do not occur in a LISH: when a LISH is created, a symbolic link is skipped, and so is every further name of a file that was already listed
 - Checksums are hex-encoded strings (lowercase)
 - Timestamps must use ISO 8601 format in UTC timezone (e.g., "2025-10-24T15:30:00.000Z")
-- The `directories`, `files`, and `links` arrays are optional - a LISH with no entries (empty directory structure) is valid
+- The `directories` and `files` arrays are optional - a LISH with no entries (empty directory structure) is valid
 - The `created`, `modified`, and `permissions` fields are optional - if `permissions` is not provided, file permissions will not be modified during extraction
 - If `permissions` is omitted, implementations should use default permissions for the target platform
