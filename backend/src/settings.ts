@@ -15,7 +15,7 @@ export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
 
 /**
  * Memory this process can really use: the machine's physical memory without swap, or the limit
- * of the container it runs in when that is lower. Read from the files themselves on every call,
+ * of the container or service it runs in when that is lower. Read from the files on every call,
  * so that a reset sees a container resized since the start.
  */
 export function usableMemoryBytes(total: number = totalmem(), read: (path: string) => string = path => readFileSync(path, 'utf8')): number {
@@ -28,8 +28,22 @@ export function usableMemoryBytes(total: number = totalmem(), read: (path: strin
 		}
 	};
 	let bytes = total;
-	// cgroup v2, then v1. A container without a limit says "max" or a number above any machine.
-	for (const file of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) bytes = least(bytes, () => Number(read(file)));
+	// The control group of this process: "0::/path" in cgroup v2, "N:memory:/path" in v1.
+	let own = '';
+	try {
+		own = read('/proc/self/cgroup');
+	} catch {}
+	// shortcut: the usual mount points only; a tree mounted elsewhere would need /proc/self/mountinfo.
+	const trees: Array<[RegExp, string, string]> = [
+		[/^0::(\/.*)$/m, '/sys/fs/cgroup', 'memory.max'],
+		[/^\d+:(?:[^:]*,)?memory(?:,[^:]*)?:(\/.*)$/m, '/sys/fs/cgroup/memory', 'memory.limit_in_bytes'],
+	];
+	for (const [line, mount, file] of trees) {
+		// That group and every one above it, since a limit anywhere on the way applies. A group
+		// without one says "max" or a number above any machine.
+		const group = (line.exec(own)?.[1] ?? '/').split('/').filter(part => part && part !== '..');
+		for (let depth = group.length; depth >= 0; depth--) bytes = least(bytes, () => Number(read([mount, ...group.slice(0, depth), file].join('/'))));
+	}
 	// A system container shows its limit only here: its cgroup says "max" and totalmem() reports the host.
 	return least(bytes, () => Number(/^MemTotal:\s+(\d+) kB/m.exec(read('/proc/meminfo'))?.[1]) * 1024);
 }

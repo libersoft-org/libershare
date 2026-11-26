@@ -123,6 +123,13 @@ describe('chunk window settings', () => {
 		expect(usableMemoryBytes(64 * GiB, files({ [V2]: 'max\n', [V1]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
 		// No limit: "max" in v2, a number above any machine in v1.
 		expect(usableMemoryBytes(64 * GiB, files({ [V2]: 'max\n', [V1]: '9223372036854771712\n', '/proc/meminfo': meminfo(64 * GiB) }))).toBe(64 * GiB);
+		// The limit sits on the group of the process, not on the root of the tree: a service with a
+		// memory limit, or a container that shares the host's cgroup namespace.
+		const scope = '/system.slice/docker-0123abcd.scope';
+		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': `0::${scope}\n`, [`/sys/fs/cgroup${scope}/memory.max`]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
+		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': `12:pids:/x\n9:cpu,memory:${scope}\n`, [`/sys/fs/cgroup/memory${scope}/memory.limit_in_bytes`]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
+		// Or on a group above it, while its own has none.
+		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': `0::${scope}\n`, [`/sys/fs/cgroup${scope}/memory.max`]: 'max\n', '/sys/fs/cgroup/system.slice/memory.max': `${2 * GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(2 * GiB);
 		// A system container: its cgroup says "max" and only the reported total is its own.
 		expect(usableMemoryBytes(320 * GiB, files({ [V2]: 'max\n', '/proc/meminfo': meminfo(1536 * MiB) }))).toBe(1536 * MiB);
 		// This machine, read for real.
