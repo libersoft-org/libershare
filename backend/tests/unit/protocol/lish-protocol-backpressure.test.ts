@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { AbstractStream, type SendResult } from '@libp2p/utils';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
@@ -14,6 +14,8 @@ import type { DataServer } from '../../../src/lish/data-server.ts';
  */
 
 useNetworkSettings(() => ({ maxUploadPeersPerLISH: 0, maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE, maxChunkSize: DEFAULT_MAX_CHUNK_SIZE }) as unknown as SettingsData['network']);
+// This reader stays set for the whole process; take it away so that later test files start from the defaults.
+afterAll(() => useNetworkSettings(null));
 
 /** A stream whose outgoing window the test opens; nothing leaves while the window is shut. */
 class WindowedStream extends AbstractStream {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
 import { Network } from '../../../src/protocol/network.ts';
@@ -16,6 +16,8 @@ useNetworkSettings(
 			maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
 		}) as SettingsData['network']
 );
+// This reader stays set for the whole process; take it away so that later test files start from the defaults.
+afterAll(() => useNetworkSettings(null));
 
 class BlockingStream {
 	readonly id = 'reset-upload-stream';
