@@ -1,5 +1,5 @@
 import { type Database } from 'bun:sqlite';
-import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILinkEntry, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
+import { type IStoredLISH, type IFileEntry, type IDirectoryEntry, type ILISHSummary, type ILISHDetail, type LISHSortField, type SortOrder, type LISHid, type HashAlgorithm } from '@shared';
 import { getVerificationProgress, getFileVerificationProgress } from './lishs-verification.ts';
 
 interface LISHRow {
@@ -25,7 +25,6 @@ interface LISHFileRow {
 function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 	const files = getFilesWithChecksums(db, row.id);
 	const directories = getDirectories(db, row.id);
-	const links = getLinks(db, row.id);
 	const chunks = getHaveChunksList(db, row.id);
 
 	return {
@@ -39,7 +38,6 @@ function buildStoredLISH(db: Database, row: LISHRow): IStoredLISH {
 		...(row.final_directory != null ? { finalDirectory: row.final_directory } : {}),
 		...(files.length > 0 ? { files } : {}),
 		...(directories.length > 0 ? { directories } : {}),
-		...(links.length > 0 ? { links } : {}),
 		...(chunks.length > 0 ? { chunks } : {}),
 	};
 }
@@ -80,19 +78,6 @@ function getDirectories(db: Database, internalID: number): IDirectoryEntry[] {
 		}));
 }
 
-function getLinks(db: Database, internalID: number): ILinkEntry[] {
-	return db
-		.query<{ path: string; target: string; hardlink: number; modified: string | null; created: string | null }, [number]>('SELECT path, target, hardlink, modified, created FROM lishs_links WHERE id_lishs = ? ORDER BY id')
-		.all(internalID)
-		.map(l => ({
-			path: l.path,
-			target: l.target,
-			...(l.hardlink === 1 ? { hardlink: true as const } : {}),
-			...(l.modified != null ? { modified: l.modified } : {}),
-			...(l.created != null ? { created: l.created } : {}),
-		}));
-}
-
 function getHaveChunksList(db: Database, internalID: number): string[] {
 	return db
 		.query<{ checksum: string }, [number]>(
@@ -105,14 +90,14 @@ function getHaveChunksList(db: Database, internalID: number): string[] {
 		.map(r => r.checksum);
 }
 
-/** Returns the full stored LISH (including files, directories, links, have-chunks) or null. */
+/** Returns the full stored LISH (including files, directories, have-chunks) or null. */
 export function getLISH(db: Database, lishID: LISHid): IStoredLISH | null {
 	const row = db.query<{ id: number; lish_id: string; name: string | null; description: string | null; created: string | null; chunk_size: number; checksum_algo: string; directory: string | null; final_directory: string | null }, [string]>('SELECT id, lish_id, name, description, created, chunk_size, checksum_algo, directory, final_directory FROM lishs WHERE lish_id = ?').get(lishID);
 	if (!row) return null;
 	return buildStoredLISH(db, row);
 }
 
-/** Lightweight metadata-only view of a LISH (no files/directories/links). */
+/** Lightweight metadata-only view of a LISH (no files/directories). */
 export interface LISHMeta {
 	internalID: number;
 	lishID: string;
@@ -122,7 +107,7 @@ export interface LISHMeta {
 }
 
 /**
- * Returns a lightweight metadata-only view of a LISH (no files/directories/links).
+ * Returns a lightweight metadata-only view of a LISH (no files/directories).
  * Used by callers that only need directory, chunkSize, and checksumAlgo (e.g. chunk I/O).
  */
 export function getLISHMeta(db: Database, lishID: LISHid): LISHMeta | null {
@@ -232,7 +217,6 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 
 	const files = getFiles(db, row.id);
 	const directories = getDirectories(db, row.id);
-	const links = getLinks(db, row.id);
 	const vp = getVerificationProgress(db, lishID);
 	const fileVP = getFileVerificationProgress(db, lishID);
 	const fileVPMap = new Map(fileVP.map(f => [f.filePath, f]));
@@ -253,7 +237,6 @@ export function getLISHDetail(db: Database, lishID: LISHid): ILISHDetail | null 
 			return { path: f.path, size: f.size, permissions: f.permissions ?? undefined, modified: f.modified ?? undefined, created: f.created ?? undefined, verifiedChunks: fvp?.verifiedChunks ?? 0, totalChunks: fvp?.totalChunks ?? 0 };
 		}),
 		directories,
-		links,
 		verifiedChunks: vp.verifiedChunks,
 		totalChunks: vp.totalChunks,
 		totalUploadedBytes: row.total_uploaded_bytes,

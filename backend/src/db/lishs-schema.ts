@@ -15,7 +15,7 @@ const LISHS_ADDED_COLUMNS: ReadonlyArray<readonly [string, string]> = [
 
 /**
  * Creates the LISH-related tables (lishs, lishs_files, lishs_chunks,
- * lishs_directories, lishs_links), applies idempotent column migrations to
+ * lishs_directories), applies idempotent column migrations to
  * pre-existing databases, and ensures the supporting indexes exist. Every error propagates.
  */
 export function initLISHsTables(db: Database): void {
@@ -91,34 +91,10 @@ function createLISHsSchema(db: Database): void {
 		)
 	`);
 
-	db.run(`
-		CREATE TABLE IF NOT EXISTS lishs_links (
-			id              INTEGER PRIMARY KEY AUTOINCREMENT,
-			id_lishs        INTEGER NOT NULL REFERENCES lishs(id) ON DELETE CASCADE,
-			path            TEXT NOT NULL,
-			target          TEXT NOT NULL,
-			hardlink        BOOL NOT NULL DEFAULT FALSE,
-			modified        TIMESTAMP,
-			created         TIMESTAMP
-		)
-	`);
-
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_files_id_lishs ON lishs_files(id_lishs)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_chunks_id_lishs_files ON lishs_chunks(id_lishs_files)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_chunks_checksum ON lishs_chunks(checksum)');
 	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_directories_id_lishs ON lishs_directories(id_lishs)');
-	db.run('CREATE INDEX IF NOT EXISTS idx_lishs_links_id_lishs ON lishs_links(id_lishs)');
-	db.run(`CREATE TABLE IF NOT EXISTS lishs_link_bindings (
-		lish_id TEXT NOT NULL REFERENCES lishs(lish_id) ON DELETE CASCADE,
-		path TEXT NOT NULL,
-		target TEXT NOT NULL,
-		source TEXT NOT NULL,
-		hardlink INTEGER NOT NULL CHECK (hardlink IN (0, 1)),
-		materialized_identity TEXT,
-		PRIMARY KEY (lish_id, path)
-	)`);
-	const bindingColumns = db.query<{ name: string }, []>('PRAGMA table_info(lishs_link_bindings)').all();
-	if (!bindingColumns.some(column => column.name === 'materialized_identity')) db.run('ALTER TABLE lishs_link_bindings ADD COLUMN materialized_identity TEXT');
 
 	db.run(`CREATE TABLE IF NOT EXISTS lishs_roots (
 		lish_id TEXT NOT NULL REFERENCES lishs(lish_id) ON DELETE CASCADE,

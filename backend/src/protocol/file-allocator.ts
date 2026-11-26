@@ -3,7 +3,6 @@ import { trace } from '../logger.ts';
 import { openDataset, datasetPath, validateDatasetNamespace, type DatasetRoot, type SafeDataset } from '../lish/safe-dataset-files.ts';
 import { checkDatasetSpace } from '../lish/dataset-space.ts';
 import { datasetCopyBytes } from '../lish/dataset-transfer.ts';
-import type { DatasetLinkBinding } from '../db/lishs-link-bindings.ts';
 
 /**
  * Progress event emitted while zero-filling files.
@@ -50,12 +49,10 @@ const PROGRESS_EMIT_INTERVAL = 50 * 1024 * 1024; // emit progress every 50MB
 export class FileAllocator {
 	private readonly downloadDir: string;
 	private readonly root: DatasetRoot | string;
-	private readonly linkBindings: () => readonly DatasetLinkBinding[];
 
-	constructor(root: DatasetRoot | string, linkBindings: () => readonly DatasetLinkBinding[] = () => []) {
+	constructor(root: DatasetRoot | string) {
 		this.root = root;
 		this.downloadDir = datasetPath(root);
-		this.linkBindings = linkBindings;
 	}
 
 	/**
@@ -148,9 +145,8 @@ export class FileAllocator {
 			const current = existing?.size ?? 0;
 			if (current !== file.size) needed += BigInt(file.size);
 		}
-		const root: DatasetRoot = typeof this.root === 'string' ? { kind: 'explicit', path: this.downloadDir } : this.root;
-		const bindings = lish.finalDirectory ? this.linkBindings() : [];
-		const completion = lish.finalDirectory ? { path: lish.finalDirectory, bytes: datasetCopyBytes(lish, root, bindings), ...(process.platform !== 'win32' ? { sameFilesystemBytes: datasetCopyBytes(lish, root, bindings, true) } : {}) } : undefined;
+		// The move to the final directory copies every file, except within one filesystem, where it links them.
+		const completion = lish.finalDirectory ? { path: lish.finalDirectory, bytes: datasetCopyBytes(lish), ...(process.platform !== 'win32' ? { sameFilesystemBytes: 0n } : {}) } : undefined;
 		await checkDatasetSpace(this.downloadDir, needed, completion);
 	}
 

@@ -70,7 +70,7 @@ for (const collision of [false, true])
 		await mkdir(source);
 		await writeFile(join(source, 'data.bin'), 'abcd');
 		const original = (await stat(join(source, 'data.bin'), { bigint: true })).ino;
-		const manifest: ILISH = { id: 'fallback', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'data.bin', size: 4, checksums: [new Bun.CryptoHasher('sha256').update('abcd').digest('hex')] }], links: [{ path: 'copy.bin', target: 'data.bin' }] };
+		const manifest: ILISH = { id: 'fallback', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', files: [{ path: 'data.bin', size: 4, checksums: [new Bun.CryptoHasher('sha256').update('abcd').digest('hex')] }] };
 		const linking = spyOn(SafeDataset.prototype, 'linkFileTo').mockImplementation(async () => {
 			if (collision) await writeFile(join(base, 'target/data.bin'), 'foreign');
 			throw new CodedError(ErrorCodes.FS_MOVE_UNSUPPORTED);
@@ -95,7 +95,6 @@ for (const collision of [false, true])
 				expect((await moving).cleanupWarnings).toEqual([]);
 				expect(committed).toBe(true);
 				expect(await readFile(join(base, 'target/data.bin'), 'utf8')).toBe('abcd');
-				expect(await readFile(join(base, 'target/copy.bin'), 'utf8')).toBe('abcd');
 				expect((await stat(join(base, 'target/data.bin'), { bigint: true })).ino).not.toBe(original);
 				await expect(stat(source)).rejects.toMatchObject({ code: 'ENOENT' });
 			}

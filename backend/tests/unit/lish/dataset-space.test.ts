@@ -54,14 +54,6 @@ test.skipIf(process.platform !== 'win32')('checks the completion reserve again w
 	expect((await fs.stat(join(f.source, 'data.bin'))).size).toBe(50);
 });
 
-test('counts the additional files materialized from links', async () => {
-	const f = await fixture();
-	f.lish.links = [{ path: 'copy.bin', target: 'data.bin' }];
-	capacity(90n);
-	await expect(new FileAllocator(f.source).allocateStructure(f.lish)).rejects.toMatchObject({ code: 'DISK_FULL' });
-	await expect(fs.stat(join(f.source, 'data.bin'))).rejects.toMatchObject({ code: 'ENOENT' });
-});
-
 test('checks separate filesystems independently and still refuses a full destination', async () => {
 	const f = await fixture();
 	spies.push(spyOn(fs, 'stat').mockImplementation((async (path: unknown) => ({ dev: String(path).includes('destination') ? 2n : 1n })) as any));
@@ -97,7 +89,7 @@ test.skipIf(process.platform !== 'win32')('rechecks copy space before creating a
 
 test('reports unavailable capacity as a terminal download error without allocating files', async () => {
 	const f = await fixture();
-	const data = Object.assign(new MockDataServer(), { getDatasetLinkBindings: () => [] });
+	const data = new MockDataServer();
 	data.allChunkCount = 1;
 	data.missingChunks = [makeMissingChunk('chunk' as never)];
 	spies.push(spyOn(fs, 'statfs').mockRejectedValue(Object.assign(new Error('Capacity read failed'), { code: 'EIO' })));

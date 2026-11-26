@@ -25,7 +25,6 @@ describe('manifest field limits', () => {
 		for (const path of ['a\\..\\b.bin', '.\\b.bin', 'folder\\b.bin']) {
 			expect(rejects(base({ files: [file, { ...file, path }] }))).toContain('backslash in entry path');
 			expect(rejects(base({ directories: [{ path }] }))).toContain('backslash in entry path');
-			expect(rejects(base({ links: [{ path, target: 'b.bin' }] }))).toContain('backslash in entry path');
 		}
 	});
 
@@ -42,18 +41,14 @@ describe('manifest field limits', () => {
 		expect(rejects(base({ description: 'd'.repeat(65537) }))).toContain('description is longer');
 	});
 
-	it('refuses paths and link targets over the byte limit', () => {
+	it('refuses paths over the byte limit', () => {
 		expect(rejects(base({ files: [{ path: longPath, size: 4, checksums: ['c1'] }] }))).toContain('file path is longer');
 		expect(rejects(base({ directories: [{ path: longPath }] }))).toContain('directory path is longer');
-		expect(rejects(base({ links: [{ path: longPath, target: 'a.bin' }] }))).toContain('link path is longer');
-		expect(rejects(base({ links: [{ path: 'l', target: longPath }] }))).toContain('link target path is longer');
 	});
 
-	it('refuses directory and link entries that are not objects with string paths', () => {
+	it('refuses directory entries that are not objects with string paths', () => {
 		expect(rejects(base({ directories: [null] }))).toBe('directory entry is not an object');
 		expect(rejects(base({ directories: [{ path: { nested: 'x'.repeat(1e6) } }] }))).toBe('directory path is not a string: object');
-		expect(rejects(base({ links: [7] }))).toBe('link entry is not an object');
-		expect(rejects(base({ links: [{ path: 'l', target: 5 }] }))).toBe('link target path is not a string: 5');
 	});
 
 	it('refuses long, empty or non-printable checksums', () => {

@@ -29,7 +29,7 @@
 			if (inspection instanceof Error) throw inspection;
 			return { version: 'legacy-preview-version', items: structuredClone(inspection) };
 		};
-		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [], links: [] });
+		const detail = (id, name, totalChunks) => ({ id, name, created: '2026-01-01T00:00:00.000Z', chunkSize: 1024, checksumAlgo: 'sha256', totalSize: 2500, totalChunks, fileCount: 1, directoryCount: 0, files: [{ path: 'a.bin', size: 2500 }], directories: [] });
 		const valid = { detail: detail('c0000000-0000-4000-8000-000000000001', 'First LISH', 3) };
 		const second = { detail: detail('c0000000-0000-4000-8000-000000000002', 'Second LISH', 7) };
 		const broken = { error: 'LISH_INVALID_MANIFEST', errorDetail: '"short.bin": expected 3 checksums for size 2500 / chunkSize 1024, got 2' };
@@ -139,17 +139,13 @@
 				assert(root.querySelectorAll('.row').length === 3, 'Back did not return to the table');
 				assert(calls.back === 0, 'Back from the item left the whole page');
 			});
-			await test('an entry shows its permissions, times and link type on request', async () => {
+			await test('an entry shows its type, permissions and times on request', async () => {
 				const full = {
 					detail: {
 						...detail('c0000000-0000-4000-8000-000000000004', 'Full', 3),
 						directoryCount: 1,
 						files: [{ path: 'a.bin', size: 2500, permissions: '0640', created: '2020-01-02T03:04:05.000Z', modified: '2021-06-07T08:09:10.000Z' }],
 						directories: [{ path: 'docs', permissions: '0750' }],
-						links: [
-							{ path: 'hard', target: 'a.bin', hardlink: true },
-							{ path: 'soft', target: 'a.bin' },
-						],
 					},
 				};
 				await open([full], 'lish-info-details');
@@ -170,13 +166,7 @@
 				assert(shown.includes(tr('lish.entryDirectory')) && shown.includes('0750'), `Directory details are wrong: ${shown}`);
 				await confirmRow('a.bin');
 				shown = root.querySelector('.entry-details')?.textContent ?? '';
-				assert(shown.includes('0640') && shown.includes(new Date('2020-01-02T03:04:05.000Z').toLocaleString()) && shown.includes(new Date('2021-06-07T08:09:10.000Z').toLocaleString()), `File permissions or times are missing: ${shown}`);
-				await confirmRow('hard');
-				shown = root.querySelector('.entry-details')?.textContent ?? '';
-				assert(shown.includes(tr('lish.entryHardLink')), `Hard link details are wrong: ${shown}`);
-				await confirmRow('soft');
-				shown = root.querySelector('.entry-details')?.textContent ?? '';
-				assert(shown.includes(tr('lish.entrySymbolicLink')) && shown.includes('a.bin'), `Symbolic link details are wrong: ${shown}`);
+				assert(shown.includes(tr('lish.entryFile')) && shown.includes('0640') && shown.includes(new Date('2020-01-02T03:04:05.000Z').toLocaleString()) && shown.includes(new Date('2021-06-07T08:09:10.000Z').toLocaleString()), `File permissions or times are missing: ${shown}`);
 				emit('confirmDown');
 				emit('confirmUp');
 				await settle();

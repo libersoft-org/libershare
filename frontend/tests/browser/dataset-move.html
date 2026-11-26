@@ -41,7 +41,7 @@
 		document.documentElement.lang = lang;
 		const callbacks = new Map();
 		const subscriptions = new Set();
-		const detail = { id: 'move-browser', name: 'Dataset A', directory: '/original/dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, verifiedChunks: 1, totalChunks: 1, files: [{ path: 'data.bin', size: 4, totalChunks: 1, verifiedChunks: 1 }], directories: [], links: [], totalUploadedBytes: 0, totalDownloadedBytes: 4 };
+		const detail = { id: 'move-browser', name: 'Dataset A', directory: '/original/dataset', created: '2026-01-01', chunkSize: 4, checksumAlgo: 'sha256', totalSize: 4, fileCount: 1, directoryCount: 0, verifiedChunks: 1, totalChunks: 1, files: [{ path: 'data.bin', size: 4, totalChunks: 1, verifiedChunks: 1 }], directories: [], totalUploadedBytes: 0, totalDownloadedBytes: 4 };
 		const originals = { on: api.on, subscribe: api.subscribe, call: api.call, list: api.lishs.list, get: api.lishs.get };
 		api.on = (event, callback) => callbacks.set(event, callback);
 		api.subscribe = event => subscriptions.add(event);

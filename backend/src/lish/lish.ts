@@ -1,6 +1,6 @@
 import * as fsPromises from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, type ILinkEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate } from '@shared';
+import { type HashAlgorithm, type IInvalidEntryFields, type ILISH, type IPeerLishDetail, type IStoredLISH, type IDirectoryEntry, type IFileEntry, SUPPORTED_ALGOS, CodedError, ErrorCodes, formatUntrustedValue, isISODate } from '@shared';
 import { type CompressionAlgorithm } from '@shared';
 import { calculateChecksum } from './checksum.ts';
 import { Utils } from '../utils.ts';
@@ -50,8 +50,8 @@ function getPermissions(mode: number): string {
  *
  * A plain `stat` returns them as JS numbers, which are exact only up to 2^53. NTFS file IDs
  * routinely exceed that (the sequence number lives in the top bits), so two different files
- * could round to the same `dev:ino` and the second one was recorded as a hard link of the
- * first — shipped without its own content or checksums. The key is built from the bigint
+ * could round to the same `dev:ino` and the second one was taken for a hard link of the
+ * first — left out of the LISH with its content. The key is built from the bigint
  * values; `identity` is null when the filesystem reports no inode (0), so nothing is deduped.
  */
 interface FileStats {
@@ -180,11 +180,6 @@ async function calculateChecksumsParallel(filePath: string, fileSize: number, ch
 	return results;
 }
 
-// Track inodes to detect hard links
-interface InodeMap {
-	[inode: string]: string; // inode -> first file path encountered
-}
-
 // A regular file discovered during a directory scan, with its size and chunk count.
 export interface ScannedFile {
 	path: string;
@@ -249,7 +244,7 @@ async function scanFiles(dirPath: string, basePath: string, chunkSize: number, i
 
 type ProgressInfo = { type: 'file-list'; files: { path: string; size: number; chunks: number }[] } | { type: 'file-start'; path: string; size: number; chunks: number } | { type: 'chunk'; path: string; current: number; total: number } | { type: 'file'; path: string };
 
-async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], links: ILinkEntry[], inodeMap: InodeMap, onProgress?: (info: ProgressInfo) => void, signal?: AbortSignal): Promise<void> {
+async function processDirectory(dirPath: string, basePath: string, chunkSize: number, algo: HashAlgorithm, maxWorkers: number, directories: IDirectoryEntry[], files: IFileEntry[], seenFiles: Set<string>, onProgress?: (info: ProgressInfo) => void, signal?: AbortSignal): Promise<void> {
 	const stat = await getStats(dirPath);
 	// Add directory entry
 	const relativePath = getRelativePath(dirPath, basePath);
@@ -279,81 +274,50 @@ async function processDirectory(dirPath: string, basePath: string, chunkSize: nu
 	for (const entry of scannedPaths) {
 		if (signal?.aborted) throw new CodedError(ErrorCodes.LISH_CREATE_CANCELLED);
 		const fullPath = `${dirPath}/${entry}`;
+		// A LISH lists no links, so a symbolic link is skipped. lstat does not follow it, and it is
+		// asked first: a link that leads nowhere would fail the stat below.
+		if ((await fsPromises.lstat(fullPath)).isSymbolicLink()) continue;
 		const stat = await getStats(fullPath);
-		// Check if it's a symlink using lstat (lstat does NOT follow symlinks, stat does)
-		let isSymlink = false;
-		try {
-			const lstat = await fsPromises.lstat(fullPath);
-			isSymlink = lstat.isSymbolicLink();
-		} catch (e) {
-			// Can't determine, treat as not a symlink
-		}
-		if (isSymlink) {
-			// Handle symbolic link - read the link target
-			try {
-				// Unfortunately Bun doesn't expose readlink directly, so we use realpath
-				const target = await fsPromises.realpath(fullPath);
-				links.push({
-					path: getRelativePath(fullPath, basePath),
-					target: normalizePath(target),
-					modified: formatTimestamp(new Date(stat.mtime)),
-					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
-				});
-			} catch (e) {
-				console.warn(`Warning: Could not read symlink ${fullPath}`);
-			}
-		} else if (stat.isDirectory()) {
+		if (stat.isDirectory()) {
 			// Recursively process subdirectory
-			await processDirectory(fullPath, basePath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
+			await processDirectory(fullPath, basePath, chunkSize, algo, maxWorkers, directories, files, seenFiles, onProgress, signal);
 		} else if (stat.isFile()) {
-			const inodeKey = stat.identity;
+			// A further name of a file already listed (a hard link) is skipped as well. Only a valid
+			// (non-zero) inode that was already seen counts as one.
+			if (stat.identity && seenFiles.has(stat.identity)) continue;
+			if (stat.identity) seenFiles.add(stat.identity);
 			const relativePath = getRelativePath(fullPath, basePath);
-			// Check if this is a hard link to an already processed file
-			// Only consider it a hard link if inode is valid (non-zero) and already seen
-			if (inodeKey && inodeMap[inodeKey]) {
-				// This is a hard link
-				links.push({
-					path: relativePath,
-					target: inodeMap[inodeKey],
-					hardlink: true,
-					modified: formatTimestamp(new Date(stat.mtime)),
-					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
-				});
-			} else {
-				// First occurrence of this inode - process as regular file
-				if (inodeKey) inodeMap[inodeKey] = relativePath;
-				// Calculate checksums in parallel with progress tracking
-				const totalChunks = Math.ceil(stat.size / chunkSize);
-				// Progress feedback - file start
-				if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
-				// Calculate checksums (skip for empty files)
-				let checksums: string[];
-				if (stat.size === 0) checksums = [];
-				else {
-					const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
-					checksums = await calcFn(
-						fullPath,
-						stat.size,
-						chunkSize,
-						algo,
-						maxWorkers,
-						(completed, total) => {
-							if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
-						},
-						signal
-					);
-				}
-				files.push({
-					path: relativePath,
-					size: stat.size,
-					permissions: getPermissions(stat.mode),
-					modified: formatTimestamp(new Date(stat.mtime)),
-					created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
-					checksums,
-				});
-				// Progress feedback - file complete
-				if (onProgress) onProgress({ type: 'file', path: relativePath });
+			// Calculate checksums in parallel with progress tracking
+			const totalChunks = Math.ceil(stat.size / chunkSize);
+			// Progress feedback - file start
+			if (onProgress) onProgress({ type: 'file-start', path: relativePath, size: stat.size, chunks: totalChunks });
+			// Calculate checksums (skip for empty files)
+			let checksums: string[];
+			if (stat.size === 0) checksums = [];
+			else {
+				const calcFn = maxWorkers === 1 ? calculateChecksumsSequential : calculateChecksumsParallel;
+				checksums = await calcFn(
+					fullPath,
+					stat.size,
+					chunkSize,
+					algo,
+					maxWorkers,
+					(completed, total) => {
+						if (onProgress) onProgress({ type: 'chunk', path: relativePath, current: completed, total });
+					},
+					signal
+				);
 			}
+			files.push({
+				path: relativePath,
+				size: stat.size,
+				permissions: getPermissions(stat.mode),
+				modified: formatTimestamp(new Date(stat.mtime)),
+				created: formatTimestamp(new Date(stat.birthtime || stat.mtime)),
+				checksums,
+			});
+			// Progress feedback - file complete
+			if (onProgress) onProgress({ type: 'file', path: relativePath });
 		}
 	}
 }
@@ -374,6 +338,8 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 	if (!description) delete lish.description;
 	const stat = await getStats(inputPath);
 	if (stat.isFile()) {
+		// A link to a file is not shared on its own either. A folder picked through a link stays a valid root.
+		if ((await fsPromises.lstat(inputPath)).isSymbolicLink()) throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE);
 		// Single file processing
 		const totalChunks = Math.ceil(stat.size / chunkSize);
 		// Get filename from path
@@ -416,21 +382,17 @@ export async function createLISH(inputPath: string, name: string | undefined, ch
 		// Directory processing
 		const directories: IDirectoryEntry[] = [];
 		const files: IFileEntry[] = [];
-		const links: ILinkEntry[] = [];
-		const inodeMap: InodeMap = {};
 		// Scan all files first and emit the complete file list
 		const scannedFiles = await scanFiles(inputPath, inputPath, chunkSize, {}, signal);
 		if (onProgress) onProgress({ type: 'file-list', files: scannedFiles });
 		// Now process directory (computes checksums with per-file progress)
-		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, links, inodeMap, onProgress, signal);
+		await processDirectory(inputPath, inputPath, chunkSize, algo, maxWorkers, directories, files, new Set(), onProgress, signal);
 		// Sort all arrays alphabetically by path
 		directories.sort((a, b) => a.path.localeCompare(b.path));
 		files.sort((a, b) => a.path.localeCompare(b.path));
-		links.sort((a, b) => a.path.localeCompare(b.path));
 		// Only add arrays if they have content
 		if (directories.length > 0) lish.directories = directories;
 		if (files.length > 0) lish.files = files;
-		if (links.length > 0) lish.links = links;
 	} else throw new CodedError(ErrorCodes.INVALID_INPUT_TYPE);
 	return lish;
 }
@@ -509,12 +471,11 @@ export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
 		directoryCount: (manifest.directories ?? []).length,
 		files,
 		directories: (manifest.directories ?? []).map(d => ({ path: d.path, ...entryMetadata(d, ['permissions', 'modified', 'created']) })),
-		links: (manifest.links ?? []).map(l => ({ path: l.path, target: l.target, ...entryMetadata(l, ['hardlink', 'modified', 'created']) })),
 	};
 }
 
-/** What an optional entry field has to hold to be shown: any text, an ISO 8601 date, or a flag. */
-const ENTRY_METADATA = { permissions: 'text', modified: 'date', created: 'date', hardlink: 'flag' } as const;
+/** What an optional entry field has to hold to be shown: any text or an ISO 8601 date. */
+const ENTRY_METADATA = { permissions: 'text', modified: 'date', created: 'date' } as const;
 
 /**
  * The optional metadata `fields` of a manifest entry that hold a value of the right kind. The
@@ -528,7 +489,7 @@ function entryMetadata<T extends object, K extends keyof typeof ENTRY_METADATA &
 		const value: unknown = entry[field];
 		if (value === undefined) continue;
 		const kind = ENTRY_METADATA[field];
-		if (kind === 'flag' ? typeof value === 'boolean' : typeof value === 'string' && (kind === 'text' || isISODate(value))) shown[field] = value;
+		if (typeof value === 'string' && (kind === 'text' || isISODate(value))) shown[field] = value;
 		else invalid.push(field);
 	}
 	if (invalid.length > 0) shown['invalidFields'] = invalid;
