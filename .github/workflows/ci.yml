@@ -163,6 +163,8 @@ jobs:
           lipo backend/build/lish-backend -verify_arch x86_64 arm64
           lipo backend/build/lish-network-helper -verify_arch x86_64 arm64
           lipo app/build/universal-apple-darwin/release/bundle/macos/LiberShare.app/Contents/MacOS/LiberShare -verify_arch x86_64 arm64
+      - name: Verify the generated Info.plist reached the bundle
+        run: plutil -extract NSLocationUsageDescription raw app/build/universal-apple-darwin/release/bundle/macos/LiberShare.app/Contents/Info.plist | grep -F "$(jq -r .name shared/src/product.json) needs your location"
 
   windows-arm64-native:
     runs-on: windows-11-arm

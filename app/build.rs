@@ -9,6 +9,7 @@ fn main() {
 	println!("cargo:rerun-if-changed=sync-config.ts");
 	println!("cargo:rerun-if-changed=tauri.conf.json.template");
 	println!("cargo:rerun-if-changed=tauri.linux.conf.json.template");
+	println!("cargo:rerun-if-changed=Info.plist.template");
 	println!("cargo:rerun-if-changed=../shared/src/product.json");
 	match std::process::Command::new("bun").arg("sync-config.ts").current_dir(&manifest_dir).status() {
 		Ok(status) if status.success() => {}

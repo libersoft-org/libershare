@@ -7,6 +7,7 @@ app/core
 # Generated from *.template by app/sync-config.ts (source: shared/src/product.json)
 app/tauri.conf.json
 app/tauri.linux.conf.json
+app/Info.plist
 **/*.crt
 **/*.key
 frontend/.svelte-kit/
