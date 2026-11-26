@@ -3,6 +3,7 @@ import { inputInitialDelay, inputRepeatDelay, gamepadDeadzone, increaseVolume, d
 import { addNotification } from '../notifications.ts';
 import { tt } from '../language.ts';
 import { windowActive } from './focus.ts';
+import { mergeGamepads } from './gamepad-merge.ts';
 type GamepadCallback = () => void;
 let globalGamepadManager: GamepadManager | null = null;
 export const gamepadConnected = writable(false);
@@ -53,8 +54,7 @@ export class GamepadManager {
 			} else this.stopPolling();
 		});
 		// Check if gamepad is already connected
-		const gamepads = navigator.getGamepads();
-		if (gamepads[0]) {
+		if (navigator.getGamepads().some(Boolean)) {
 			this.isConnected = true;
 			gamepadConnected.set(true);
 			if (this.active) this.startPolling();
@@ -80,6 +80,8 @@ export class GamepadManager {
 
 	private handleDisconnect(e: GamepadEvent): void {
 		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }), 'warning');
+		// Another gamepad may still be plugged in; navigation stops only with the last one.
+		if (navigator.getGamepads().some(gamepad => gamepad && gamepad.index !== e.gamepad.index)) return;
 		this.isConnected = false;
 		gamepadConnected.set(false);
 		this.stopPolling();
@@ -116,17 +118,15 @@ export class GamepadManager {
 
 	private poll = (): void => {
 		if (!this.isConnected) return;
-		const gamepad = navigator.getGamepads()[0];
-		if (!gamepad) {
-			// Gamepad disappeared unexpectedly
+		const gamepads = navigator.getGamepads().filter((gamepad): gamepad is Gamepad => gamepad !== null);
+		if (gamepads.length === 0) {
+			// The last gamepad disappeared unexpectedly
 			this.isConnected = false;
 			gamepadConnected.set(false);
 			this.animationID = null;
 			return;
 		}
-		const buttons = gamepad.buttons.map(b => b.pressed);
-		const leftStickX = gamepad.axes[0] ?? 0;
-		const leftStickY = gamepad.axes[1] ?? 0;
+		const { buttons, stickX: leftStickX, stickY: leftStickY } = mergeGamepads(gamepads);
 		const now = Date.now();
 		// A/B button press/release events
 		this.handleButtons(buttons);
