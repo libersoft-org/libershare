@@ -1,4 +1,6 @@
+import { readFileSync } from 'fs';
 import { mkdir } from 'fs/promises';
+import { totalmem } from 'os';
 import { Mutex } from 'async-mutex';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
@@ -10,8 +12,39 @@ export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
 // Default bytes of chunk requests kept in flight to one peer (settings: network.chunkWindowBytes).
 export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
+
+/**
+ * Memory this process can really use: the machine's physical memory without swap, or the limit
+ * of the container it runs in when that is lower.
+ */
+export function usableMemoryBytes(): number {
+	let bytes = totalmem();
+	const constrained = process.constrainedMemory?.();
+	if (constrained && constrained < bytes) bytes = constrained;
+	if (process.platform === 'linux') {
+		// A system container shows its limit only here: totalmem() reports the host's memory there.
+		try {
+			const kB = Number(/^MemTotal:\s+(\d+) kB/m.exec(readFileSync('/proc/meminfo', 'utf8'))?.[1]);
+			if (kB > 0 && kB * 1024 < bytes) bytes = kB * 1024;
+		} catch {}
+	}
+	return bytes;
+}
+
+/**
+ * Default in-flight budget for a machine with `memoryBytes` of memory: a fifth of it in whole
+ * megabytes, and never below one largest message, so that every chunk a default node accepts
+ * still downloads.
+ */
+export function chunkInflightBudgetFor(memoryBytes: number): number {
+	const MiB = 1024 * 1024;
+	const fifth = Math.floor(memoryBytes / 5 / MiB) * MiB;
+	return fifth > DEFAULT_MAX_MESSAGE_SIZE ? fifth : DEFAULT_MAX_MESSAGE_SIZE;
+}
+
 // Default bytes of chunk requests in flight across every download (network.chunkInflightBudgetBytes).
-export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 256 * 1024 * 1024;
+// shortcut: worked out once when the process starts, so a reset to defaults in a container resized meanwhile uses the old size until a restart.
+export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = chunkInflightBudgetFor(usableMemoryBytes());
 
 export interface SettingsData {
 	language: string;
@@ -54,7 +87,8 @@ export interface SettingsData {
 		 * beside the bytes already in flight, and a chunk larger than the whole budget stops its
 		 * download with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET`. Applies to running downloads: after it is
 		 * lowered, chunks already requested may stay above it until they are written, and nothing
-		 * more is requested meanwhile.
+		 * more is requested meanwhile. The default is a fifth of the machine's memory, stored when
+		 * the settings are first created and worked out again by a reset.
 		 */
 		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;

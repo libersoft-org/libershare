@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { tmpdir, totalmem } from 'os';
 import { pipelineDepth } from '../../../src/protocol/chunk-downloader.ts';
 import { ByteBudget } from '../../../src/protocol/inflight-budget.ts';
 import { CHUNK_WINDOW_MAX_REQUESTS } from '../../../src/protocol/constants.ts';
-import { Settings, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
+import { DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES, Settings, chunkInflightBudgetFor, usableMemoryBytes, useNetworkSettings, type SettingsData } from '../../../src/settings.ts';
 import { ErrorCodes } from '@shared';
 
 const MiB = 1024 * 1024;
@@ -81,17 +81,37 @@ describe('chunk window settings', () => {
 
 	it('refuses a per-peer window above the shared budget, from either side', async () => {
 		const settings = await create();
-		await expect(settings.set('network.chunkWindowBytes', 257 * MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
+		await expect(settings.set('network.chunkWindowBytes', DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES + MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		await expect(settings.set('network.chunkInflightBudgetBytes', 8 * MiB)).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		await expect(settings.set('network', { ...settings.get('network'), chunkWindowBytes: 32 * MiB, chunkInflightBudgetBytes: 16 * MiB })).rejects.toMatchObject({ code: ErrorCodes.SETTINGS_CHUNK_WINDOW_EXCEEDS_BUDGET });
 		expect(settings.get('network.chunkWindowBytes')).toBe(16 * MiB);
-		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(256 * MiB);
+		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
 	});
 
 	it('accepts a window equal to the budget', async () => {
 		const settings = await create();
-		await settings.set('network.chunkWindowBytes', 256 * MiB);
-		expect(settings.get('network.chunkWindowBytes')).toBe(256 * MiB);
+		await settings.set('network.chunkWindowBytes', DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
+		expect(settings.get('network.chunkWindowBytes')).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
+	});
+
+	it('takes a fifth of the memory as the default budget, in whole megabytes and never below one largest message', () => {
+		const GiB = 1024 * MiB;
+		expect(chunkInflightBudgetFor(16 * GiB)).toBe(3276 * MiB);
+		expect(chunkInflightBudgetFor(1536 * MiB)).toBe(307 * MiB);
+		expect(chunkInflightBudgetFor(640 * MiB)).toBe(128 * MiB);
+		expect(chunkInflightBudgetFor(256 * MiB)).toBe(128 * MiB);
+		expect(chunkInflightBudgetFor(Number.NaN)).toBe(128 * MiB);
+	});
+
+	it('stores the default budget of this machine on the first start and restores it on a reset', async () => {
+		const settings = await create();
+		expect(usableMemoryBytes()).toBeGreaterThan(0);
+		expect(usableMemoryBytes()).toBeLessThanOrEqual(totalmem());
+		expect(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES).toBe(chunkInflightBudgetFor(usableMemoryBytes()));
+		expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).network.chunkInflightBudgetBytes).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
+		await settings.set('network.chunkInflightBudgetBytes', 64 * MiB);
+		await settings.reset({ applyRuntime: false });
+		expect(settings.get('network.chunkInflightBudgetBytes')).toBe(DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES);
 	});
 
 	it('refuses a window or budget that is not a positive whole number of bytes', async () => {
