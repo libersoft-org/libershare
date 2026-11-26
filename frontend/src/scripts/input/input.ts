@@ -75,6 +75,7 @@ class InputManager {
 		gamepad.on('right', () => emit('right'));
 		gamepad.on('aDown', () => emit('confirmDown'));
 		gamepad.on('aUp', () => emit('confirmUp'));
+		gamepad.on('aCancel', () => emit('confirmCancel'));
 		gamepad.on('bDown', () => emit('back'));
 		// SELECT + A/B/X/Y combos (emitted by gamepad manager only when SELECT is held)
 		gamepad.on('pageDown', () => emit('pageDown'));
@@ -96,6 +97,7 @@ class InputManager {
 		gamepad.off('right');
 		gamepad.off('aDown');
 		gamepad.off('aUp');
+		gamepad.off('aCancel');
 		gamepad.off('bDown');
 		gamepad.off('pageDown');
 		gamepad.off('pageUp');

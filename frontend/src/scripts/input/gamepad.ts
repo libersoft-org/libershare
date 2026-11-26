@@ -23,6 +23,8 @@ export class GamepadManager {
 	// Per-button flag: was SELECT held at the moment this button went down? Used to suppress
 	// normal release events (e.g. aUp) when the press was actually a SELECT+button combo.
 	private pressWithSelect: boolean[] = [];
+	// Indexes of the gamepads the previous poll read, to notice one that went away.
+	private previousIndexes: number[] = [];
 	// Connection state
 	private isConnected = false;
 	private started = false;
@@ -101,6 +103,7 @@ export class GamepadManager {
 		this.lastInputTime = 0;
 		this.previousButtons = [];
 		this.pressWithSelect = [];
+		this.previousIndexes = [];
 	}
 
 	on(key: string, callback: GamepadCallback): void {
@@ -128,8 +131,11 @@ export class GamepadManager {
 		}
 		const { buttons, stickX: leftStickX, stickY: leftStickY } = mergeGamepads(gamepads);
 		const now = Date.now();
+		const indexes = gamepads.map(gamepad => gamepad.index);
+		const gamepadLost = this.previousIndexes.some(index => !indexes.includes(index));
+		this.previousIndexes = indexes;
 		// A/B button press/release events
-		this.handleButtons(buttons);
+		this.handleButtons(buttons, gamepadLost);
 		// Direction handling (D-pad + analog stick) with repeat
 		this.handleDirections(buttons, leftStickX, leftStickY, now);
 		// Volume handling (Y = decrease, X = increase) with repeat
@@ -137,7 +143,7 @@ export class GamepadManager {
 		this.animationID = requestAnimationFrame(this.poll);
 	};
 
-	private handleButtons(buttons: boolean[]): void {
+	private handleButtons(buttons: boolean[], gamepadLost: boolean): void {
 		const selectHeld = !!buttons[8];
 		const startHeld = !!buttons[9];
 		// A (0) - confirm, or pageDown when SELECT is held
@@ -147,7 +153,9 @@ export class GamepadManager {
 		}
 		// Emit aUp on release only if aDown was emitted on press (i.e. not a combo press).
 		// previousSelectOnPress[n] tracks whether SELECT was held at the moment the button went down.
-		if (!buttons[0] && this.previousButtons[0] && !this.pressWithSelect[0]) this.emit('aUp');
+		// When a gamepad went away since the last poll, the button was not released by the user: the
+		// press is cancelled, so unplugging a gamepad that holds A never confirms anything.
+		if (!buttons[0] && this.previousButtons[0] && !this.pressWithSelect[0]) this.emit(gamepadLost ? 'aCancel' : 'aUp');
 		// B (1) - back, or pageUp when SELECT is held
 		if (buttons[1] && !this.previousButtons[1]) {
 			if (selectHeld) this.emit('pageUp');

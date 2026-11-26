@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Unplugging one of several gamepads</title>
+	<pre id="results">Running...</pre>
+	<script type="module">
+		import { getGamepadManager } from '/src/scripts/input/gamepad.ts';
+		import { inputInitialDelay, inputRepeatDelay } from '/src/scripts/settings.ts';
+
+		const A = 0;
+		const DOWN = 13;
+		const results = [];
+		const seen = [];
+		const pad = index => ({ id: `Test pad ${index}`, index, axes: [0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false })) });
+		let first;
+		let second;
+		let plugged = [];
+		const originalGamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
+		Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => plugged });
+		// Without a repeat delay a held direction is reported on every frame, so a few frames are enough to see it.
+		inputInitialDelay.set(0);
+		inputRepeatDelay.set(0);
+		const manager = getGamepadManager();
+		for (const action of ['aDown', 'aUp', 'aCancel', 'down']) manager.on(action, () => seen.push(action));
+
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		async function frames() {
+			for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
+		}
+		/** Take the first gamepad away the way a browser does: its slot turns empty and the event follows. */
+		async function unplugFirst() {
+			plugged = [null, second];
+			window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: first }));
+			await frames();
+		}
+		async function test(name, action) {
+			first = pad(0);
+			second = pad(1);
+			plugged = [first, second];
+			await frames();
+			seen.length = 0;
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		try {
+			assert(document.hasFocus(), 'The gamepad is polled only in a focused browser tab');
+			plugged = [pad(0), pad(1)];
+			manager.start();
+			await test('a gamepad unplugged while it holds A cancels the press instead of confirming', async () => {
+				first.buttons[A].pressed = true;
+				await frames();
+				assert(seen.join() === 'aDown', `Holding A reported ${seen.join()}`);
+				await unplugFirst();
+				assert(seen.join() === 'aDown,aCancel', `Unplugging reported ${seen.join()}`);
+			});
+			await test('A held on the gamepad that is left stays pressed and confirms on its release', async () => {
+				first.buttons[A].pressed = true;
+				second.buttons[A].pressed = true;
+				await frames();
+				await unplugFirst();
+				assert(seen.join() === 'aDown', `Unplugging reported ${seen.join()}`);
+				second.buttons[A].pressed = false;
+				await frames();
+				assert(seen.join() === 'aDown,aUp', `The release reported ${seen.join()}`);
+			});
+			await test('navigation goes on from the gamepad that is left', async () => {
+				await unplugFirst();
+				second.buttons[DOWN].pressed = true;
+				await frames();
+				second.buttons[DOWN].pressed = false;
+				assert(seen.length > 0 && seen.every(action => action === 'down'), `Down on the second gamepad reported ${seen.join()}`);
+			});
+		} catch (error) {
+			results.push({ name: 'setup', passed: false, error: error.message });
+		} finally {
+			manager.stop();
+			if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
+			else delete navigator.getGamepads;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>
