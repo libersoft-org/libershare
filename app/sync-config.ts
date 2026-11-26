@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-// Generates app/tauri.conf.json and app/tauri.linux.conf.json from their
-// committed *.template counterparts, substituting product metadata from
-// shared/src/product.json (the single source of truth for branding).
+// Generates app/tauri.conf.json, app/tauri.linux.conf.json and app/Info.plist
+// from their committed *.template counterparts, substituting product metadata
+// from shared/src/product.json (the single source of truth for branding).
 //
-// The generated *.json files are gitignored. This script is invoked
+// The generated files are gitignored. This script is invoked
 // automatically by build.sh / build.bat before bundling and by build.rs
 // before the Rust crate is compiled, so the configs always exist and stay
 // in sync with product.json without any manual step.
@@ -31,6 +31,7 @@ const replacements: Record<string, string> = {
 const targets: Array<[template: string, output: string]> = [
 	['tauri.conf.json.template', 'tauri.conf.json'],
 	['tauri.linux.conf.json.template', 'tauri.linux.conf.json'],
+	['Info.plist.template', 'Info.plist'],
 ];
 
 function render(text: string): string {
