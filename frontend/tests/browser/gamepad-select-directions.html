@@ -19,7 +19,21 @@
 		inputInitialDelay.set(0);
 		inputRepeatDelay.set(0);
 		const manager = getGamepadManager();
-		for (const action of [...Object.keys(DPAD), ...Object.values(PAGING)]) manager.on(action, () => seen.push(action));
+		const times = [];
+		for (const action of [...Object.keys(DPAD), ...Object.values(PAGING)])
+			manager.on(action, () => {
+				seen.push(action);
+				times.push(performance.now());
+			});
+		const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+		/** Set the repeat delays and let the last reported action age past them: a press sooner than that is not reported. */
+		async function delays(initial, repeat) {
+			inputInitialDelay.set(initial);
+			inputRepeatDelay.set(repeat);
+			await sleep(initial + 30);
+			seen.length = 0;
+			times.length = 0;
+		}
 
 		function assert(value, message) {
 			if (!value) throw new Error(message);
@@ -68,6 +82,59 @@
 					assert(reported === PAGING[direction], `SELECT + stick ${direction} reported ${reported}`);
 				}
 			});
+			await test('SELECT with A, B, X and Y keeps paging as before', async () => {
+				for (const [button, action] of [
+					[0, 'pageDown'],
+					[1, 'pageUp'],
+					[3, 'end'],
+					[4, 'home'],
+				]) {
+					const reported = await hold([SELECT, button]);
+					assert(reported === action, `SELECT + button ${button} reported ${reported}`);
+				}
+			});
+			await test('pressing and releasing SELECT while a direction is held switches between the direction and paging', async () => {
+				const step = async () => {
+					seen.length = 0;
+					await frames();
+					return [...new Set(seen)].join(',');
+				};
+				pad.buttons[DPAD.down].pressed = true;
+				assert((await step()) === 'down', `Down alone reported ${seen.join()}`);
+				pad.buttons[SELECT].pressed = true;
+				assert((await step()) === 'pageDown', `Down with SELECT added reported ${seen.join()}`);
+				pad.buttons[SELECT].pressed = false;
+				assert((await step()) === 'down', `Down after SELECT was released reported ${seen.join()}`);
+				pad.buttons[DPAD.down].pressed = false;
+				await frames();
+			});
+			await test('one direction held on the D-pad and the stick together pages once', async () => {
+				await delays(300, 300);
+				pad.buttons[SELECT].pressed = true;
+				pad.buttons[DPAD.up].pressed = true;
+				pad.axes = [0, -1];
+				await sleep(100);
+				pad.buttons[SELECT].pressed = false;
+				pad.buttons[DPAD.up].pressed = false;
+				pad.axes = [0, 0];
+				await frames();
+				assert(seen.join() === 'pageUp', `The D-pad and the stick together reported ${seen.join()}`);
+			});
+			await test('a held SELECT with a direction repeats after the initial delay, then at the repeat delay', async () => {
+				await delays(400, 30);
+				pad.buttons[SELECT].pressed = true;
+				pad.buttons[DPAD.down].pressed = true;
+				for (let waited = 0; seen.length < 4 && waited < 3000; waited += 20) await sleep(20);
+				pad.buttons[SELECT].pressed = false;
+				pad.buttons[DPAD.down].pressed = false;
+				await frames();
+				assert(seen.length >= 4 && seen.every(action => action === 'pageDown'), `Holding reported ${seen.join()}`);
+				const gaps = times.slice(1, 4).map((time, index) => time - times[index]);
+				// The manager measures in whole milliseconds, hence the small allowance.
+				assert(gaps[0] >= 395, `The first repeat came after ${gaps[0]} ms, sooner than the initial delay`);
+				assert(gaps[1] >= 25 && gaps[2] >= 25, `Repeats came after ${gaps[1]} and ${gaps[2]} ms, sooner than the repeat delay`);
+				assert(gaps[1] < gaps[0], `Repeats (${gaps[1]} ms) are not faster than the initial delay (${gaps[0]} ms)`);
+			});
 		} catch (error) {
 			results.push({ name: 'setup', passed: false, error: error.message });
 		} finally {
@@ -75,7 +142,7 @@
 			if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
 			else delete navigator.getGamepads;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 7 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
