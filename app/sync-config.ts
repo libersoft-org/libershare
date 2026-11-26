@@ -34,9 +34,14 @@ const targets: Array<[template: string, output: string]> = [
 	['Info.plist.template', 'Info.plist'],
 ];
 
-function render(text: string): string {
+/** A value as the text of an XML element: a product name may hold `&`, which would break the plist. */
+function xmlText(value: string): string {
+	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function render(text: string, escape: (value: string) => string): string {
 	let out = text;
-	for (const [token, value] of Object.entries(replacements)) out = out.split(token).join(value);
+	for (const [token, value] of Object.entries(replacements)) out = out.split(token).join(escape(value));
 	return out;
 }
 
@@ -44,7 +49,7 @@ let updated = 0;
 for (const [templateName, outputName] of targets) {
 	const templatePath = join(appDir, templateName);
 	const outputPath = join(appDir, outputName);
-	const rendered = render(readFileSync(templatePath, 'utf8'));
+	const rendered = render(readFileSync(templatePath, 'utf8'), outputName.endsWith('.plist') ? xmlText : value => value);
 	const current = existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : null;
 	if (current === rendered) continue;
 	writeFileSync(outputPath, rendered);
