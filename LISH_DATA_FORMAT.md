@@ -93,7 +93,7 @@ The last two are judged on their own, so a manifest can fail one or both. A LISH
 
 For signed creation over the local API, call `lishs.createSigned` with the usual creation parameters and `sign: true`. This method is available on servers that support signed creation and returns the confirmed `publisher`. Unsigned creation uses `lishs.create`.
 
-A direct download with `transfer.download` stores the verified manifest and its chunk records together. For an existing ID, the file must match the stored signature and the dataset must be in the server's managed download directory. Use the stored transfer controls for datasets imported into another directory.
+A direct download with `transfer.download` stores the verified manifest and its chunk records together. For an existing ID, the file must match the stored signature and the dataset must be in the server's managed download directory. A file that failed a check is taken for an existing ID only when it is the very manifest stored under it. Use the stored transfer controls for datasets imported into another directory.
 
 ### Directory entry
 

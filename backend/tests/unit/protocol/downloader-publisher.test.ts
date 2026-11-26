@@ -21,6 +21,7 @@ import { MockDataServer, MockLISHClient, priv } from './downloader-test-helpers.
 import { MockNetwork } from '../helpers/mock-network.ts';
 import { DataServer } from '../../../src/lish/data-server.ts';
 import { createTestDB } from '../helpers/fixtures.ts';
+import { addLISH } from '../../../src/db/lishs.ts';
 import { VERIFIED, fixedIDOf, signFixed as sign, signKeepingID } from '../helpers/signing.ts';
 
 useNetworkSettings(() => ({ maxDownloadSpeed: 0, maxUploadSpeed: 0, maxDownloadPeersPerLISH: 30, maxUploadPeersPerLISH: 30, maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE, maxChunkSize: DEFAULT_MAX_CHUNK_SIZE }) as SettingsData['network']);
@@ -188,13 +189,12 @@ describe('a local .lish file', () => {
 		for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 	});
 
-	async function initFrom(file: ILISH, stored: IStoredLISH | null, acceptUnverified = false): Promise<Downloader> {
+	async function initFrom(file: ILISH, stored: IStoredLISH | null, acceptUnverified = false, ds: MockDataServer | DataServer = new MockDataServer()): Promise<Downloader> {
 		const dir = await mkdtemp(join(tmpdir(), 'lish-local-'));
 		dirs.push(dir);
 		const path = join(dir, 'item.lish');
 		await writeFile(path, JSON.stringify(file));
-		const ds = new MockDataServer();
-		if (stored) ds.storedLishs.set(ID, stored);
+		if (stored && ds instanceof MockDataServer) ds.storedLishs.set(ID, stored);
 		const dl = new Downloader(dir, new MockNetwork() as never, ds as never, 'net-001');
 		try {
 			await dl.init(path, acceptUnverified);
@@ -211,6 +211,21 @@ describe('a local .lish file', () => {
 			await expect(initFrom(file, stored, true)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
 		}
 		await initFrom(await sign(manifest(), keyA), stored);
+	});
+
+	it('takes for a stored item that failed a check only the very manifest that is stored', async () => {
+		const db = createTestDB();
+		const forged = { ...(await sign(manifest(), keyA)), name: 'Changed' };
+		addLISH(db, { ...forged, directory: '/tmp/stored-item' }, { checks: await ManifestAdmission.check(forged) });
+		const ds = new DataServer(db);
+		const other = [{ path: 'other.bin', size: 4, checksums: ['d'.repeat(64)] }];
+		// Another publisher or none under the same ID: the chunk records kept for it are not theirs.
+		for (const file of [manifest({ files: other }), await signKeepingID(manifest({ files: other }), keyQ), await sign(manifest(), keyA)]) {
+			await expect(initFrom(file, null, true, ds)).rejects.toMatchObject({ code: ErrorCodes.LISH_PUBLISHER_MISMATCH });
+		}
+		// The same publisher named over other files: a signature that does not hold binds nothing.
+		await expect(initFrom({ ...forged, files: other }, null, true, ds)).rejects.toMatchObject({ code: ErrorCodes.LISH_INVALID_MANIFEST });
+		await initFrom(forged, null, true, ds);
 	});
 
 	it('refuses a file that is not verified until the user agrees, then takes it as it is, with no verified publisher', async () => {

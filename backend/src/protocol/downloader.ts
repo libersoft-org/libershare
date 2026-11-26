@@ -1,6 +1,7 @@
 import { access, constants } from 'fs/promises';
 import { dirname } from 'path';
-import { type IStoredLISH, type LISHid, CodedError, ErrorCodes } from '@shared';
+import { type IStoredLISH, type LISHid, CodedError, ErrorCodes, signedManifestBytes } from '@shared';
+import { describePublisher } from '../db/lishs.ts';
 import type { ExpectedPublisher } from '../lish/manifest-admission.ts';
 import { readLocalDownload, bindSignedDataset } from './local-download.ts';
 import { withLISHOwnership } from '../lish/lish-ownership.ts';
@@ -503,9 +504,22 @@ export class Downloader {
 		}
 	}
 
+	/**
+	 * A stored item keeps the publisher its manifest names and whether that publisher was verified,
+	 * so a file that differs in either is refused. A signed file that failed a check proves nothing
+	 * about its content, so it must also be the very manifest that is stored: the chunk records
+	 * kept under this ID belong to that one.
+	 */
 	private assertStoredPublisher(): void {
-		const stored = this.dataServer.getPublisher(this.lishID);
-		if (stored !== undefined && stored !== this.localPublisher) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${stored ?? 'unsigned'}, file ${this.localPublisher ?? 'unsigned'}`);
+		const named = this.dataServer.getNamedPublisher(this.lishID);
+		if (named === undefined) return;
+		const verified = this.dataServer.getPublisher(this.lishID) != null;
+		const fileNamed = this.lish.publisher ?? null;
+		const fileVerified = this.localPublisher !== null;
+		if (named !== fileNamed || verified !== fileVerified) throw new CodedError(ErrorCodes.LISH_PUBLISHER_MISMATCH, `stored ${describePublisher(named, verified)}, file ${describePublisher(fileNamed, fileVerified)}`);
+		if (fileNamed === null || fileVerified) return;
+		const stored = this.dataServer.get(this.lishID)!;
+		if (stored.signature !== this.lish.signature || !Buffer.from(signedManifestBytes(stored)).equals(signedManifestBytes(this.lish))) throw new CodedError(ErrorCodes.LISH_INVALID_MANIFEST, 'The signed file does not match the stored manifest for this ID');
 	}
 
 	async init(lishPath: string, acceptUnverified = false): Promise<void> {
