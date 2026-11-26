@@ -469,12 +469,11 @@ export function summarizeManifest(manifest: ILISH): IPeerLishDetail {
 		directoryCount: (manifest.directories ?? []).length,
 		files,
 		directories: (manifest.directories ?? []).map(d => ({ path: d.path, ...entryMetadata(d, ['permissions', 'modified', 'created']) })),
-		links: (manifest.links ?? []).map(l => ({ path: l.path, target: l.target, ...entryMetadata(l, ['hardlink', 'modified', 'created']) })),
 	};
 }
 
-/** What an optional entry field has to hold to be shown: any text, an ISO 8601 date, or a flag. */
-const ENTRY_METADATA = { permissions: 'text', modified: 'date', created: 'date', hardlink: 'flag' } as const;
+/** What an optional entry field has to hold to be shown: any text or an ISO 8601 date. */
+const ENTRY_METADATA = { permissions: 'text', modified: 'date', created: 'date' } as const;
 
 /**
  * The optional metadata `fields` of a manifest entry that hold a value of the right kind. The
@@ -488,7 +487,7 @@ function entryMetadata<T extends object, K extends keyof typeof ENTRY_METADATA &
 		const value: unknown = entry[field];
 		if (value === undefined) continue;
 		const kind = ENTRY_METADATA[field];
-		if (kind === 'flag' ? typeof value === 'boolean' : typeof value === 'string' && (kind === 'text' || isISODate(value))) shown[field] = value;
+		if (typeof value === 'string' && (kind === 'text' || isISODate(value))) shown[field] = value;
 		else invalid.push(field);
 	}
 	if (invalid.length > 0) shown['invalidFields'] = invalid;

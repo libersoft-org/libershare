@@ -1,7 +1,7 @@
 import { CodedError, ErrorCodes } from './errors.ts';
 import { formatUntrustedValue } from './untrusted-value.ts';
 
-/** Longest entry path or link target, in UTF-8 bytes. */
+/** Longest entry path, in UTF-8 bytes. */
 export const MAX_MANIFEST_PATH_BYTES = 4096;
 /** Longest LISH id, in UTF-8 bytes. Existing ids are not required to be UUIDs. */
 export const MAX_MANIFEST_ID_BYTES = 256;
@@ -49,7 +49,7 @@ export function checkChecksum(path: string, checksum: unknown): void {
 
 /**
  * Check that the entries form one consistent tree: no two entries at the same path, and no
- * file or link where another entry needs a directory — an explicit one or an implicit parent
+ * file where another entry needs a directory — an explicit one or an implicit parent
  * (`a` against `a/b.bin`). A directory that repeats an implicit parent is fine. Empty and `.`
  * components are refused instead of being rewritten, so no textual alias of a path exists.
  * Case and Unicode are left alone: whether two names collide on disk is for the writer to

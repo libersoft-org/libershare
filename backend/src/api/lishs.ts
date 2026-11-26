@@ -429,7 +429,6 @@ export function initLISHsHandlers(dataServer: DataServer, emit: EmitFn, broadcas
 			checksumAlgo: lish.checksumAlgo,
 			files: lish.files ?? [],
 			directories: lish.directories ?? [],
-			links: lish.links ?? [],
 			directory,
 			...(enableDownloading ? { finalDirectory: datasetRootPath(finalRoot) } : {}),
 		};

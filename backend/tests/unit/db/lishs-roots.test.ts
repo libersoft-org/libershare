@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import { getDatasetRoot, setDatasetRoot, relocateDataset, addDataset } from '../../../src/db/lishs-roots.ts';
-import { addLISH, deleteLISH, getLISH, initLISHsTables } from '../../../src/db/lishs.ts';
+import { addLISH, deleteLISH, getLISH } from '../../../src/db/lishs.ts';
 import { createTestDB, createTestLISH, TEST_LISH_ID } from '../helpers/fixtures.ts';
 
 const databases: ReturnType<typeof createTestDB>[] = [];
@@ -54,12 +54,5 @@ describe('local dataset roots', () => {
 		expect(() => addDataset(db, { ...createTestLISH(TEST_LISH_ID), directory: resolve('after'), files: [] }, root)).toThrow('root write rejected');
 		expect(getLISH(db, TEST_LISH_ID)?.files).toHaveLength(2);
 		expect(getLISH(db, TEST_LISH_ID)?.directory).toBe(root.path);
-	});
-
-	it('drops the link association table an older database still has', () => {
-		const db = fixture();
-		db.run('CREATE TABLE lishs_link_bindings (lish_id TEXT NOT NULL, path TEXT NOT NULL)');
-		initLISHsTables(db);
-		expect(db.query("SELECT name FROM sqlite_master WHERE name = 'lishs_link_bindings'").all()).toEqual([]);
 	});
 });

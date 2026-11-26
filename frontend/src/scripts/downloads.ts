@@ -8,7 +8,7 @@ import { tt } from './language.ts';
 export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating' | 'error' | 'retrying';
 export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
 // Download Data Types
-export type DownloadFileType = 'file' | 'directory' | 'link';
+export type DownloadFileType = 'file' | 'directory';
 export interface DownloadFileData {
 	id: number;
 	name: string;
@@ -19,7 +19,6 @@ export interface DownloadFileData {
 	totalChunks: number;
 	verifiedChunks: number;
 	downloadedSize?: string;
-	linkTarget?: string;
 	// Per-file ALLOCATION progress — shown instead of `progress` only while the LISH
 	// status is 'allocating'. Kept separate so allocation display never destroys the
 	// real download progress of files that receive no further progress events.
@@ -99,7 +98,6 @@ function detailToDownload(detail: ILISHDetail): DownloadData {
 		};
 	});
 	for (const d of detail.directories) files.push({ id: nextID++, name: d.path, type: 'directory', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0 });
-	for (const l of detail.links) files.push({ id: nextID++, name: l.path, type: 'link', progress: 100, size: '-', rawSize: 0, totalChunks: 0, verifiedChunks: 0, linkTarget: l.target });
 	files.sort((a, b) => a.name.localeCompare(b.name));
 	const progress = detail.totalChunks > 0 ? Math.round((detail.verifiedChunks / detail.totalChunks) * 10000) / 100 : 0;
 	const downloadedSize = detail.totalSize > 0 && detail.verifiedChunks > 0 ? formatSize(Math.round((detail.totalSize * detail.verifiedChunks) / detail.totalChunks)) : '0 B';
