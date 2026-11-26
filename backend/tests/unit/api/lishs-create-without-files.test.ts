@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDatabase } from '../../../src/db/database.ts';
@@ -39,5 +39,31 @@ describe('lishs.create with folders only', () => {
 		const lish = JSON.parse(await readFile(lishFile, 'utf8'));
 		expect(lish.directories.map((directory: { path: string }) => directory.path)).toEqual(['only', 'only/folders']);
 		expect(lish.files ?? []).toEqual([]);
+	});
+
+	it('leaves a link to a folder out, so the LISH lists nothing a download cannot make', async () => {
+		const source = await mkdtemp(join(tmpdir(), 'lish-nofiles-link-'));
+		try {
+			await mkdir(join(source, 'Saves'));
+			// A junction needs no privilege on Windows; elsewhere it is an ordinary directory symlink.
+			await symlink(join(source, 'Saves'), join(source, 'Saves-link'), process.platform === 'win32' ? 'junction' : 'dir');
+			const lishFile = join(dataDir, 'link.lish');
+			await handlers.create({ dataPath: source, lishFile } as never, undefined as never);
+			const lish = JSON.parse(await readFile(lishFile, 'utf8'));
+			expect(lish.directories.map((directory: { path: string }) => directory.path)).toEqual(['Saves']);
+			expect(lish).not.toHaveProperty('links');
+		} finally {
+			await rm(source, { recursive: true, force: true });
+		}
+	});
+
+	it('refuses a folder that holds nothing but a link', async () => {
+		const source = await mkdtemp(join(tmpdir(), 'lish-nofiles-onlylink-'));
+		try {
+			await symlink(sourceDir, join(source, 'elsewhere'), process.platform === 'win32' ? 'junction' : 'dir');
+			await expect(handlers.create({ dataPath: source } as never, undefined as never)).rejects.toMatchObject({ code: 'DIRECTORY_EMPTY' });
+		} finally {
+			await rm(source, { recursive: true, force: true });
+		}
 	});
 });
