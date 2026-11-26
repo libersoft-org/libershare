@@ -284,6 +284,19 @@ describe('a manifest waiting for the answer', () => {
 			expect(await stillHeld(links)).toBe(true);
 		});
 
+		it('counts the description and every entry, however short its path', async () => {
+			const { tokenOf, stillHeld } = limited({ bytes: 100_000 });
+			const first = await tokenOf('first', 1, { description: 'x'.repeat(60_000) });
+			const second = await tokenOf('second', 1, { description: 'x'.repeat(60_000) });
+			expect(await stillHeld(first)).toBe(false);
+			expect(await stillHeld(second)).toBe(true);
+			// A thousand directories named with one letter: next to nothing in paths, yet a thousand entries.
+			const short = await tokenOf('short', 1, { directories: Array.from({ length: 1000 }, () => ({ path: 'd' })) });
+			const next = await tokenOf('next');
+			expect(await stillHeld(short)).toBe(false);
+			expect(await stillHeld(next)).toBe(true);
+		});
+
 		it('still holds one manifest larger than the whole allowance, so the user can answer about it', async () => {
 			const { tokenOf, stillHeld } = limited({ bytes: 100_000 });
 			const earlier = await tokenOf('earlier');

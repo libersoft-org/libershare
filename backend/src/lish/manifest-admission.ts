@@ -18,15 +18,18 @@ export interface PendingLimits {
 }
 const PENDING_LIMITS: PendingLimits = { ttlMs: 10 * 60 * 1000, count: 256, bytes: 256 * 1024 * 1024 };
 
+/** What an entry costs beyond its strings: the object itself, its timestamps and its permissions. */
+const ENTRY_WEIGHT = 128;
+
 /**
- * Rough size of a manifest in memory: its checksums and paths, which is nearly all of it.
- * Every manifest counts for something, so empty ones cannot pile up for free.
+ * Rough size of a manifest in memory: its texts, checksums and paths, which is nearly all of it.
+ * Every manifest and every entry counts for something, so empty ones cannot pile up for free.
  */
 function manifestWeight(lish: ILISH): number {
-	let weight = 1024;
-	for (const file of lish.files ?? []) weight += file.path.length + file.checksums.length * (file.checksums[0]?.length ?? 0);
-	for (const directory of lish.directories ?? []) weight += directory.path.length;
-	for (const link of lish.links ?? []) weight += link.path.length + link.target.length;
+	let weight = 1024 + (lish.name?.length ?? 0) + (lish.description?.length ?? 0);
+	for (const file of lish.files ?? []) weight += ENTRY_WEIGHT + file.path.length + file.checksums.length * (file.checksums[0]?.length ?? 0);
+	for (const directory of lish.directories ?? []) weight += ENTRY_WEIGHT + directory.path.length;
+	for (const link of lish.links ?? []) weight += ENTRY_WEIGHT + link.path.length + link.target.length;
 	return weight;
 }
 
