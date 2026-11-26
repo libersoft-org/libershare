@@ -54,7 +54,8 @@
 		await copyToClipboard(lish.id, $t('common.lishIDCopied'));
 	}
 
-	createNavArea(() => ({ areaID, position, onBack, activate: true }));
+	// y=0 — buttons; y=1+ — the file tree, a list open at the bottom like on the storage LISH info page.
+	createNavArea(() => ({ areaID, position, onBack, activate: true, listRange: (): [number, number] => [1, Number.MAX_SAFE_INTEGER] }));
 
 	onMount(() => {
 		loadDetail();
@@ -79,7 +80,8 @@
 		align-items: stretch;
 		gap: 2vh;
 		width: 1200px;
-		max-width: calc(94vw);
+		/* The page box, not the window: its padding and scrollbar would push a vw-wide container past it. */
+		max-width: min(94vw, 100%);
 		padding: 2vh;
 		border-radius: 2vh;
 		box-sizing: border-box;
@@ -89,7 +91,7 @@
 
 	@media (max-width: 1199px) {
 		.container {
-			max-width: calc(100vw);
+			max-width: 100%;
 			margin: 0;
 			border-radius: 0;
 			box-shadow: none;
@@ -111,7 +113,7 @@
 		{:else if error}
 			<Alert type="error" message={error} />
 		{:else if detail}
-			<NetworkLishDetailView {detail} fileRowsBaseY={1} />
+			<NetworkLishDetailView {detail} baseY={1} />
 		{/if}
 	</div>
 </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { NavPos } from '../../scripts/navArea.svelte.ts';
+	import { getContext } from 'svelte';
+	import type { NavAreaController, NavPos } from '../../scripts/navArea.svelte.ts';
 	import type { DownloadFileType } from '../../scripts/downloads.ts';
 	import Icon from '../../components/Icon/Icon.svelte';
 	import ProgressBar from '../../components/ProgressBar/ProgressBar.svelte';
@@ -21,7 +22,10 @@
 	let sizeDisplay = $derived(downloadedSize ? `${downloadedSize} / ${size}` : size);
 	let isFile = $derived(type === 'file');
 	let typeIcon = $derived(type === 'directory' ? '/img/directory.svg' : type === 'link' ? '/img/link.svg' : '/img/file.svg');
-	let iconColor = $derived(selected ? '--secondary-background' : '--secondary-foreground');
+	// With a position the row is selected through its NavArea, like TableRow decides it.
+	const navArea = getContext<NavAreaController | undefined>('navArea');
+	let isSelected = $derived(navArea && position ? navArea.isSelected(position) : selected);
+	let iconColor = $derived(isSelected ? '--secondary-background' : '--secondary-foreground');
 </script>
 
 <style>

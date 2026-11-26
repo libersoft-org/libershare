@@ -753,6 +753,28 @@ describe('Downloader – malformed manifest peer handling', () => {
 		expect(ds.addedLishs.length).toBe(1); // imported from the valid peer
 		expect(peers.has('peer-malformed-1')).toBe(false); // bad peer dropped, not stuck
 	});
+
+	it('drops a peer that cannot send the manifest under its message limit and imports from the next peer', async () => {
+		const ds = new MockDataServer();
+		const dl = new Downloader('/tmp/dl-too-large', new MockNetwork() as never, ds as never, 'net-001');
+		const p = priv(dl);
+		p['state'] = 'awaiting-manifest';
+		p['needsManifest'] = true;
+		p['lish'] = null;
+		p['lishID'] = 'test-too-large-lish';
+		const peers = (priv(dl)['peerManager'] as { peers: Map<string, MockLISHClient> }).peers;
+		const limited = new MockLISHClient();
+		limited.requestManifestError = new CodedError(ErrorCodes.PEER_MANIFEST_TOO_LARGE);
+		const good = new MockLISHClient();
+		good.requestManifestResult = makeLISH();
+		peers.set('peer-limited-001', limited);
+		peers.set('peer-valid-00001', good);
+
+		await dl.doWork();
+
+		expect(ds.addedLishs.length).toBe(1); // imported from the valid peer
+		expect(peers.has('peer-limited-001')).toBe(false); // not asked again until its operator raises the limit
+	});
 });
 
 describe('Downloader – peer-fault manifest failures are not terminal', () => {
