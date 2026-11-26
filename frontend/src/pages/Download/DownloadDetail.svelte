@@ -3,7 +3,7 @@
 	import { activateArea, activeArea } from '../../scripts/areas.ts';
 	import { type Position } from '../../scripts/navigationLayout.ts';
 	import { LAYOUT } from '../../scripts/navigationLayout.ts';
-	import { t } from '../../scripts/language.ts';
+	import { t, translateErrorCode } from '../../scripts/language.ts';
 	import { downloads, peerDetails, peerSnapshotReceived, resetVerifyState, setCurrentDetailLISHID, DOWNLOAD_TOOLBAR_ACTIONS, handleDownloadToolbarAction, type DownloadToolbarActionID, type PeerDetail, type DownloadFileData, computeEnabledMode } from '../../scripts/downloads.ts';
 	import { copyToClipboard } from '../../scripts/clipboard.ts';
 	import AllowedBadge from '../../components/Badge/AllowedBadge.svelte';
@@ -594,7 +594,7 @@
 		{/if}
 		{#if download?.status === 'error' && (download.errorCode || download.errorMessage)}
 			{@const recoveryText = download.recoveryNextAt === 0 ? $t('downloads.recoveryAttempting') : download.recoveryNextAt ? $t('downloads.recoveryScheduled', { seconds: String(Math.max(1, Math.ceil((download.recoveryNextAt - now) / 1000))) }) : ''}
-			<div class="alert-container"><Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ?? ''}${download.errorMessage && download.errorMessage !== download.errorCode ? ' — ' + download.errorMessage : ''}${recoveryText ? ' · ' + recoveryText : ''}`} /></div>
+			<div class="alert-container"><Alert type="error" message={`${$t('downloads.statuses.error')}: ${download.errorCode ? translateErrorCode(download.errorCode, download.errorMessage !== download.errorCode ? download.errorMessage : undefined) : download.errorMessage}${recoveryText ? ' · ' + recoveryText : ''}`} /></div>
 		{/if}
 		{#if download}
 			<div class="content">

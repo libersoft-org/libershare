@@ -125,6 +125,7 @@ const errorCodeKeys: Record<string, string> = {
 	DIRECTORY_ACCESS_DENIED: 'lish.errorDirectoryAccessDenied',
 	DOWNLOADER_NOT_INITIALIZED: 'lish.errorDownloaderNotInitialized',
 	DOWNLOAD_ERROR: 'lish.errorDownload',
+	DOWNLOAD_CHUNK_EXCEEDS_BUDGET: 'lish.errorChunkExceedsBudget',
 	// Network → settings.lishNetwork
 	NETWORK_NOT_FOUND: 'settings.lishNetwork.errorNotFound',
 	NO_NETWORKS: 'settings.lishNetwork.errorNoNetworks',
@@ -217,9 +218,17 @@ export function translateError(err: unknown): string {
 	const code: string | undefined = (err as any).code;
 	const detail: string | undefined = (err as any).detail;
 	if (!code) return err.message;
-	const current = get(translations);
+	return translateErrorCode(code, detail);
+}
+
+/**
+ * Translate a backend error code with its optional detail, the form in which transfer events and
+ * the download list carry an error. Falls back to `CODE: detail` when the code has no translation.
+ */
+export function translateErrorCode(code: string, detail?: string | null): string {
 	const key = errorCodeKeys[code];
-	const translated = key ? getNestedValue(current, key) : undefined;
+	const translated = key ? getNestedValue(get(translations), key) : undefined;
 	if (!translated) return detail ? `${code}: ${detail}` : code;
-	return detail ? translated.replace(/\{detail\}/g, detail) : translated.replace(/:\s*\{detail\}/, '');
+	// A function, not the string itself: a path may contain `$&` or `$1`, which replace() would expand.
+	return detail ? translated.replace(/\{detail\}/g, () => detail) : translated.replace(/:\s*\{detail\}/, '');
 }

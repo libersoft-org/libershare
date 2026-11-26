@@ -4,7 +4,7 @@ import { api } from './api.ts';
 import { formatSize } from './utils.ts';
 import { navigateBack } from './navigation.ts';
 import { addNotification } from './notifications.ts';
-import { tt } from './language.ts';
+import { tt, translateErrorCode } from './language.ts';
 export type DownloadStatus = 'downloading' | 'uploading' | 'downloading-uploading' | 'idling' | 'verifying' | 'pending-verification' | 'moving' | 'allocating' | 'error' | 'retrying';
 export type EnabledMode = 'disabled' | 'download' | 'upload' | 'both';
 // Download Data Types
@@ -171,6 +171,14 @@ const lastUploadedChunks = new Map<string, number>();
 
 export function setCurrentDetailLISHID(lishID: string | null): void {
 	currentDetailLISHID = lishID;
+}
+
+/**
+ * The reason a failure notification ends with. The notification already says that the download
+ * failed, so the generic failure adds only its detail; its own translation would say it twice.
+ */
+function failureReason(code: string, detail?: string): string {
+	return code === 'DOWNLOAD_ERROR' ? detail || code : translateErrorCode(code, detail);
 }
 
 /**
@@ -596,7 +604,7 @@ export async function initDownloads(): Promise<void> {
 		// transfer.download:error
 		api.on('transfer.download:error', (data: { error: string; errorDetail?: string; lishID: string }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
-			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
+			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: failureReason(data.error, data.errorDetail) }), 'error');
 			disabledDownloads.add(data.lishID);
 			activeDownloads.delete(data.lishID);
 			downloads.update(list =>
@@ -682,7 +690,7 @@ export async function initDownloads(): Promise<void> {
 		// transfer.upload:error — I/O error during upload (e.g. source directory missing)
 		api.on('transfer.upload:error', (data: { lishID: string; error: string; errorDetail?: string }) => {
 			const lish = get(downloads).find(d => d.id === data.lishID);
-			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: data.errorDetail || data.error }), 'error');
+			if (lish) addNotification(tt('downloads.downloadError', { name: lish.name, error: failureReason(data.error, data.errorDetail) }), 'error');
 			activeUploadLishs.delete(data.lishID);
 			downloads.update(list =>
 				list.map(d => {

@@ -1,4 +1,6 @@
+import { readFileSync } from 'fs';
 import { mkdir } from 'fs/promises';
+import { totalmem } from 'os';
 import { Mutex } from 'async-mutex';
 import { JSONStorage } from './storage.ts';
 import { Utils } from './utils.ts';
@@ -10,8 +12,69 @@ export const DEFAULT_MAX_CHUNK_SIZE: number = 100 * 1024 * 1024;
 export const DEFAULT_MAX_MESSAGE_SIZE: number = 128 * 1024 * 1024;
 // Default bytes of chunk requests kept in flight to one peer (settings: network.chunkWindowBytes).
 export const DEFAULT_CHUNK_WINDOW_BYTES: number = 16 * 1024 * 1024;
-// Default bytes of chunk requests in flight across every download (network.chunkInflightBudgetBytes).
-export const DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES: number = 64 * 1024 * 1024;
+
+/**
+ * Memory this process can really use: the machine's physical memory without swap, or the limit
+ * of the container or service it runs in when that is lower. Read from the files on every call,
+ * so that a reset sees a container resized since the start.
+ */
+export function usableMemoryBytes(total: number = totalmem(), read: (path: string) => string = path => readFileSync(path, 'utf8')): number {
+	const least = (bytes: number, limit: () => number): number => {
+		try {
+			const value = limit();
+			return value > 0 && value < bytes ? value : bytes;
+		} catch {
+			return bytes; // no such file: another system, or the other cgroup version
+		}
+	};
+	let bytes = total;
+	// The control group of this process: "0::/path" in cgroup v2, "N:memory:/path" in v1.
+	let own = '';
+	try {
+		own = read('/proc/self/cgroup');
+	} catch {}
+	// shortcut: the usual mount points only; a tree mounted elsewhere would need /proc/self/mountinfo.
+	const trees: Array<[RegExp, string, string]> = [
+		[/^0::(\/.*)$/m, '/sys/fs/cgroup', 'memory.max'],
+		// Where a hybrid setup mounts its v2 tree.
+		[/^0::(\/.*)$/m, '/sys/fs/cgroup/unified', 'memory.max'],
+		[/^\d+:(?:[^:]*,)?memory(?:,[^:]*)?:(\/.*)$/m, '/sys/fs/cgroup/memory', 'memory.limit_in_bytes'],
+	];
+	for (const [line, mount, file] of trees) {
+		// That group and every one above it, since a limit anywhere on the way applies. A group
+		// without one says "max" or a number above any machine.
+		const group = (line.exec(own)?.[1] ?? '/').split('/').filter(part => part && part !== '..');
+		for (let depth = group.length; depth >= 0; depth--) bytes = least(bytes, () => Number(read([mount, ...group.slice(0, depth), file].join('/'))));
+	}
+	// A system container shows its limit only here: its cgroup says "max" and totalmem() reports the host.
+	return least(bytes, () => Number(/^MemTotal:\s+(\d+) kB/m.exec(read('/proc/meminfo'))?.[1]) * 1024);
+}
+
+/**
+ * Default in-flight budget for a machine with `memoryBytes` of memory: a fifth of it in whole
+ * megabytes, and never below one largest message, so that every chunk a default node accepts
+ * still downloads.
+ */
+export function chunkInflightBudgetFor(memoryBytes: number): number {
+	const MiB = 1024 * 1024;
+	const fifth = Math.floor(memoryBytes / 5 / MiB) * MiB;
+	return fifth > DEFAULT_MAX_MESSAGE_SIZE ? fifth : DEFAULT_MAX_MESSAGE_SIZE;
+}
+
+let memorySource: () => number = () => usableMemoryBytes();
+
+/** Replace the memory reading the default budget is worked out from; no argument restores it. For tests. */
+export function useMemorySource(read: () => number = () => usableMemoryBytes()): void {
+	memorySource = read;
+}
+
+/**
+ * Default bytes of chunk requests in flight across every download
+ * (network.chunkInflightBudgetBytes), for the memory as it is now.
+ */
+export function defaultChunkInflightBudgetBytes(): number {
+	return chunkInflightBudgetFor(memorySource());
+}
 
 export interface SettingsData {
 	language: string;
@@ -50,7 +113,12 @@ export interface SettingsData {
 		chunkWindowBytes: number;
 		/**
 		 * Bytes of chunk requests in flight across every download in the process, including
-		 * verified chunks waiting for a write retry. Applies to running downloads.
+		 * verified chunks waiting for a write retry. A chunk is requested only when its length fits
+		 * beside the bytes already in flight, and a chunk larger than the whole budget stops its
+		 * download with `DOWNLOAD_CHUNK_EXCEEDS_BUDGET`. Applies to running downloads: after it is
+		 * lowered, chunks already requested may stay above it until they are written, and nothing
+		 * more is requested meanwhile. The default is a fifth of the machine's memory, stored when
+		 * the settings are first created and worked out again by a reset.
 		 */
 		chunkInflightBudgetBytes: number;
 		allowRelay: boolean;
@@ -203,7 +271,10 @@ const DEFAULT_SETTINGS: SettingsData = {
 		maxChunkSize: DEFAULT_MAX_CHUNK_SIZE,
 		maxMessageSize: DEFAULT_MAX_MESSAGE_SIZE,
 		chunkWindowBytes: DEFAULT_CHUNK_WINDOW_BYTES,
-		chunkInflightBudgetBytes: DEFAULT_CHUNK_INFLIGHT_BUDGET_BYTES,
+		// A getter: every copy of the defaults (the first start, a reset, the values the settings screen offers) takes the memory as it is then.
+		get chunkInflightBudgetBytes(): number {
+			return defaultChunkInflightBudgetBytes();
+		},
 		allowRelay: false,
 		maxRelayReservations: DEFAULT_MAX_RELAY_RESERVATIONS,
 		useRelayClients: true,
@@ -450,9 +521,10 @@ let liveNetwork: (() => SettingsData['network']) | null = null;
 /**
  * Point {@link networkSetting} at the running Settings instance. Called once from
  * the entry point; every later settings write is picked up automatically because
- * the reader hits the live object rather than a copy.
+ * the reader hits the live object rather than a copy. A test that sets its own reader
+ * passes `null` when it is done, so the next test file starts from the defaults again.
  */
-export function useNetworkSettings(read: () => SettingsData['network']): void {
+export function useNetworkSettings(read: (() => SettingsData['network']) | null): void {
 	liveNetwork = read;
 }
 

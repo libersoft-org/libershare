@@ -7,7 +7,7 @@
  * the SvelteKit runtime.
  */
 import { test, expect } from 'bun:test';
-import { createTranslationLoader, translations, translateError } from '../../src/scripts/language.ts';
+import { createTranslationLoader, translations, translateError, translateErrorCode } from '../../src/scripts/language.ts';
 import { get } from 'svelte/store';
 
 for (const lang of ['cs', 'en']) {
@@ -19,6 +19,25 @@ for (const lang of ['cs', 'en']) {
 			for (const [index, code] of ['FS_FILE_CHANGED', 'FS_MOVE_UNSUPPORTED'].entries()) {
 				expect(translateError(Object.assign(new Error(code), { code })).startsWith(messages[index]!)).toBe(true);
 			}
+		} finally {
+			translations.set(previous);
+		}
+	});
+}
+
+for (const lang of ['cs', 'en']) {
+	test(`a download refused for the memory limit says in ${lang} how to go on`, async () => {
+		const previous = get(translations);
+		try {
+			translations.set(await Bun.file(new URL(`../../static/langs/${lang}.json`, import.meta.url)).json());
+			// The code and detail as the transfer.download:error event carries them.
+			const message = translateErrorCode('DOWNLOAD_CHUNK_EXCEEDS_BUDGET', '100 MB > 64 MB');
+			expect(message).toContain('(100 MB > 64 MB)');
+			expect(message).toContain(lang === 'cs' ? 'Zvyšte ji v nastavení stahování' : 'Raise it in the download settings');
+			// A code without a translation still shows what happened.
+			expect(translateErrorCode('SOME_NEW_CODE', 'detail')).toBe('SOME_NEW_CODE: detail');
+			// A path is shown as it is, also with characters that mean something to String.replace.
+			expect(translateErrorCode('DISK_FULL', 'D:/Music $& Media/$1')).toContain('D:/Music $& Media/$1');
 		} finally {
 			translations.set(previous);
 		}

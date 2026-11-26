@@ -641,6 +641,13 @@ export class Downloader {
 				}
 				const missingBeforeAlloc = await this.fileAllocator.findMissingFiles(this.lish);
 				if (this.destroyed) return;
+				// A chunk no in-flight budget can hold would be refused at its first request anyway.
+				// Checked here so that its files do not take up the disk first.
+				const oversized = this.chunkDownloader?.oversizedChunk();
+				if (oversized) {
+					this.setError(oversized.code, oversized.detail);
+					return;
+				}
 				if (missingBeforeAlloc.length > 0) {
 					console.debug(`[DL] allocating files for ${this.lishID.slice(0, 8)}`);
 					this.progressReporter.emit({ downloadedChunks: 0, totalChunks: totalChunksForProgress, peers: 0, bytesPerSecond: 0, filePath: '__allocating__' });

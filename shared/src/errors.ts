@@ -129,6 +129,8 @@ const errorCodes = [
 
 	// Download events
 	'DOWNLOAD_ERROR',
+	// A chunk is larger than the whole in-flight budget, so it can never be requested.
+	'DOWNLOAD_CHUNK_EXCEEDS_BUDGET',
 
 	// Internal (catch-all for uncoded errors)
 	'INTERNAL_ERROR',

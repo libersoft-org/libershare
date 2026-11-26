@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
+import { join } from 'path';
 import { initTransferHandlers, initDownloadState, getDownloadEnabledLishs, removeDownloadState } from '../../../src/api/transfer.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
-import { type Settings } from '../../../src/settings.ts';
+import { defaultChunkInflightBudgetBytes, type Settings } from '../../../src/settings.ts';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { initUploadState } from '../../../src/protocol/lish-protocol.ts';
 
@@ -578,6 +580,43 @@ describe('download start — the lishnet window', () => {
 			expect(handlers.getActiveTransfers()).toEqual([]);
 		} finally {
 			Downloader.prototype.download = originalDownload;
+		}
+	});
+
+	it('does not start again by itself a download refused for a chunk no budget can hold', async () => {
+		// The refusal comes while the download prepares its files, after the start was answered,
+		// so it ends the download as any other failure does: reported once, stored as switched
+		// off, and with no resume claim that would start it again when a lishnet comes back.
+		const net = makeNetworks([NET_A]);
+		const events: Array<{ event: string; data: any }> = [];
+		const directory = mkdtempSync(join(tmpdir(), 'lish-refused-'));
+		try {
+			const dataServer = makeDataServer();
+			const HUGE = 2 * defaultChunkInflightBudgetBytes(); // above the default budget, whatever this machine's memory makes it
+			const store = dataServer as unknown as { get: () => unknown; getMissingChunks: () => unknown[] };
+			store.get = () => ({ id: LISH_ID, name: 'x', directory, chunkSize: HUGE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: HUGE, checksums: ['chunk-0'] }] });
+			store.getMissingChunks = () => [{ chunkID: 'chunk-0', fileIndex: 0, chunkIndex: 0 }];
+			const handlers = initTransferHandlers(
+				net.networks,
+				dataServer,
+				tmpdir(),
+				() => {},
+				(event: string, data: any) => void (event === 'transfer.download:error' && events.push({ event, data })),
+				settings
+			);
+
+			await handlers.enableDownload({ lishID: LISH_ID });
+			for (let i = 0; i < 100 && events.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 20));
+			expect(events.map(e => e.data.error)).toEqual(['DOWNLOAD_CHUNK_EXCEEDS_BUDGET']);
+			expect(persisted[persisted.length - 1]).toEqual({ lishID: LISH_ID, enabled: false });
+			expect(existsSync(join(directory, 'f.bin'))).toBe(false);
+
+			net.announceLeave(NET_A);
+			net.announceJoin(NET_A);
+			await new Promise(resolve => setTimeout(resolve, 60));
+			expect(events).toHaveLength(1);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
 		}
 	});
 
