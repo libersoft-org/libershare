@@ -25,6 +25,9 @@ export class GamepadManager {
 	private pressWithSelect: boolean[] = [];
 	// Indexes of the gamepads the previous poll read, to notice one that went away.
 	private previousIndexes: number[] = [];
+	// A gamepad was unplugged since the last poll. Kept apart from the indexes: another gamepad
+	// may take the freed index before the next poll, and the two lists would then look the same.
+	private unplugged = false;
 	// Connection state
 	private isConnected = false;
 	private started = false;
@@ -82,6 +85,7 @@ export class GamepadManager {
 
 	private handleDisconnect(e: GamepadEvent): void {
 		addNotification(tt('common.gamepadDisconnected', { name: e.gamepad.id }), 'warning');
+		this.unplugged = true;
 		// Another gamepad may still be plugged in; navigation stops only with the last one.
 		if (navigator.getGamepads().some(gamepad => gamepad && gamepad.index !== e.gamepad.index)) return;
 		this.isConnected = false;
@@ -104,6 +108,7 @@ export class GamepadManager {
 		this.previousButtons = [];
 		this.pressWithSelect = [];
 		this.previousIndexes = [];
+		this.unplugged = false;
 	}
 
 	on(key: string, callback: GamepadCallback): void {
@@ -132,8 +137,9 @@ export class GamepadManager {
 		const { buttons, stickX: leftStickX, stickY: leftStickY } = mergeGamepads(gamepads);
 		const now = Date.now();
 		const indexes = gamepads.map(gamepad => gamepad.index);
-		const gamepadLost = this.previousIndexes.some(index => !indexes.includes(index));
+		const gamepadLost = this.unplugged || this.previousIndexes.some(index => !indexes.includes(index));
 		this.previousIndexes = indexes;
+		this.unplugged = false;
 		// A/B button press/release events
 		this.handleButtons(buttons, gamepadLost);
 		// Direction handling (D-pad + analog stick) with repeat

@@ -59,6 +59,16 @@
 				await unplugFirst();
 				assert(seen.join() === 'aDown,aCancel', `Unplugging reported ${seen.join()}`);
 			});
+			await test('another gamepad taking the freed index before the next poll does not turn the cancel into a confirm', async () => {
+				first.buttons[A].pressed = true;
+				await frames();
+				// All of it within one frame: the next poll finds the same indexes as the one before.
+				plugged = [null, second];
+				window.dispatchEvent(Object.assign(new Event('gamepaddisconnected'), { gamepad: first }));
+				plugged = [pad(0), second];
+				await frames();
+				assert(seen.join() === 'aDown,aCancel', `Replacing the gamepad reported ${seen.join()}`);
+			});
 			await test('A held on the gamepad that is left stays pressed and confirms on its release', async () => {
 				first.buttons[A].pressed = true;
 				second.buttons[A].pressed = true;
@@ -83,7 +93,7 @@
 			if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
 			else delete navigator.getGamepads;
 			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
-			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+			document.documentElement.dataset.testStatus = results.length === 4 && results.every(result => result.passed) ? 'passed' : 'failed';
 		}
 	</script>
 </html>
