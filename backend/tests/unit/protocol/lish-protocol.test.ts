@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { afterAll, describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { disableUpload, enableUpload, isUploadDisabled, getEnabledUploads, getActiveUploads, setUploadBroadcast, setMaxUploadSpeed, resetUploadState, registerHaveAnnouncementHandler, LISHClient, toManifest, handleLISHProtocol, type LISHGetChunkResponse } from '../../../src/protocol/lish-protocol.ts';
@@ -19,6 +19,8 @@ useNetworkSettings(
 			maxChunkSize: chunkLimit,
 		}) as SettingsData['network']
 );
+// This reader stays set for the whole process; take it away so that later test files start from the defaults.
+afterAll(() => useNetworkSettings(null));
 import { CodedError, ErrorCodes, type IStoredLISH } from '@shared';
 
 // ---------------------------------------------------------------------------

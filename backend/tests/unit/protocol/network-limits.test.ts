@@ -21,6 +21,8 @@ function netSlice(overrides: Partial<SettingsData['network']>): SettingsData['ne
 /** Stand-in for the running Settings instance; assign to `current` to simulate a settings write. */
 let current = netSlice({});
 useNetworkSettings(() => current);
+// This reader stays set for the whole process; take it away so that later test files start from the defaults.
+afterAll(() => useNetworkSettings(null));
 
 describe('applyNetworkLimits', () => {
 	afterAll(() => {

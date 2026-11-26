@@ -7,7 +7,7 @@
  * Uses the real LISHClient over a canned stream (same trick as lish-protocol.test.ts) rather
  * than mocking the module — a module mock leaks into every other test file in the run.
  */
-import { test, expect, afterEach } from 'bun:test';
+import { afterAll, test, expect, afterEach } from 'bun:test';
 import { encode as lpEncode } from 'it-length-prefixed';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { encode as codecEncode } from '../../../src/protocol/codec.ts';
@@ -28,6 +28,8 @@ useNetworkSettings(
 			maxChunkSize: chunkLimit,
 		}) as SettingsData['network']
 );
+// This reader stays set for the whole process; take it away so that later test files start from the defaults.
+afterAll(() => useNetworkSettings(null));
 const priv = (o: unknown): Record<string, any> => o as unknown as Record<string, any>;
 
 /** Manifest declaring a chunk size well past the limit set below. */
