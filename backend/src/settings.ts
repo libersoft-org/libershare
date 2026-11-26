@@ -36,6 +36,8 @@ export function usableMemoryBytes(total: number = totalmem(), read: (path: strin
 	// shortcut: the usual mount points only; a tree mounted elsewhere would need /proc/self/mountinfo.
 	const trees: Array<[RegExp, string, string]> = [
 		[/^0::(\/.*)$/m, '/sys/fs/cgroup', 'memory.max'],
+		// Where a hybrid setup mounts its v2 tree.
+		[/^0::(\/.*)$/m, '/sys/fs/cgroup/unified', 'memory.max'],
 		[/^\d+:(?:[^:]*,)?memory(?:,[^:]*)?:(\/.*)$/m, '/sys/fs/cgroup/memory', 'memory.limit_in_bytes'],
 	];
 	for (const [line, mount, file] of trees) {

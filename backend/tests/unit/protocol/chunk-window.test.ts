@@ -128,6 +128,8 @@ describe('chunk window settings', () => {
 		const scope = '/system.slice/docker-0123abcd.scope';
 		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': `0::${scope}\n`, [`/sys/fs/cgroup${scope}/memory.max`]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
 		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': `12:pids:/x\n9:cpu,memory:${scope}\n`, [`/sys/fs/cgroup/memory${scope}/memory.limit_in_bytes`]: `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
+		// A hybrid setup with the memory controller in v2: that tree is mounted one level down.
+		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': '1:name=openrc:/svc\n0::/openrc.svc\n', '/sys/fs/cgroup/unified/openrc.svc/memory.max': `${GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(GiB);
 		// Or on a group above it, while its own has none.
 		expect(usableMemoryBytes(64 * GiB, files({ '/proc/self/cgroup': `0::${scope}\n`, [`/sys/fs/cgroup${scope}/memory.max`]: 'max\n', '/sys/fs/cgroup/system.slice/memory.max': `${2 * GiB}\n`, '/proc/meminfo': meminfo(64 * GiB) }))).toBe(2 * GiB);
 		// A system container: its cgroup says "max" and only the reported total is its own.
