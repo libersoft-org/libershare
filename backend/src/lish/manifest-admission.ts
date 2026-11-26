@@ -13,23 +13,22 @@ export type ExpectedPublisher = string | null | undefined;
 export interface PendingLimits {
 	readonly ttlMs: number;
 	readonly count: number;
-	/** Estimated size of all waiting manifests together, see {@link manifestWeight}. */
+	/** Estimated size of all waiting manifests together, see {@link heldWeight}. */
 	readonly bytes: number;
 }
 const PENDING_LIMITS: PendingLimits = { ttlMs: 10 * 60 * 1000, count: 256, bytes: 256 * 1024 * 1024 };
 
-/** What an entry costs beyond its strings: the object itself, its timestamps and its permissions. */
-const ENTRY_WEIGHT = 128;
-
 /**
- * Rough size of a manifest in memory: its texts, checksums and paths, which is nearly all of it.
- * Every manifest and every entry counts for something, so empty ones cannot pile up for free.
+ * Rough size in memory of what a question holds. It walks the value itself instead of the fields
+ * a manifest should have, so a field nobody expects, or one longer than it should be, counts too.
+ * Every object and every value counts for something, so empty ones cannot pile up for free.
  */
-function manifestWeight(lish: ILISH): number {
-	let weight = 1024 + (lish.name?.length ?? 0) + (lish.description?.length ?? 0);
-	for (const file of lish.files ?? []) weight += ENTRY_WEIGHT + file.path.length + file.checksums.length * (file.checksums[0]?.length ?? 0);
-	for (const directory of lish.directories ?? []) weight += ENTRY_WEIGHT + directory.path.length;
-	for (const link of lish.links ?? []) weight += ENTRY_WEIGHT + link.path.length + link.target.length;
+function heldWeight(value: unknown): number {
+	if (typeof value === 'string') return 16 + value.length;
+	if (typeof value !== 'object' || value === null) return 8;
+	let weight = 32;
+	if (Array.isArray(value)) for (const item of value) weight += heldWeight(item);
+	else for (const key in value) weight += key.length + heldWeight((value as Record<string, unknown>)[key]);
 	return weight;
 }
 
@@ -140,7 +139,7 @@ export class ManifestAdmission<T> {
 				lish,
 				checks,
 				fault,
-				this.park(lish, () => resume(checks))
+				this.park(lish.id, lish, () => resume(checks))
 			);
 		this.drop(lish.id);
 		return resume(checks);
@@ -177,10 +176,10 @@ export class ManifestAdmission<T> {
 		return new CodedError(fault.code, JSON.stringify(detail), { cause: fault });
 	}
 
-	private park(lish: ILISH, resume: () => Promise<T>): string {
-		const lishID = lish.id;
+	/** Keep `held`, everything `resume` needs, as the one question open under `lishID`. */
+	private park(lishID: string, held: unknown, resume: () => Promise<T>): string {
 		this.drop(lishID);
-		const weight = manifestWeight(lish);
+		const weight = heldWeight(held);
 		// Oldest first: a client that never answers cannot grow this without bound. A manifest
 		// larger than the whole allowance still waits, alone, so the user can answer about it.
 		while (this.pending.size > 0 && (this.pending.size >= this.limits.count || this.pendingBytes + weight > this.limits.bytes)) this.drop(this.pending.keys().next().value!);
