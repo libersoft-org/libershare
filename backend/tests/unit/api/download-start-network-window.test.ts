@@ -5,7 +5,7 @@ import { join } from 'path';
 import { initTransferHandlers, initDownloadState, getDownloadEnabledLishs, removeDownloadState } from '../../../src/api/transfer.ts';
 import { type Networks } from '../../../src/lishnet/lishnets.ts';
 import { type DataServer } from '../../../src/lish/data-server.ts';
-import { type Settings } from '../../../src/settings.ts';
+import { defaultChunkInflightBudgetBytes, type Settings } from '../../../src/settings.ts';
 import { Downloader } from '../../../src/protocol/downloader.ts';
 import { initUploadState } from '../../../src/protocol/lish-protocol.ts';
 
@@ -592,7 +592,7 @@ describe('download start — the lishnet window', () => {
 		const directory = mkdtempSync(join(tmpdir(), 'lish-refused-'));
 		try {
 			const dataServer = makeDataServer();
-			const HUGE = 300 * 1024 * 1024; // above the default budget
+			const HUGE = 2 * defaultChunkInflightBudgetBytes(); // above the default budget, whatever this machine's memory makes it
 			const store = dataServer as unknown as { get: () => unknown; getMissingChunks: () => unknown[] };
 			store.get = () => ({ id: LISH_ID, name: 'x', directory, chunkSize: HUGE, checksumAlgo: 'sha256', files: [{ path: 'f.bin', size: HUGE, checksums: ['chunk-0'] }] });
 			store.getMissingChunks = () => [{ chunkID: 'chunk-0', fileIndex: 0, chunkIndex: 0 }];
