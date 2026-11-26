@@ -47,6 +47,8 @@
 		{ keys: 'B', action: $t('help.actions.back') },
 		{ keys: 'X', action: $t('help.actions.volumeDown') },
 		{ keys: 'Y', action: $t('help.actions.volumeUp') },
+		{ keys: 'SELECT + ↑ / ↓', action: $t('help.actions.pageUpDown') },
+		{ keys: 'SELECT + ← / →', action: $t('help.actions.homeEnd') },
 		{ keys: 'SELECT + A', action: $t('help.actions.pageDown') },
 		{ keys: 'SELECT + B', action: $t('help.actions.pageUp') },
 		{ keys: 'SELECT + X', action: $t('help.actions.end') },

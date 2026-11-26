@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+	<meta charset="utf-8" />
+	<title>Gamepad SELECT with a direction</title>
+	<pre id="results">Running...</pre>
+	<script type="module">
+		import { getGamepadManager } from '/src/scripts/input/gamepad.ts';
+		import { inputInitialDelay, inputRepeatDelay } from '/src/scripts/settings.ts';
+
+		const SELECT = 8;
+		const DPAD = { up: 12, down: 13, left: 14, right: 15 };
+		const PAGING = { up: 'pageUp', down: 'pageDown', left: 'home', right: 'end' };
+		const results = [];
+		const seen = [];
+		const pad = { axes: [0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false })) };
+		const originalGamepads = Object.getOwnPropertyDescriptor(navigator, 'getGamepads');
+		Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
+		// Without a repeat delay a held direction is reported on every frame, so a few frames are enough to see it.
+		inputInitialDelay.set(0);
+		inputRepeatDelay.set(0);
+		const manager = getGamepadManager();
+		for (const action of [...Object.keys(DPAD), ...Object.values(PAGING)]) manager.on(action, () => seen.push(action));
+
+		function assert(value, message) {
+			if (!value) throw new Error(message);
+		}
+		async function frames() {
+			for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
+		}
+		/** Hold the buttons and the stick for a few frames; returns the distinct actions reported meanwhile. */
+		async function hold(buttons, axes = [0, 0]) {
+			seen.length = 0;
+			for (const button of buttons) pad.buttons[button].pressed = true;
+			pad.axes = axes;
+			await frames();
+			const reported = [...new Set(seen)];
+			for (const button of buttons) pad.buttons[button].pressed = false;
+			pad.axes = [0, 0];
+			await frames();
+			return reported.join(',');
+		}
+		async function test(name, action) {
+			try {
+				await action();
+				results.push({ name, passed: true });
+			} catch (error) {
+				results.push({ name, passed: false, error: error.message });
+			}
+		}
+		try {
+			assert(document.hasFocus(), 'The gamepad is polled only in a focused browser tab');
+			manager.start();
+			await test('a direction alone stays a direction', async () => {
+				for (const [direction, button] of Object.entries(DPAD)) {
+					const reported = await hold([button]);
+					assert(reported === direction, `D-pad ${direction} reported ${reported}`);
+				}
+			});
+			await test('SELECT with the D-pad pages up and down and jumps to the start and the end', async () => {
+				for (const [direction, button] of Object.entries(DPAD)) {
+					const reported = await hold([SELECT, button]);
+					assert(reported === PAGING[direction], `SELECT + D-pad ${direction} reported ${reported}`);
+				}
+			});
+			await test('SELECT with the stick does the same', async () => {
+				for (const [direction, axes] of Object.entries({ up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] })) {
+					const reported = await hold([SELECT], axes);
+					assert(reported === PAGING[direction], `SELECT + stick ${direction} reported ${reported}`);
+				}
+			});
+		} catch (error) {
+			results.push({ name: 'setup', passed: false, error: error.message });
+		} finally {
+			manager.stop();
+			if (originalGamepads) Object.defineProperty(navigator, 'getGamepads', originalGamepads);
+			else delete navigator.getGamepads;
+			document.querySelector('#results').textContent = JSON.stringify(results, null, 2);
+			document.documentElement.dataset.testStatus = results.length === 3 && results.every(result => result.passed) ? 'passed' : 'failed';
+		}
+	</script>
+</html>

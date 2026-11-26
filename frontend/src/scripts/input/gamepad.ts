@@ -4,6 +4,7 @@ import { addNotification } from '../notifications.ts';
 import { tt } from '../language.ts';
 import { windowActive } from './focus.ts';
 type GamepadCallback = () => void;
+const SELECT_DIRECTIONS: Record<string, string> = { up: 'pageUp', down: 'pageDown', left: 'home', right: 'end' };
 let globalGamepadManager: GamepadManager | null = null;
 export const gamepadConnected = writable(false);
 
@@ -189,7 +190,8 @@ export class GamepadManager {
 		// Check repeat timing
 		const delay = this.firstInputTime > 0 && now - this.firstInputTime > get(inputInitialDelay) ? get(inputRepeatDelay) : get(inputInitialDelay);
 		if (now - this.lastInputTime >= delay) {
-			for (const dir of uniqueDirections) this.emit(dir);
+			// SELECT turns a direction into paging: up / down move by a page, left / right jump to the start / end.
+			for (const dir of uniqueDirections) this.emit(buttons[8] ? SELECT_DIRECTIONS[dir]! : dir);
 			this.lastInputTime = now;
 			if (this.firstInputTime === 0) this.firstInputTime = now;
 		}
