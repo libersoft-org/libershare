@@ -49,7 +49,7 @@ async function fixture(files: { path: string; size: number; checksums: string[] 
 
 /** The download that creates a folder runs after the call returned. */
 async function appears(path: string): Promise<boolean> {
-	for (const deadline = Date.now() + 3000; !existsSync(path) && Date.now() < deadline; ) await Bun.sleep(20);
+	for (const deadline = Date.now() + 3000; !existsSync(path) && Date.now() < deadline;) await Bun.sleep(20);
 	return existsSync(path);
 }
 
